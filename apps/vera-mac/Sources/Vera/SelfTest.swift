@@ -263,6 +263,15 @@ enum SelfTest {
                 print("SELFTEST ERROR: semver minor extraction"); exit(1)
             }
             print("  update semver OK — \(semverCases.count) compare cases, minor extraction")
+
+            // Resource bundle must resolve in THIS layout (packaged .app or .build binary) —
+            // the generated Bundle.module accessor varies by toolchain and has shipped builds
+            // that only resolve on the machine that built them.
+            guard VeraResources.bundle != nil, Brand.flame != nil,
+                  VeraResources.url("mermaid.min", ext: "js") != nil else {
+                print("SELFTEST ERROR: resource bundle unresolved (flame/mermaid missing)"); exit(1)
+            }
+            print("  resources OK — bundle resolved, flame + mermaid present")
         } catch {
             print("SELFTEST ERROR: \(error)")
             exit(1)

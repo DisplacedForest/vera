@@ -39,6 +39,13 @@ DEFAULT_FOLDER = os.environ.get("PULSE_FOLDER_ID", "")
 VERA_IMAGE_BASE = os.environ.get("VERA_IMAGE_BASE", "")          # optional image-gen service; cards skip cover art without it
 TZ = ZoneInfo(os.environ.get("HOME_TZ", "UTC"))  # untouched cards expire the day after creation (ChatGPT-Pulse daily freshness)
 
+# The delivery contract per run: keep re-triaging (bounded rounds) until at least the floor
+# of NOVEL cards lands; the ceiling caps a run no matter how much looks interesting. The
+# dedup gate never loosens — a gated topic costs the run a retry, not a card.
+PULSE_MIN_CARDS = int(os.environ.get("PULSE_MIN_CARDS", "2"))
+PULSE_MAX_CARDS = int(os.environ.get("PULSE_MAX_CARDS", "8"))
+PULSE_TRIAGE_ROUNDS = int(os.environ.get("PULSE_TRIAGE_ROUNDS", "3"))
+
 # Image generation resolves through the integrations registry's 'image_gen' entry
 # (env-seeded by VERA_IMAGE_BASE / IMAGE_PROTOCOL, editable in the plugin store) — the
 # same pattern as the coder's tool protocol. Protocol: the standard OpenAI Images API
@@ -94,7 +101,7 @@ STYLE_PALETTE = [
 
 class PulseRequest(BaseModel):
     interests: list[str] = []
-    max_cards: int = 5
+    max_cards: int | None = None  # explicit cap; defaults to PULSE_MAX_CARDS and never exceeds it
     pulse_folder_id: str | None = None
     sweep_only: bool = False  # run just the cleanup sweep, skip generation
     user_id: str | None = None    # who this briefing is for (defaults to the household owner)
@@ -227,6 +234,14 @@ TRIAGE_SYS = (
     "search query that surfaces the latest on it. Return ONLY JSON: "
     '{{"topics":[{{"title":"short card title","angle":"why it matters today","query":"web search query"}}]}}.'
 )
+
+TRIAGE_RETRY = (
+    "\n\nEverything in the excluded list above is already covered. Do NOT propose a rewording "
+    "of any of them — branch instead: an adjacent subject, a different facet of an interest, "
+    "or a genuinely new development."
+)
+
+_TRIAGE_TEMPS = (0.4, 0.7, 0.9)  # hotter each round to break convergence on the same proposals
 
 THREAD_SYS = (
     "You're planning how to deepen one Pulse briefing into real research. "
@@ -661,6 +676,30 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     return card
 
 
+async def _triage(who, persona, interests, memories, exclusions, want, rnd):
+    """One triage round: propose up to `want` topics, avoiding `exclusions`. Retry rounds
+    (rnd > 0) carry an explicit branch-out instruction and a hotter temperature so the model
+    stops converging on its favorite proposals."""
+    usr = (
+        (f"About {who}: {persona}\n\n" if persona else "")
+        + "Standing interests:\n- "
+        + ("\n- ".join(interests) if interests else "(none yet)")
+        + "\n\nWhat I know about them (memory):\n- "
+        + ("\n- ".join(memories) if memories else "(none)")
+        + (("\n\nAlready in the feed (do NOT repeat these — pick different topics):\n- "
+            + "\n- ".join(exclusions)) if exclusions else "")
+        + (TRIAGE_RETRY if rnd > 0 and exclusions else "")
+    )
+    raw = await _vera(
+        [
+            {"role": "system", "content": TRIAGE_SYS.format(today=time.strftime("%Y-%m-%d"), n=want, who=who)},
+            {"role": "user", "content": usr},
+        ],
+        temperature=_TRIAGE_TEMPS[min(rnd, len(_TRIAGE_TEMPS) - 1)],
+    )
+    return _parse_topics(raw)[:want]
+
+
 async def _do_run(req: PulseRequest):
     """The full synchronous Pulse pipeline (sweep -> triage -> per-topic research/inject). Returns the
     result dict. The HTTP endpoint runs this in the background so no caller holds a long request open."""
@@ -691,48 +730,59 @@ async def _do_run(req: PulseRequest):
 
     all_interests = list(dict.fromkeys(list(req.interests) + [i["topic"] for i in profile.get("interests", [])]))
     persona = profile.get("persona")
-    # Show her what's already in the feed so she stops proposing dupes (the gate in
-    # research_topic is the guarantee; this just saves wasted triage->gate round trips).
-    feed_titles = [c["title"] for c in _recent_for_user(user_id)]
-    triage_usr = (
-        (f"About {who}: {persona}\n\n" if persona else "")
-        + "Standing interests:\n- "
-        + ("\n- ".join(all_interests) if all_interests else "(none yet)")
-        + "\n\nWhat I know about them (memory):\n- "
-        + ("\n- ".join(memories) if memories else "(none)")
-        + (("\n\nAlready in the feed (do NOT repeat these — pick different topics):\n- "
-            + "\n- ".join(feed_titles)) if feed_titles else "")
-    )
-    try:
-        raw = await _vera(
-            [
-                {"role": "system", "content": TRIAGE_SYS.format(today=time.strftime("%Y-%m-%d"), n=req.max_cards, who=who)},
-                {"role": "user", "content": triage_usr},
-            ],
-            temperature=0.4,
-        )
-        topics = _parse_topics(raw)[: req.max_cards]
-    except Exception as e:
-        out["errors"].append(f"triage: {e}")
-        return out  # zero-floor: no topics, nothing injected
 
-    out["topics"] = [t.get("title") for t in topics]
+    # 2) the novelty loop: triage -> per-topic research (deep-research -> illustrate ->
+    # synthesize -> cover art -> inject; the per-topic pipeline lives in research_topic() so
+    # the heartbeat shares it). When the dedup gate kills proposals, re-triage — up to
+    # PULSE_TRIAGE_ROUNDS — until at least PULSE_MIN_CARDS novel cards land. The feed corpus
+    # seeds the exclusion list (the gate stays the guarantee; exclusions save wasted
+    # triage->gate round trips), and every proposal joins it so a retry can't re-pitch a
+    # rewording of a topic the gate just killed.
+    exclusions = [c["title"] for c in _recent_for_user(user_id)]
+    target = min(req.max_cards or PULSE_MAX_CARDS, PULSE_MAX_CARDS)
+    out["rounds"] = []
+    attempt = 0  # running per-topic index across rounds (rotates cover-art styles)
 
-    # 2) per topic: deep-research loop -> illustrate -> synthesize -> cover art -> inject.
-    # The per-topic pipeline lives in research_topic() so the heartbeat shares it.
     await _vision(pause=True)  # free the image host's memory so cover-gen fits (restored below)
-    for idx, t in enumerate(topics):
-        try:
-            card = await research_topic(t, who=who, user_id=user_id, idx=idx,
-                                        provenance="scheduled", errors=out["errors"])
-            if card:
-                out["injected"].append(card["title"])
-            else:
-                out["skipped"].append(t.get("title"))  # dup gate or empty synthesis
-        except Exception as e:
-            out["errors"].append(f"{t.get('title')}: {e}")
+    try:
+        for rnd in range(PULSE_TRIAGE_ROUNDS):
+            want = target - len(out["injected"])
+            if want <= 0:
+                break
+            try:
+                topics = await _triage(who, persona, all_interests, memories, exclusions, want, rnd)
+            except Exception as e:
+                out["errors"].append(f"triage round {rnd + 1}: {e}")
+                break
+            if not topics:
+                break  # nothing genuinely new left to propose
+            record = {"proposed": [t.get("title") for t in topics], "injected": [], "skipped": []}
+            exclusions.extend(t["title"] for t in topics if t.get("title"))
+            out["topics"].extend(record["proposed"])
+            for t in topics:
+                if len(out["injected"]) >= target:
+                    break
+                try:
+                    card = await research_topic(t, who=who, user_id=user_id, idx=attempt,
+                                                provenance="scheduled", errors=out["errors"])
+                    if card:
+                        out["injected"].append(card["title"])
+                        record["injected"].append(card["title"])
+                    else:
+                        out["skipped"].append(t.get("title"))  # dup gate or empty synthesis
+                        record["skipped"].append(t.get("title"))
+                except Exception as e:
+                    out["errors"].append(f"{t.get('title')}: {e}")
+                attempt += 1
+            out["rounds"].append(record)
+    finally:
+        await _vision(pause=False)  # bring the vision model back up after the image batch
 
-    await _vision(pause=False)  # bring the vision model back up after the image batch
+    floor = min(PULSE_MIN_CARDS, target)  # an explicit small max_cards lowers the floor too
+    if len(out["injected"]) < floor:
+        out["errors"].append(
+            f"under floor: {len(out['injected'])}/{floor} novel cards "
+            f"after {len(out['rounds'])} triage round(s)")
     return out
 
 
@@ -760,7 +810,8 @@ async def _runner(fn, req, run_id, kind):
             injected, topics, errors = out.get("injected", []), out.get("topics", []), out.get("errors", [])
         store.set_run_status({"run_id": run_id, "state": "ok", "kind": kind, "started_at": started,
                               "finished_at": int(time.time()), "topics": topics,
-                              "injected": injected, "errors": errors})
+                              "injected": injected, "errors": errors,
+                              "rounds": out.get("rounds", []) if kind != "run_all" else []})
     except Exception as e:
         store.set_run_status({"run_id": run_id, "state": "error", "kind": kind, "started_at": started,
                               "finished_at": int(time.time()), "topics": [], "injected": [],
@@ -813,7 +864,7 @@ async def _active_users():
 
 
 class RunAllRequest(BaseModel):
-    max_cards: int = 5
+    max_cards: int | None = None  # explicit cap; defaults to PULSE_MAX_CARDS and never exceeds it
 
 
 async def _do_run_all(req: RunAllRequest):
@@ -827,7 +878,8 @@ async def _do_run_all(req: RunAllRequest):
         r = await _do_run(PulseRequest(user_id=u["id"], user_name=u.get("name"),
                                        max_cards=req.max_cards, sweep_only=False))
         out["users"].append({"user_id": u["id"], "name": u.get("name"),
-                             "injected": r.get("injected", []), "errors": r.get("errors", [])})
+                             "injected": r.get("injected", []), "errors": r.get("errors", []),
+                             "rounds": r.get("rounds", [])})
     return out
 
 

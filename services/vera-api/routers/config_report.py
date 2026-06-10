@@ -33,7 +33,8 @@ GROUPS: list[tuple[str, list[str]]] = [
                        "VERA_INTEREST_COOLDOWN_HOURS", "MEDIA_CURATION_CAP", "PULSE_RUN_STALE_SECS",
                        "HOME_EVENTS_RETAIN_DAYS", "HOME_MODEL_WINDOW_DAYS"]),
     ("actuation",     ["UNRAID_BASE", "UNRAID_KEY", "HA_ALLOWED_SERVICES", "HA_ALLOWED_DOMAINS"]),
-    ("pulse",         ["PULSE_FOLDER_ID", "VERA_DEFAULT_USER"]),
+    ("pulse",         ["PULSE_FOLDER_ID", "VERA_DEFAULT_USER", "PULSE_MIN_CARDS",
+                       "PULSE_MAX_CARDS", "PULSE_TRIAGE_ROUNDS"]),
     ("scheduler",     ["SCHEDULER_ENABLED"]),
 ]
 

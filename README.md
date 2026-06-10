@@ -126,21 +126,22 @@ One Linux server runs Open WebUI, vera-api, SearXNG, and an RTX 3090 serving the
 
 ## Quick start
 
-**Backend** (any Docker host):
+**Backend** (any Docker host — pulls the released image from GHCR):
 
 ```sh
-git clone <this repo> && cd vera
+git clone https://github.com/DisplacedForest/vera.git && cd vera
 cp .env.example .env     # fill in your LLM + OWUI endpoints; everything else is optional
 docker compose up -d
 docker compose logs vera-api | head -60    # the config report — what's wired, what's not
 ```
 
-**App** (macOS 14+, Swift toolchain):
+**App** (macOS 14+): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, drag to Applications. The app is ad-hoc signed, so the first launch needs right-click → Open.
+
+Building either from source instead:
 
 ```sh
-cd apps/vera-mac
-swift build -c release
-scripts/deploy.sh    # packages Vera.app and installs it to /Applications
+docker compose up -d --build        # backend (uncomment `build:` in docker-compose.yml)
+cd apps/vera-mac && scripts/deploy.sh   # app — packages Vera.app and installs it to /Applications
 ```
 
 Onboarding asks for your endpoints, then offers the opt-in lanes; integrations are configured anytime from the sidebar.

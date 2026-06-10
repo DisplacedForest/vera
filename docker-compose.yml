@@ -8,7 +8,9 @@
 # heartbeat, healthcheck, updates, and media curation — no external cron or n8n needed.
 services:
   vera-api:
-    build: services/vera-api
+    image: ghcr.io/displacedforest/vera-api:latest
+    # Building from source instead: uncomment and run `docker compose up -d --build`.
+    # build: services/vera-api
     container_name: vera-api
     restart: unless-stopped
     ports:

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  api-tests:
+    name: api-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/vera-api/requirements.txt
+      - name: Install dependencies
+        run: pip install -r services/vera-api/requirements.txt pytest
+      - name: Run tests
+        working-directory: services/vera-api
+        run: python -m pytest -q
+
+  mac-app:
+    name: mac-app
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: apps/vera-mac/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/vera-mac/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: Build
+        working-directory: apps/vera-mac
+        run: swift build
+      - name: Selftest
+        working-directory: apps/vera-mac
+        run: .build/debug/Vera --selftest

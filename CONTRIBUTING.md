@@ -11,6 +11,16 @@ What that means in practice:
 - **PRs are welcome and they land.** A merged PR is credited in the next release's notes and ships in that release.
 - **Issues on this repo are the project's tracker** for bug reports and feature requests.
 
+## Branching & releases
+
+Trunk-based, deliberately simple:
+
+- **`main` is the only long-lived branch and is always releasable.** There is no dev branch.
+- **Changes arrive as PRs**: fork → short-lived branch → PR → squash-merge. CI must be green to merge; `main` is protected (no force-pushes, no deletions, required checks).
+- **A release is an annotated tag on `main`** — `vX.Y.Z`, matching the root `VERSION` file. The tag triggers the release workflow, which builds and attaches `Vera.app.zip`, pushes `ghcr.io/displacedforest/vera-api:vX.Y.Z` (+ `:latest`), and creates the GitHub Release with generated notes. A tag that does not match `VERSION` fails the pipeline.
+- **Release cadence**: bump `VERSION` → commit → `git tag -a vX.Y.Z` → push the tag. CI does the rest.
+- `release/X.Y.x` branches appear only if a fix ever needs backporting to an older version; none exist until then.
+
 ## Ground rules for code
 
 Enforced in review:
@@ -62,7 +72,7 @@ For UI work, render any view headlessly and inspect it:
 .build/debug/Vera --shot /tmp/view.png --view pulse   # chat | pulse | memory | plugins | agentic | voice | onboarding | settings …
 ```
 
-Run all of the above before opening a PR — they are the merge bar.
+Run all of the above before opening a PR. CI runs the same suites on every PR and must be green to merge.
 
 ## Sending a change
 

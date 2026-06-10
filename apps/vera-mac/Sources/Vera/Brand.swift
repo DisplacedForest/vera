@@ -1,6 +1,29 @@
 import SwiftUI
 import AppKit
 
+/// Resolves the SwiftPM resource bundle WITHOUT the generated `Bundle.module` accessor.
+/// That accessor's search paths vary by toolchain — some emit one that probes only the app
+/// root and the machine-specific build directory, which fatalErrors in a packaged app built
+/// on another machine. This probes every real layout and degrades to nil instead of crashing.
+enum VeraResources {
+    static let bundle: Bundle? = {
+        let name = "Vera_Vera.bundle"
+        let candidates = [
+            Bundle.main.resourceURL,                                  // packaged .app (Contents/Resources)
+            Bundle.main.executableURL?.deletingLastPathComponent(),   // swift run / .build binaries
+            Bundle.main.bundleURL,                                    // app root
+        ]
+        for c in candidates {
+            if let u = c?.appendingPathComponent(name), let b = Bundle(url: u) { return b }
+        }
+        return nil
+    }()
+
+    static func url(_ name: String, ext: String) -> URL? {
+        bundle?.url(forResource: name, withExtension: ext)
+    }
+}
+
 /// The Vera flame mark — the bare flame on a transparent background (`vera-flame.png`),
 /// used inside the app. The dock / app icon is the full tiled `vera-logo.png`, generated
 /// into `Vera.icns` by `scripts/package.sh`. Falls back to the accent circle so headless
@@ -13,7 +36,7 @@ enum Brand {
     static let icon: NSImage? = load("vera-logo")
 
     private static func load(_ name: String) -> NSImage? {
-        guard let url = Bundle.module.url(forResource: name, withExtension: "png"),
+        guard let url = VeraResources.url(name, ext: "png"),
               let img = NSImage(contentsOf: url) else { return nil }
         return img
     }

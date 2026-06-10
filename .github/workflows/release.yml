@@ -36,6 +36,9 @@ jobs:
       - name: Package
         working-directory: apps/vera-mac
         run: scripts/package.sh
+      - name: Smoke-test the packaged binary
+        working-directory: apps/vera-mac
+        run: build/Vera.app/Contents/MacOS/Vera --selftest
       - name: Zip
         working-directory: apps/vera-mac/build
         run: ditto -c -k --keepParent Vera.app Vera.app.zip

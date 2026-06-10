@@ -102,7 +102,7 @@ struct ArtifactPreview: View {
     }
 
     static func wrapMermaid(_ src: String) -> String {
-        let js = (try? String(contentsOf: Bundle.module.url(forResource: "mermaid.min", withExtension: "js")!, encoding: .utf8)) ?? ""
+        let js = VeraResources.url("mermaid.min", ext: "js").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         let escaped = src.replacingOccurrences(of: "</", with: "<\\/")
         return """
         <!doctype html><html><head><meta charset="utf-8"><script>\(js)</script></head>

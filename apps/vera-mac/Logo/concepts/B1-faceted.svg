@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="232" fill="#0E0F12"/>
+  <!-- Faceted flame: straight planes, not the soft teardrop. Two amber tones read as a lit
+       facet + a shadowed one — architectural fire, harder to mistake for a stock flame. -->
+  <!-- right (lit) plane -->
+  <path d="M 512 236 L 700 600 L 512 792 Z" fill="#F2A65A"/>
+  <!-- left (shadow) plane -->
+  <path d="M 512 236 L 324 600 L 512 792 Z" fill="#D97E2E"/>
+  <!-- inner core notch = a small V at the base -->
+  <path d="M 452 560 L 512 690 L 572 560 Z" fill="#0E0F12"/>
+</svg>

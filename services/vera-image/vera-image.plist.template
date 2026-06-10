@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd agent for vera-image (Qwen-Image gen) on the Mac Studio.
+     Install: cp to ~/Library/LaunchAgents/ then
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vera.image.plist
+     Idle cost is ~0 (the 34GB model only loads during a /generate subprocess; pause vera-vision then). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.vera.image</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@HOME@/venvs/vera/bin/uvicorn</string>
+    <string>app:app</string>
+    <string>--host</string><string>0.0.0.0</string>
+    <string>--port</string><string>8083</string>
+  </array>
+  <key>WorkingDirectory</key><string>@HOME@/vera-image</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/vera-image.log</string>
+  <key>StandardErrorPath</key><string>/tmp/vera-image.err</string>
+</dict>
+</plist>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd agent for the Vera vision server (Qwen3-VL via mlx-vlm) on the Mac Studio.
+     Install:
+       cp this to ~/Library/LaunchAgents/com.vera.vision.plist
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.vera.vision.plist
+     NOTE: load via `bootstrap gui/$(id -u)` (NOT `launchctl load` over SSH) or it won't run. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.vera.vision</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@HOME@/venvs/vera/bin/python</string>
+    <string>-m</string><string>mlx_vlm.server</string>
+    <string>--host</string><string>0.0.0.0</string>
+    <string>--port</string><string>8082</string>
+    <string>--model</string><string>mlx-community/Qwen3-VL-8B-Instruct-4bit</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/vera-vision.log</string>
+  <key>StandardErrorPath</key><string>/tmp/vera-vision.err</string>
+</dict>
+</plist>

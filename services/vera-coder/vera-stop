@@ -1,0 +1,6 @@
+#!/bin/sh
+# `vera-stop` — release the coder host's unified memory after a coding session.
+# Stops the on-demand Qwen3-Coder MLX server so it stays off bursty image-gen.
+#
+# Install: cp to ~/.local/bin/vera-stop && chmod +x ~/.local/bin/vera-stop
+exec ssh studio '~/.vera/vera-coder.sh stop'

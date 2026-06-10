@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd agent for vera-offsite. Runs daily 03:30, after the server's nightly backup.
+     IMPORTANT: launchd cannot read ~/Desktop (TCC-protected), so the script is DEPLOYED
+     out of the repo to ~/.vera/scripts. Repo is source. Deploy + install on the worker Mac:
+       mkdir -p ~/.vera/scripts && cp scripts/vera-offsite.sh ~/.vera/scripts/ && chmod +x ~/.vera/scripts/vera-offsite.sh
+       scripts/install-launchd.sh scripts/vera-offsite.plist.template -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.vera.offsite</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@HOME@/.vera/scripts/vera-offsite.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key><string>@HOME@/Library/Logs/vera-offsite.out</string>
+  <key>StandardErrorPath</key><string>@HOME@/Library/Logs/vera-offsite.err</string>
+</dict>
+</plist>

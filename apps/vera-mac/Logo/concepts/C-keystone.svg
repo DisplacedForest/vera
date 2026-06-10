@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="232" fill="#0E0F12"/>
+  <!-- Keystone: the one stone the whole arch leans on — sovereignty, the piece that holds it up.
+       Obscure until you know it, dead simple once you do. -->
+  <path d="M 372 352 L 652 352 L 612 672 L 412 672 Z"
+        fill="#ECEAE3"/>
+  <!-- warm seam: the lit core inside the stone -->
+  <rect x="496" y="352" width="32" height="320" fill="#E8923B"/>
+</svg>

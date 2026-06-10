@@ -143,6 +143,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "update" {
+            content = AnyView(
+                UpdateShotView()
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else {
             let section: AppSection
             switch view {
@@ -441,5 +447,48 @@ struct OnboardingShotView: View {
                 .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline, lineWidth: 1))
         }
+    }
+}
+
+/// Render-safe update surfaces: the sidebar banner (with a mock newer release) and the
+/// About versions block with a minor-version mismatch showing.
+@MainActor
+struct UpdateShotView: View {
+    private let checker: UpdateChecker
+
+    init() {
+        let c = UpdateChecker()
+        c.available = ReleaseInfo(
+            tag_name: "v0.2.0",
+            html_url: "https://github.com/DisplacedForest/vera/releases/latest",
+            body: nil,
+            assets: [.init(name: "Vera.app.zip", browser_download_url: "https://example.invalid/Vera.app.zip")])
+        checker = c
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text("Sidebar banner").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            UpdateBanner().environmentObject(checker).frame(width: 300)
+
+            Text("Settings — About").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack { Text("App").foregroundStyle(Theme.textSecondary); Spacer(); Text("0.1.0") }
+                HStack { Text("vera-api").foregroundStyle(Theme.textSecondary); Spacer(); Text("0.2.0") }
+                Label("App and server minor versions differ — update the older side when convenient.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+            .font(.system(size: 13))
+            .padding(14).frame(width: 300)
+            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
+
+            Spacer(minLength: 0)
+        }
+        .padding(36)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .foregroundStyle(Theme.textPrimary)
+        .environment(\.colorScheme, .dark)
     }
 }

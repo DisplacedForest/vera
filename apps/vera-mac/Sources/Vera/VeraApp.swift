@@ -22,6 +22,7 @@ struct VeraApp: App {
     @StateObject private var tools: ToolsStore
     @StateObject private var voice: VoiceSession
     @StateObject private var config = ConfigStore()
+    @StateObject private var updates = UpdateChecker()
 
     init() {
         // Build the graph once so ChatStore, ToolsStore, and VoiceSession share a single
@@ -48,15 +49,26 @@ struct VeraApp: App {
                 .environmentObject(tools)
                 .environmentObject(voice)
                 .environmentObject(config)
+                .environmentObject(updates)
                 .frame(minWidth: 920, minHeight: 600)
                 .preferredColorScheme(.dark)
+                .task { updates.start() }
         }
         .defaultSize(width: 1180, height: 760)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button(updates.checking ? "Checking…" : "Check for Updates…") {
+                    Task { await updates.check(manual: true) }
+                }
+                .disabled(updates.checking)
+            }
+        }
 
         Settings {
             SettingsView()
                 .environmentObject(config)
                 .environmentObject(store)
+                .environmentObject(updates)
         }
     }
 }

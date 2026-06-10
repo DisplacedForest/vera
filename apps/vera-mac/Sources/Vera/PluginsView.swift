@@ -150,7 +150,7 @@ struct PluginLogo: View {
     private static var cache: [String: NSImage] = [:]
     private static func image(_ id: String) -> NSImage? {
         if let hit = cache[id] { return hit }
-        guard let url = Bundle.module.url(forResource: id, withExtension: "png"),
+        guard let url = VeraResources.url(id, ext: "png"),
               let img = NSImage(contentsOf: url) else { return nil }
         cache[id] = img
         return img

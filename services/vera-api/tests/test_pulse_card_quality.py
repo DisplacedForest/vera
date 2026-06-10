@@ -65,3 +65,62 @@ def test_search_result_carries_optional_published():
     assert SearchResult(title="t", url="u", content="c", rendered=False).published is None
     assert SearchResult(title="t", url="u", content="c", rendered=False,
                         published="2026-06-01").published == "2026-06-01"
+
+
+# --- freshness gate ------------------------------------------------------------------
+
+def _run(coro):
+    import asyncio
+    return asyncio.new_event_loop().run_until_complete(coro)
+
+
+def test_newest_published_across_corpora():
+    assert pulse._newest_published([]) is None
+    assert pulse._newest_published([{"published": None}, {"title": "x"}]) is None
+    assert pulse._newest_published([
+        {"published": "2025-01-16"}, {"published": "2026-06-08"}, {"title": "undated"},
+    ]) == "2026-06-08"
+
+
+def test_stale_verdict_gates(monkeypatch):
+    async def vera_stale(messages, temperature=0.4):
+        return "STALE"
+    monkeypatch.setattr(pulse, "_vera", vera_stale)
+    assert _run(pulse.is_stale_news({"title": "Chris Wood Contract Extension"}, "2025-01-16")) is True
+
+
+def test_fresh_verdict_passes(monkeypatch):
+    async def vera_fresh(messages, temperature=0.4):
+        return "FRESH"
+    monkeypatch.setattr(pulse, "_vera", vera_fresh)
+    assert _run(pulse.is_stale_news({"title": "Yeast strain tannin research"}, None)) is False
+
+
+def test_gate_fails_open(monkeypatch):
+    async def vera_boom(messages, temperature=0.4):
+        raise RuntimeError("llm down")
+    monkeypatch.setattr(pulse, "_vera", vera_boom)
+    assert _run(pulse.is_stale_news({"title": "anything"}, "2025-01-16")) is False
+
+    async def vera_garbage(messages, temperature=0.4):
+        return "I think it might be old?"
+    monkeypatch.setattr(pulse, "_vera", vera_garbage)
+    assert _run(pulse.is_stale_news({"title": "anything"}, "2025-01-16")) is False
+
+
+def test_gate_prompt_carries_today_and_date(monkeypatch):
+    seen = {}
+    async def vera_capture(messages, temperature=0.4):
+        seen["sys"] = messages[0]["content"]; seen["usr"] = messages[1]["content"]
+        return "FRESH"
+    monkeypatch.setattr(pulse, "_vera", vera_capture)
+    _run(pulse.is_stale_news({"title": "T", "angle": "A"}, "2025-01-16"))
+    assert time.strftime("%Y-%m-%d") in seen["sys"]
+    assert "Newest source date: 2025-01-16" in seen["usr"]
+    _run(pulse.is_stale_news({"title": "T"}, None))
+    assert "no dated sources" in seen["usr"]
+
+
+def test_card_sys_requires_absolute_dates():
+    card = pulse.CARD_SYS.format(img_instr="", who="Z", today="2026-06-10")
+    assert "month and year" in card and "'in January 2025'" in card

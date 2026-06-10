@@ -12,12 +12,13 @@ struct Message: Identifiable, Hashable {
     var artifacts: [Artifact] = [] // Canvas artifacts parsed out of an assistant reply
     var attachments: [MessageAttachment] = []  // images/docs the user attached to this turn
     var pulse: PulseCard? = nil    // when set, render this turn as the rich Pulse briefing (continued in chat)
+    var sources: [PulseSource] = []  // cited sources for this reply — drives the citation chips
 
     /// Build an assistant message from raw reply text, splitting out artifacts then any `vera:ask` block.
-    static func assistant(from raw: String) -> Message {
+    static func assistant(from raw: String, sources: [PulseSource] = []) -> Message {
         let (afterArtifacts, artifacts) = Artifact.parse(raw)
         let (clean, ask) = VeraAsk.parse(afterArtifacts)
-        return Message(role: .assistant, text: clean, ask: ask, artifacts: artifacts)
+        return Message(role: .assistant, text: clean, ask: ask, artifacts: artifacts, sources: sources)
     }
 }
 

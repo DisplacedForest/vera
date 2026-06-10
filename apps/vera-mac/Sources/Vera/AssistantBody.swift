@@ -26,7 +26,10 @@ struct AssistantBody: View {
             // Interleave prose (markdown — incl. tables) with native chart / stat-card blocks.
             ForEach(VeraBlocks.segments(parsed.clean)) { seg in
                 switch seg {
-                case .prose(_, let t): ProseMarkdown(text: t)
+                case .prose(_, let t):
+                    // Cited replies get the Pulse treatment: refs stripped, chips beneath.
+                    if message.sources.isEmpty { ProseMarkdown(text: t) }
+                    else { CitedProse(text: t, sources: message.sources) }
                 case .chart(_, let spec): ChartBlockView(spec: spec)
                 case .stats(_, let cards): StatCardsView(cards: cards)
                 }
@@ -108,12 +111,13 @@ enum ToolCallParser {
             }
         }
         var clean = text
+        // Reasoning blocks are model thinking, never part of the reply — stripped entirely.
         if let re = try? NSRegularExpression(
-            pattern: "<details type=\"tool_calls\"[\\s\\S]*?</details>", options: []) {
+            pattern: "<details type=\"(?:tool_calls|reasoning)\"[\\s\\S]*?</details>", options: []) {
             clean = re.stringByReplacingMatches(in: clean, range: NSRange(location: 0, length: (clean as NSString).length), withTemplate: "")
         }
         // Strip an incomplete trailing block while streaming.
-        if let re = try? NSRegularExpression(pattern: "<details type=\"tool_calls\"[\\s\\S]*$", options: []) {
+        if let re = try? NSRegularExpression(pattern: "<details type=\"(?:tool_calls|reasoning)\"[\\s\\S]*$", options: []) {
             let cns = clean as NSString
             if let mm = re.firstMatch(in: clean, range: NSRange(location: 0, length: cns.length)) {
                 clean = cns.replacingCharacters(in: mm.range, with: "")

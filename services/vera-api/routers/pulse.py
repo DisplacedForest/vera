@@ -244,22 +244,30 @@ TRIAGE_RETRY = (
 _TRIAGE_TEMPS = (0.4, 0.7, 0.9)  # hotter each round to break convergence on the same proposals
 
 THREAD_SYS = (
-    "You're planning how to deepen one Pulse briefing into real research. "
+    "Today is {today}. You're planning how to deepen one Pulse briefing into real research. "
     "From the topic and corpus, identify the 2-4 SPECIFIC threads most worth digging into: "
     "concrete entities, claims, numbers, or people that deserve expansion (e.g. a record transfer fee, "
     "a named signing, a release statistic, a key person). Only include a thread if there is genuinely more "
     "worth knowing; return fewer, or an empty list, if the corpus already covers it. For each thread give a "
     "focused web search query that would surface details and statistics. "
-    'Return ONLY JSON: {"threads":[{"focus":"what to deepen","query":"search query"}]}.'
+    'Return ONLY JSON: {{"threads":[{{"focus":"what to deepen","query":"search query"}}]}}.'
 )
 
 CARD_SYS = (
-    "Write one deep-research Pulse briefing for {who}, in the first person, like a sharp "
-    "analyst who knows them.\n"
-    "Open with ONE sentence beginning 'I'm surfacing this because' that says why it matters to them today.\n"
+    "Today is {today}. Write one deep-research Pulse briefing for {who}, in the first person, "
+    "like a sharp analyst who knows them.\n"
+    "FIRST line of your output: 'HEADLINE: ' followed by a short card headline derived from the "
+    "sources. Every person, organization, and competition named in the headline must appear in "
+    "the numbered sources verbatim — when the sources disagree with the topic title you were "
+    "given, the sources win. Then a blank line, then the briefing.\n"
+    "Open the briefing with ONE sentence beginning 'I'm surfacing this because' that says why it matters to them today.\n"
     "Then write the briefing as GitHub-flavored markdown. Expand the key claims with concrete numbers, names, "
-    "dates, and context drawn ONLY from the numbered sources. Do not invent facts. When a claim is notable "
+    "dates, and context drawn ONLY from the numbered sources. Do not invent facts; people, organizations, and "
+    "competition names may be used only as they appear in the sources. When a claim is notable "
     "(a record, a stat, a named person), say the actual figure or detail rather than gesturing at it.\n"
+    "Anchor the briefing in time: state when events happened, prefer the most recent sources when they "
+    "conflict, and never present a dated event as current. If everything in the sources predates today by "
+    "a season or more, present the briefing as background or a retrospective, not as news.\n"
     "End EVERY paragraph with citation references to the sources you used for it, in square brackets: [2] or [1,4].\n"
     "Close with a short 'so what' paragraph: the implication, or what to watch next.\n"
     "Let depth follow the evidence. Write only as many paragraphs as the sources genuinely support (hard ceiling: "
@@ -392,8 +400,20 @@ def _clean_caption(s):
 
 def _numbered_corpus(sources):
     return "\n\n".join(
-        f"[{s['n']}] {s['title']}\nURL: {s['url']}\n{(s.get('content') or '')[:1500]}" for s in sources
+        f"[{s['n']}] {s['title']}"
+        + (f" (published {s['published']})" if s.get("published") else "")
+        + f"\nURL: {s['url']}\n{(s.get('content') or '')[:1500]}"
+        for s in sources
     )
+
+
+def _split_headline(body):
+    """Pull the 'HEADLINE: ...' first line off a synthesis output. Returns (headline|None, rest).
+    A missing or empty headline leaves the body untouched — the caller keeps its working title."""
+    m = re.match(r"\s*HEADLINE:\s*(.+?)\s*\n+(.*)", body or "", re.S)
+    if not m or not m.group(1).strip():
+        return None, body
+    return m.group(1).strip(), m.group(2).strip()
 
 
 def _parse_threads(txt):
@@ -564,7 +584,8 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
             n = len(sources) + 1
             url_to_n[u] = n
             sources.append({"n": n, "title": getattr(x, "title", "") or u,
-                            "url": u, "content": getattr(x, "content", "")})
+                            "url": u, "content": getattr(x, "content", ""),
+                            "published": getattr(x, "published", None)})
 
     # broad search
     broad = await web_search(
@@ -576,7 +597,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     threads = []
     try:
         traw = await _vera(
-            [{"role": "system", "content": THREAD_SYS},
+            [{"role": "system", "content": THREAD_SYS.format(today=time.strftime("%Y-%m-%d"))},
              {"role": "user", "content": f"Topic: {topic.get('title')}\nAngle: {topic.get('angle', '')}\n\n"
                                           f"Corpus:\n{_numbered_corpus(sources)}"}],
             temperature=0.3,
@@ -617,11 +638,15 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
                 f"Numbered sources:\n{_numbered_corpus(sources)}")
     body = (
         await _vera(
-            [{"role": "system", "content": voiced(CARD_SYS.format(img_instr=img_instr, who=who))},
+            [{"role": "system", "content": voiced(CARD_SYS.format(
+                img_instr=img_instr, who=who, today=time.strftime("%Y-%m-%d")))},
              {"role": "user", "content": card_usr}],
             temperature=0.5,
         )
     ).strip()
+    # The display headline comes from the synthesis (source-grounded); the triage title was
+    # only the search plan and may name things that don't exist. Fall back to it if absent.
+    headline, body = _split_headline(body)
     if not body:
         return None  # nothing synthesized — don't inject an empty card
 
@@ -659,7 +684,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
         "created_at": int(time.time()),
         "day": datetime.now(TZ).date().isoformat(),
         "status": "new",
-        "title": topic.get("title"),
+        "title": headline or topic.get("title"),
         "summary": summary or "",
         "body": body,
         "image_url": image_url,

@@ -263,7 +263,9 @@ CARD_SYS = (
     "Open the briefing with ONE sentence beginning 'I'm surfacing this because' that says why it matters to them today.\n"
     "Then write the briefing as GitHub-flavored markdown. Expand the key claims with concrete numbers, names, "
     "dates, and context drawn ONLY from the numbered sources. Do not invent facts; people, organizations, and "
-    "competition names may be used only as they appear in the sources. When a claim is notable "
+    "competition names may be used only as they appear in the sources. Current-state attributions — who "
+    "holds a role, who manages, who employs whom — may be stated only when a numbered source establishes "
+    "them as current; otherwise leave the holder unnamed. When a claim is notable "
     "(a record, a stat, a named person), say the actual figure or detail rather than gesturing at it.\n"
     "Anchor the briefing in time: state when events happened, prefer the most recent sources when they "
     "conflict, and never present a dated event as current. Every dated event gets an absolute date — "
@@ -572,6 +574,39 @@ def _newest_published(sources):
     return max((s["published"] for s in sources if s.get("published")), default=None)
 
 
+COHERENT_SYS = (
+    "You check whether a research corpus actually covers a proposed briefing topic. Adjacent "
+    "context is fine — coverage of the topic's club, field, or surrounding situation counts. "
+    "The bar is whether the corpus is SUBSTANTIALLY about a different subject than the topic. "
+    'Answer ONLY one line: "ON-TOPIC" or "OFF-TOPIC <what the corpus is actually about>".'
+)
+
+
+def _corpus_overview(sources, chars=200):
+    """The corpus as numbered titles + snippet heads — enough for a subject check, not a read."""
+    return "\n".join(f"[{s['n']}] {s['title']}: {(s.get('content') or '')[:chars]}" for s in sources)
+
+
+async def is_off_topic(topic, sources):
+    """The coherence gate — (True, what the corpus is about) when the broad search drifted to a
+    different subject than the topic; (False, None) otherwise. Fail-open: an error can never
+    suppress research."""
+    try:
+        raw = await _vera(
+            [{"role": "system", "content": COHERENT_SYS},
+             {"role": "user", "content": (f"Topic: {topic.get('title')}\n"
+                                          f"Angle: {topic.get('angle', '')}\n\n"
+                                          f"Corpus:\n{_corpus_overview(sources)}")}],
+            temperature=0.0,
+        )
+        m = re.match(r"\s*OFF-TOPIC\b[:\s]*(.*)", raw or "", re.I)
+        if m:
+            return True, (m.group(1).strip() or "a different subject")
+    except Exception:
+        pass
+    return False, None
+
+
 async def is_stale_news(topic, newest):
     """The freshness gate — True only when the topic is time-sensitive news whose newest coverage
     (`newest`, a YYYY-MM-DD string or None) is too old to brief as news today. Fail-open: an error
@@ -587,6 +622,96 @@ async def is_stale_news(topic, newest):
         return bool(re.match(r"\s*STALE\b", raw or "", re.I))
     except Exception:
         return False
+
+
+AUDIT_SYS = (
+    "You are a strict fact auditor. Given a briefing and its numbered sources, list the briefing's "
+    "key factual assertions — above all CURRENT-STATE claims (who holds a role, who manages, who "
+    "employs whom, who plays where today), plus headline figures and named events. For each, give "
+    "the number of one source that supports it, or the word UNSUPPORTED when no source does. Judge "
+    "ONLY against the sources; what you believe about the world does not count. Return ONLY JSON: "
+    '{"claims":[{"claim":"...","source":3},{"claim":"...","source":"UNSUPPORTED"}]}'
+)
+
+REVISE_SYS = (
+    "Revise the briefing below with surgical precision: the listed claims are NOT supported by its "
+    "sources and must be removed or hedged — drop the unsupported attribution, never substitute a "
+    "different specific. Change nothing else: keep every other sentence, citation marker, image "
+    "token, and block exactly as written. Output starts with the same 'HEADLINE: ' line (rewritten "
+    "only if it contains an unsupported claim), then a blank line, then the briefing."
+)
+
+
+async def _auditor(messages):
+    """The audit model: the coder endpoint when configured — a DIFFERENT model than the writer,
+    so the writer's priors can't validate their own fabrication — else the main model. Returns
+    (reply_text, auditor_name)."""
+    from . import coder  # lazy: avoids a circular load at import time
+    base, _model = coder._endpoint()
+    if base:
+        msg = await coder._llm(messages, 0.0)
+        return (msg.get("content") or ""), "coder"
+    return await _vera(messages, temperature=0.0), "main model (coder unconfigured)"
+
+
+def _parse_audit(raw):
+    """The audit verdict's unsupported claims, or None when the reply is unparseable."""
+    try:
+        j = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
+        claims = j.get("claims")
+        if not isinstance(claims, list):
+            return None
+        return [str(c.get("claim", "")).strip() for c in claims
+                if str(c.get("source", "")).strip().upper() == "UNSUPPORTED"
+                and str(c.get("claim", "")).strip()]
+    except Exception:
+        return None
+
+
+async def audit_claims(headline, body, sources, errs, title):
+    """Cross-model claim validation: the auditor checks the body against its own corpus;
+    unsupported claims go back to the main model for ONE surgical revision (re-audited for the
+    record only — the revision ships regardless). Returns (headline, body), possibly revised.
+    Machinery failure ships the original: the feed never starves on audit plumbing."""
+    corpus = _numbered_corpus(sources)
+
+    async def verdict():
+        raw, auditor = await _auditor(
+            [{"role": "system", "content": AUDIT_SYS},
+             {"role": "user", "content": f"Numbered sources:\n{corpus}\n\nBriefing:\n{body}"}])
+        return _parse_audit(raw), auditor
+
+    try:
+        unsupported, auditor = await verdict()
+        if unsupported is None:
+            errs.append(f"claim audit: {title} — audit unavailable (unparseable verdict from {auditor})")
+            return headline, body
+        if not unsupported:
+            errs.append(f"claim audit: {title} — clean ({auditor})")
+            return headline, body
+        revised = (await _vera(
+            [{"role": "system", "content": REVISE_SYS},
+             {"role": "user", "content": ("Unsupported claims:\n- " + "\n- ".join(unsupported)
+                                          + f"\n\nBriefing:\nHEADLINE: {headline or title}\n\n{body}")}],
+            temperature=0.2,
+        )).strip()
+        new_headline, new_body = _split_headline(revised)
+        if not new_body:
+            errs.append(f"claim audit: {title} — {len(unsupported)} unsupported, revision empty; shipped original")
+            return headline, body
+        record = f"claim audit: {title} — {len(unsupported)} unsupported, revised ({auditor})"
+        try:
+            body = new_body  # re-audit the revision for the record only
+            still, _ = await verdict()
+            if still:
+                record += f"; {len(still)} still flagged"
+        except Exception:
+            pass
+        errs.append(record)
+        return (new_headline or headline), new_body
+    except Exception as e:
+        errs.append(f"claim audit: {title} — audit unavailable ({e})")
+        return headline, body
 
 
 async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", errors=None):
@@ -631,6 +756,13 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     newest = _newest_published(sources)
     if await is_stale_news(topic, newest):
         errs.append(f"skipped (stale news): {topic.get('title')} — newest source {newest or 'undated'}")
+        return None
+
+    # Coherence gate — a corpus that drifted to a different subject skips the same way;
+    # a card must be about its topic, not about whatever the search happened to find.
+    off, found = await is_off_topic(topic, sources)
+    if off:
+        errs.append(f"skipped (off-topic corpus): {topic.get('title')} — corpus about {found}")
         return None
 
     # thread extraction — what's worth deepening (may be empty)
@@ -689,6 +821,10 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     headline, body = _split_headline(body)
     if not body:
         return None  # nothing synthesized — don't inject an empty card
+
+    # Cross-model claim validation — the coder audits the body against its own corpus and
+    # Vera revises once, BEFORE cover art (so the art prompt sees the corrected body).
+    headline, body = await audit_claims(headline, body, sources, errs, topic.get("title"))
 
     # Cover art: Vera writes a vibe-matching prompt; style rotates for a fresh feed.
     image_url = tint = None

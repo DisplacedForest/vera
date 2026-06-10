@@ -643,14 +643,19 @@ REVISE_SYS = (
 
 
 async def _auditor(messages):
-    """The audit model: the coder endpoint when configured — a DIFFERENT model than the writer,
-    so the writer's priors can't validate their own fabrication — else the main model. Returns
+    """The audit model: the coder endpoint when configured AND reachable — a DIFFERENT model
+    than the writer, so the writer's priors can't validate their own fabrication. The coder is
+    typically an on-demand server, so unreachable is a normal state, not an error: fall back to
+    a main-model self-audit (weaker, still better than none) and name the fallback. Returns
     (reply_text, auditor_name)."""
     from . import coder  # lazy: avoids a circular load at import time
     base, _model = coder._endpoint()
     if base:
-        msg = await coder._llm(messages, 0.0)
-        return (msg.get("content") or ""), "coder"
+        try:
+            msg = await coder._llm(messages, 0.0)
+            return (msg.get("content") or ""), "coder"
+        except Exception:
+            return await _vera(messages, temperature=0.0), "main model (coder unreachable)"
     return await _vera(messages, temperature=0.0), "main model (coder unconfigured)"
 
 

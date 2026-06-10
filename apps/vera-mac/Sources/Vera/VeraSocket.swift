@@ -5,6 +5,7 @@ import SocketIO
 enum StreamEvent: Sendable {
     case status(String)     // tool/progress line (knowledge_search, memory extraction, …)
     case content(String)    // assistant text SO FAR — cumulative, replace don't append
+    case sources([PulseSource])  // cited sources for the reply (drives the citation chips)
     case done
 }
 
@@ -252,6 +253,10 @@ final class VeraSocket: @unchecked Sendable {
 
         switch type {
         case "chat:completion":
+            if let rawSources = body["sources"] as? [[String: Any]] {
+                let mapped = OWUISources.parse(rawSources)
+                if !mapped.isEmpty { cont.yield(.sources(mapped)) }
+            }
             if let content = body["content"] as? String, !content.isEmpty {
                 cont.yield(.content(content))
             }

@@ -49,6 +49,7 @@ enum SelfTest {
                 switch ev {
                 case .status(let s): print("  · status: \(s)")
                 case .content(let c): out = c
+                case .sources: break
                 case .done: break
                 }
             }
@@ -65,6 +66,7 @@ enum SelfTest {
                 switch ev {
                 case .status(let s): toolStatuses.append(s); print("  · status: \(s)")
                 case .content(let c): kitchenReply = c
+                case .sources: break
                 case .done: break
                 }
             }
@@ -272,6 +274,51 @@ enum SelfTest {
                 print("SELFTEST ERROR: resource bundle unresolved (flame/mermaid missing)"); exit(1)
             }
             print("  resources OK — bundle resolved, flame + mermaid present")
+
+            // Chat history graph: automation-written chats store turns only in
+            // history.messages (id-keyed, parent-linked); the thread follows currentId.
+            let graphChat: [String: Any] = [
+                "messages": [["role": "user", "content": "only the user turn"]],
+                "history": [
+                    "currentId": "c",
+                    "messages": [
+                        "a": ["id": "a", "role": "user", "content": "q1"],
+                        "b": ["id": "b", "role": "assistant", "content": "r1", "parentId": "a"],
+                        "c": ["id": "c", "role": "user", "content": "q2", "parentId": "b"],
+                        "x": ["id": "x", "role": "assistant", "content": "abandoned branch", "parentId": "a"],
+                    ],
+                ],
+            ]
+            let ordered = OWUIClient.ChatHistory.orderedMessages(graphChat)
+            guard ordered.count == 3,
+                  ordered.map({ $0["content"] as? String }) == ["q1", "r1", "q2"] else {
+                print("SELFTEST ERROR: history graph reconstruction"); exit(1)
+            }
+            let flatChat: [String: Any] = ["messages": [["role": "user", "content": "flat"]]]
+            guard OWUIClient.ChatHistory.orderedMessages(flatChat).count == 1 else {
+                print("SELFTEST ERROR: history flat-list fallback"); exit(1)
+            }
+            print("  chat history OK — graph walk follows currentId, flat fallback intact")
+
+            // Reasoning details blocks are stripped at render; tool_calls handling unchanged.
+            let reasoned = "<details type=\"reasoning\" done=\"true\"><summary>Thought</summary>thinking…</details>\nThe actual answer."
+            let (cleanR, callsR) = ToolCallParser.parse(reasoned)
+            guard cleanR == "The actual answer.", callsR.isEmpty else {
+                print("SELFTEST ERROR: reasoning block strip"); exit(1)
+            }
+            print("  reasoning strip OK — details removed, reply intact")
+
+            // OWUI source payloads map to numbered chips in payload order.
+            let mapped = OWUISources.parse([
+                ["source": ["name": "BBC Sport"], "metadata": [["source": "https://bbc.co.uk/a"]]],
+                ["source": ["name": "https://theathletic.com/b"]],
+                ["source": ["name": "no url here"]],  // unresolvable -> dropped
+            ])
+            guard mapped.count == 2, mapped[0].n == 1, mapped[0].title == "BBC Sport",
+                  mapped[0].url == "https://bbc.co.uk/a", mapped[1].url == "https://theathletic.com/b" else {
+                print("SELFTEST ERROR: OWUI source mapping"); exit(1)
+            }
+            print("  source mapping OK — \(mapped.count) chips, unresolvable dropped")
         } catch {
             print("SELFTEST ERROR: \(error)")
             exit(1)

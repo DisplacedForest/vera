@@ -181,25 +181,6 @@ func pulseBlocks(_ body: String, images: [PulseInlineImage]) -> [PulseBlock] {
     return blocks
 }
 
-/// Pull EVERY `[n]` / `[n,m]` citation group from a paragraph (Vera cites mid-sentence, not just at
-/// the end) → (clean text with refs removed + spacing tidied, aggregated source numbers).
-func extractRefs(_ text: String) -> (String, [Int]) {
-    // Match a bracket group that starts with a digit (so it never eats an [[img:N]] token).
-    guard let re = try? NSRegularExpression(pattern: "\\s*\\[[0-9][0-9,\\s]*\\]") else { return (text, []) }
-    let ns = text as NSString
-    let matches = re.matches(in: text, range: NSRange(location: 0, length: ns.length))
-    guard !matches.isEmpty else { return (text, []) }
-    var nums: [Int] = []
-    for m in matches {
-        nums += ns.substring(with: m.range).components(separatedBy: CharacterSet(charactersIn: "[], ")).compactMap { Int($0) }
-    }
-    var clean = re.stringByReplacingMatches(in: text, range: NSRange(location: 0, length: ns.length), withTemplate: "")
-    // Tidy the gaps the refs left behind: space-before-punctuation, doubled spaces.
-    clean = clean.replacingOccurrences(of: "\\s+([.,;:!?])", with: "$1", options: .regularExpression)
-    clean = clean.replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
-    return (clean.trimmingCharacters(in: .whitespacesAndNewlines), Array(Set(nums)).sorted())
-}
-
 // MARK: - Block views
 
 /// One body paragraph + its citation chips.
@@ -234,24 +215,6 @@ extension View {
         onHover { inside in
             if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
-    }
-}
-
-/// A tappable per-paragraph source pill (favicon + host) that opens the cited page.
-struct CitationChip: View {
-    let source: PulseSource
-    var body: some View {
-        HStack(spacing: 5) {
-            Favicon(urlString: source.url)
-            Text(sourceHost(source.url)).font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Theme.textSecondary).lineLimit(1)
-        }
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(Theme.surface).clipShape(Capsule())
-        .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
-        .contentShape(Capsule())
-        .onTapGesture { openExternal(source.url) }
-        .pointerCursor()
     }
 }
 

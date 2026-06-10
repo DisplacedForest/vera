@@ -171,14 +171,14 @@ struct OWUIClient: Sendable {
         return (200..<300).contains(code)
     }
 
-    /// Load a chat's message history from OWUI (uses the flat `chat.messages` array). A promoted Pulse
-    /// briefing carries vera-* markers in its first assistant turn — reconstruct the rich card so the
-    /// chat renders sources/inline photos/chips (not raw [n] / stripped prose).
+    /// Load a chat's message history from OWUI. A promoted Pulse briefing carries vera-* markers
+    /// in its first assistant turn — reconstruct the rich card so the chat renders sources/inline
+    /// photos/chips (not raw [n] / stripped prose).
     func loadMessages(chatID: String) async -> [Message] {
         guard let (data, _) = try? await URLSession.shared.data(for: request("/api/v1/chats/\(chatID)")),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let chat = obj["chat"] as? [String: Any],
-              let msgs = chat["messages"] as? [[String: Any]] else { return [] }
+              let chat = obj["chat"] as? [String: Any] else { return [] }
+        let msgs = ChatHistory.orderedMessages(chat)
         var title = (chat["title"] as? String) ?? "Pulse"
         if title.hasPrefix("Pulse · ") { title = String(title.dropFirst("Pulse · ".count)) }
         return msgs.compactMap { m in
@@ -191,7 +191,29 @@ struct OWUIClient: Sendable {
                                      sourceList: p.sources, inlineImages: p.inlineImages, body: p.body)
                 return Message(role: .assistant, text: p.body, pulse: card)
             }
-            return Message.assistant(from: PulseMarkers.strip(content))
+            let cited = OWUISources.parse(m["sources"] as? [[String: Any]] ?? [])
+            return Message.assistant(from: PulseMarkers.strip(content), sources: cited)
+        }
+    }
+
+    /// OWUI stores a chat's turns twice: the flat `chat.messages` list and the canonical
+    /// `chat.history.messages` graph (id-keyed nodes, `parentId` links, `currentId` at the tip).
+    /// Automation-written chats populate only the graph, so the thread is reconstructed from it
+    /// when present; the flat list is the fallback for records without one.
+    enum ChatHistory {
+        static func orderedMessages(_ chat: [String: Any]) -> [[String: Any]] {
+            let flat = chat["messages"] as? [[String: Any]] ?? []
+            guard let hist = chat["history"] as? [String: Any],
+                  let nodes = hist["messages"] as? [String: [String: Any]], !nodes.isEmpty,
+                  let tip = hist["currentId"] as? String else { return flat }
+            var out: [[String: Any]] = []
+            var seen = Set<String>()
+            var id: String? = tip
+            while let cur = id, let node = nodes[cur], seen.insert(cur).inserted {
+                out.append(node)
+                id = node["parentId"] as? String
+            }
+            return out.isEmpty ? flat : out.reversed()
         }
     }
 

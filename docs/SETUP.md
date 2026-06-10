@@ -22,10 +22,12 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 ## 2. vera-api
 
 ```sh
-git clone <this repo> && cd vera
+git clone https://github.com/DisplacedForest/vera.git && cd vera
 cp .env.example .env     # fill in what you run — everything unset degrades gracefully
-docker compose up -d
+docker compose up -d     # pulls the released ghcr.io/displacedforest/vera-api image
 ```
+
+Compose pulls the released image by default. To run from source instead, uncomment `build: services/vera-api` in `docker-compose.yml` and use `docker compose up -d --build`.
 
 Then read the **config report** — vera-api prints exactly what is wired at startup, and it is the first thing to check when something is off:
 
@@ -68,7 +70,9 @@ If you install the Mac app, its integration store performs the per-integration O
 
 ## 4. The Mac app
 
-Build from source (macOS 14+, Swift toolchain):
+**From a release** (macOS 14+): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Vera.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch — right-click → **Open** once, and it runs normally from then on. The app checks Releases and can update itself in place.
+
+**From source** (Swift toolchain):
 
 ```sh
 cd apps/vera-mac

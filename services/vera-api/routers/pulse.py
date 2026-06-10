@@ -266,8 +266,10 @@ CARD_SYS = (
     "competition names may be used only as they appear in the sources. When a claim is notable "
     "(a record, a stat, a named person), say the actual figure or detail rather than gesturing at it.\n"
     "Anchor the briefing in time: state when events happened, prefer the most recent sources when they "
-    "conflict, and never present a dated event as current. If everything in the sources predates today by "
-    "a season or more, present the briefing as background or a retrospective, not as news.\n"
+    "conflict, and never present a dated event as current. Every dated event gets an absolute date — "
+    "month and year (e.g. 'in January 2025'), never a bare month or 'recently'. If everything in the "
+    "sources predates today by a season or more, present the briefing as background or a retrospective, "
+    "not as news.\n"
     "End EVERY paragraph with citation references to the sources you used for it, in square brackets: [2] or [1,4].\n"
     "Close with a short 'so what' paragraph: the implication, or what to watch next.\n"
     "Let depth follow the evidence. Write only as many paragraphs as the sources genuinely support (hard ceiling: "
@@ -556,6 +558,37 @@ async def already_covered(topic, user_id):
     return None
 
 
+FRESH_SYS = (
+    "Today is {today}. You judge whether a Pulse briefing topic is STALE NEWS: a time-sensitive "
+    "news topic (a signing, a release, an announcement, a result) whose newest available coverage "
+    "is too old for the event to still be briefed as news today. Evergreen subjects — research "
+    "findings, techniques, background, analysis of standing situations — are NEVER stale, whatever "
+    "their source age. Answer ONLY the single word STALE or FRESH."
+)
+
+
+def _newest_published(sources):
+    """The newest publish date (YYYY-MM-DD) across the corpus, or None when nothing is dated."""
+    return max((s["published"] for s in sources if s.get("published")), default=None)
+
+
+async def is_stale_news(topic, newest):
+    """The freshness gate — True only when the topic is time-sensitive news whose newest coverage
+    (`newest`, a YYYY-MM-DD string or None) is too old to brief as news today. Fail-open: an error
+    or an unparseable verdict can never suppress research."""
+    try:
+        raw = await _vera(
+            [{"role": "system", "content": FRESH_SYS.format(today=time.strftime("%Y-%m-%d"))},
+             {"role": "user", "content": (f"Topic: {topic.get('title')}\n"
+                                          f"Angle: {topic.get('angle', '')}\n"
+                                          f"Newest source date: {newest or 'no dated sources'}")}],
+            temperature=0.0,
+        )
+        return bool(re.match(r"\s*STALE\b", raw or "", re.I))
+    except Exception:
+        return False
+
+
 async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", errors=None):
     """The per-topic deep-research pipeline: broad search -> thread extraction ->
     follow-up searches -> real imagery -> first-person synthesis -> cover art -> summary -> inject.
@@ -592,6 +625,13 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
         SearchRequest(query=topic.get("query") or topic.get("title"), fetch_pages=4, max_results=8)
     )
     add_sources(broad.results)
+
+    # Freshness gate — stale news skips like a dup, before any expensive work; the delivery
+    # loop backfills the slot with a replacement topic.
+    newest = _newest_published(sources)
+    if await is_stale_news(topic, newest):
+        errs.append(f"skipped (stale news): {topic.get('title')} — newest source {newest or 'undated'}")
+        return None
 
     # thread extraction — what's worth deepening (may be empty)
     threads = []

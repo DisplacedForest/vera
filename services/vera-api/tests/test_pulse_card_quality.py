@@ -239,3 +239,16 @@ def test_audit_empty_revision_ships_original(monkeypatch):
 def test_card_sys_carries_current_state_rule():
     card = pulse.CARD_SYS.format(img_instr="", who="Z", today="2026-06-10")
     assert "Current-state attributions" in card and "leave the holder unnamed" in card
+
+
+def test_auditor_falls_back_when_coder_unreachable(monkeypatch):
+    from routers import coder
+    monkeypatch.setattr(coder, "_endpoint", lambda: ("http://coder.example:8084", "m"))
+    async def coder_down(messages, temperature, tools=None):
+        raise RuntimeError("connect call failed")
+    monkeypatch.setattr(coder, "_llm", coder_down)
+    async def vera(messages, temperature=0.4):
+        return '{"claims":[]}'
+    monkeypatch.setattr(pulse, "_vera", vera)
+    raw, auditor = _run(pulse._auditor([{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]))
+    assert auditor == "main model (coder unreachable)" and raw == '{"claims":[]}'

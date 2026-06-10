@@ -88,6 +88,7 @@ private struct Sidebar: View {
             }
 
             Spacer(minLength: 0)
+            UpdateBanner()
             AccountRow()
         }
     }

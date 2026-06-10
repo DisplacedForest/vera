@@ -10,6 +10,7 @@ struct SettingsView: View {
             ModelTab().tabItem { Label("Model", systemImage: "cpu") }
             ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }
             IdentityTab().tabItem { Label("Identity", systemImage: "person") }
+            AboutTab().tabItem { Label("About", systemImage: "info.circle") }
         }
         .frame(width: 560)
         .preferredColorScheme(.dark)
@@ -100,6 +101,65 @@ private struct IdentityTab: View {
             SaveSection()
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct AboutTab: View {
+    @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var updates: UpdateChecker
+    @State private var serverVersion: String?
+
+    var body: some View {
+        Form {
+            Section("Versions") {
+                LabeledContent("App", value: AppVersion.current)
+                LabeledContent("vera-api", value: serverVersion ?? "—")
+                if let server = serverVersion,
+                   Semver.minor(server) != Semver.minor(AppVersion.current) {
+                    Label("App and server minor versions differ — update the older side when convenient.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            Section("Updates") {
+                if AppVersion.isSelfBuilt {
+                    Text("Built from source — update with git pull.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                } else {
+                    HStack(spacing: 10) {
+                        Button(updates.checking ? "Checking…" : "Check for Updates") {
+                            Task { await updates.check(manual: true) }
+                        }
+                        .disabled(updates.checking)
+                        if let release = updates.available {
+                            Button("Install \(release.tag_name)") { Task { await updates.install() } }
+                                .disabled(updates.installing)
+                        }
+                        if let result = updates.lastResult {
+                            Text(result).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+            Section("Project") {
+                Button("github.com/\(UpdateChecker.repo)") {
+                    openExternal("https://github.com/\(UpdateChecker.repo)")
+                }
+                .buttonStyle(.link)
+            }
+        }
+        .formStyle(.grouped)
+        .task { await loadServerVersion() }
+    }
+
+    private func loadServerVersion() async {
+        let base = config["vera_api_base"].trimmingCharacters(in: .whitespaces)
+        guard !base.isEmpty, let url = URL(string: "\(base)/version") else { return }
+        if let (data, _) = try? await URLSession.shared.data(from: url),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            serverVersion = obj["version"] as? String
+        }
     }
 }
 

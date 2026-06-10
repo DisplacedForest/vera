@@ -6,10 +6,16 @@ import AVFoundation
 @MainActor
 enum SelfTest {
     static func run() async {
+        runPure()
         guard let cfg = OWUIConfig.load() else {
-            print("no OWUI config — set OWUI_BASE + OWUI_KEY (or ~/.vera/config.json)")
-            exit(1)
+            print("SELFTEST OK (offline) — no OWUI config (~/.vera/config.json), live checks skipped")
+            exit(0)
         }
+        await runLive(cfg)
+    }
+
+    /// Live checks against the configured OWUI / vera-api deployment.
+    private static func runLive(_ cfg: OWUIConfig) async {
         let client = OWUIClient(config: cfg)
         print("OWUI: \(cfg.baseURL.absoluteString)   model: \(cfg.model)")
         do {
@@ -83,6 +89,33 @@ enum SelfTest {
             guard before == after else { print("SELFTEST ERROR: toolIds round-trip changed state"); exit(1) }
             print("  toolIds round-trip OK: \(after)")
 
+            // Image search endpoint (vera-api). Best-effort (needs a configured vera-api).
+            if let apiBase = cfg.veraAPIBase {
+                var iReq = URLRequest(url: apiBase.appendingPathComponent("/images/search"))
+                iReq.httpMethod = "POST"; iReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                iReq.httpBody = try JSONSerialization.data(withJSONObject: ["query": "coastal lighthouse", "max_results": 3])
+                if let (iData, _) = try? await URLSession.shared.data(for: iReq),
+                   let iObj = try? JSONSerialization.jsonObject(with: iData) as? [String: Any] {
+                    print("  images/search OK — \((iObj["results"] as? [[String: Any]])?.count ?? 0) hits")
+                } else {
+                    print("  images/search SKIP (vera-api not reachable / not deployed)")
+                }
+            } else {
+                print("  images/search SKIP (vera-api base not configured)")
+            }
+
+            print("SELFTEST OK")
+            exit(0)
+        } catch {
+            print("SELFTEST ERROR: \(error)")
+            exit(1)
+        }
+    }
+
+    /// Pure, local checks — no network, no config required. CI runs exactly these; live
+    /// checks follow only when an OWUI config exists.
+    private static func runPure() {
+        do {
             // vera:ask block parses out of an assistant reply (pure, local).
             let demo = "Sure, happy to help.\n```vera:ask\n{\"question\":\"Pick one\",\"multiSelect\":false,\"options\":[{\"label\":\"A\",\"description\":\"first\"},{\"label\":\"B\",\"description\":\"second\"}]}\n```"
             let (clean, parsedAsk) = VeraAsk.parse(demo)
@@ -133,21 +166,6 @@ enum SelfTest {
                 print("SELFTEST ERROR: pulse block parse"); exit(1)
             }
             print("  pulse markers OK — \(pm.sources.count) sources, \(pm.inlineImages.count) inline, \(paras.count) paras")
-
-            // Image search endpoint (vera-api). Best-effort (needs a configured vera-api).
-            if let apiBase = cfg.veraAPIBase {
-                var iReq = URLRequest(url: apiBase.appendingPathComponent("/images/search"))
-                iReq.httpMethod = "POST"; iReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                iReq.httpBody = try JSONSerialization.data(withJSONObject: ["query": "coastal lighthouse", "max_results": 3])
-                if let (iData, _) = try? await URLSession.shared.data(for: iReq),
-                   let iObj = try? JSONSerialization.jsonObject(with: iData) as? [String: Any] {
-                    print("  images/search OK — \((iObj["results"] as? [[String: Any]])?.count ?? 0) hits")
-                } else {
-                    print("  images/search SKIP (vera-api not reachable / not deployed)")
-                }
-            } else {
-                print("  images/search SKIP (vera-api base not configured)")
-            }
 
             // Presentation block parsing (pure, local).
             let blockReply = "Compare:\n\n```vera:stats\n{\"cards\":[{\"value\":\"33\",\"label\":\"goals\",\"sub\":\"69 games\"}]}\n```\n\nAnd the trend:\n\n```vera:chart\n{\"type\":\"bar\",\"yLabel\":\"goals\",\"series\":[{\"name\":\"Openda\",\"points\":[{\"x\":\"23-24\",\"y\":14},{\"x\":\"24-25\",\"y\":2}]}]}\n```\n\nBottom line."
@@ -228,8 +246,23 @@ enum SelfTest {
             try? FileManager.default.removeItem(at: tmp.deletingLastPathComponent())
             print("  config round-trip OK — strings + unknown keys preserved")
 
-            print("SELFTEST OK")
-            exit(0)
+            // Update semver compare: the decision table behind the update banner.
+            let semverCases: [(String, String, Int)] = [
+                ("0.1.0", "0.1.0", 0),       // equal -> no banner
+                ("0.1.0", "v0.1.0", 0),      // tag prefix tolerated
+                ("0.1.0", "0.1.1", -1),      // patch-newer release
+                ("0.1.0", "0.2.0", -1),      // minor-newer release
+                ("0.2.0", "0.1.9", 1),       // running build ahead
+                ("0.1", "0.1.0", 0),         // ragged lengths
+                ("0.1.0", "garbage", 1),     // junk tag can never look newer
+            ]
+            for (a, b, want) in semverCases where Semver.compare(a, b) != want {
+                print("SELFTEST ERROR: semver compare \(a) vs \(b)"); exit(1)
+            }
+            guard Semver.minor("0.3.1") == 3, Semver.minor("v1.2.0") == 2 else {
+                print("SELFTEST ERROR: semver minor extraction"); exit(1)
+            }
+            print("  update semver OK — \(semverCases.count) compare cases, minor extraction")
         } catch {
             print("SELFTEST ERROR: \(error)")
             exit(1)

@@ -1,7 +1,9 @@
 import Foundation
 
 /// Vera's stored model record (raw OWUI JSON) + convenience accessors.
-struct VeraModel {
+/// @unchecked: `raw` is a parsed-JSON value copied at decode time and never mutated across
+/// concurrency domains — the dictionary type just can't prove that to the compiler.
+struct VeraModel: @unchecked Sendable {
     var raw: [String: Any]
     var toolIds: [String] { (raw["meta"] as? [String: Any])?["toolIds"] as? [String] ?? [] }
 }

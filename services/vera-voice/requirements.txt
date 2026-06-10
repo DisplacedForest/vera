@@ -1,0 +1,10 @@
+# vera-voice deps. Installed in ~/vera-voice/.venv on the voice host.
+# Heavy MLX models (mlx-audio bundles Kokoro-82M; mlx-whisper pulls whisper-large-v3-turbo)
+# were already present; fastapi/uvicorn/python-multipart added for the service.
+mlx-audio
+mlx-whisper
+soundfile
+scipy
+fastapi
+uvicorn
+python-multipart

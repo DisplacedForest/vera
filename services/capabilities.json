@@ -1,0 +1,53 @@
+{
+  "_comment": "Vera's capability registry — the catalog the tool-selection harness is built from. Edit this, then run scripts/vera-sync-capabilities.py to regenerate the tool-selection catalog in Vera's OWUI system prompt. 'node' makes cross-node capabilities explicit so they slot in as one entry when that node is up.",
+  "capabilities": [
+    {
+      "tool": "web_search", "node": "api",
+      "summary": "Autonomous web search (SearXNG + Playwright page rendering).",
+      "use_when": "You need current/online info or a quick fact you don't already know.",
+      "avoid_when": "The user wants a thorough multi-source report (use deep_research), or it's local/personal data."
+    },
+    {
+      "tool": "deep_research", "node": "api",
+      "summary": "Multi-source, cited research report (browse, synthesize, plus local knowledge). Takes 1-3 min.",
+      "use_when": "A question needs thoroughness, comparison, or a sourced report.",
+      "avoid_when": "A single quick fact (use web_search instead)."
+    },
+    {
+      "tool": "execute_code", "node": "sandbox",
+      "summary": "Run Python in an isolated sandbox (pandas/numpy/matplotlib).",
+      "use_when": "Exact math, statistics, data analysis, date/unit conversions, or parsing/transforming files. Prefer running code over hand-calculating.",
+      "avoid_when": "Trivial arithmetic you can do reliably in your head."
+    },
+    {
+      "tool": "kitchen_status", "node": "api",
+      "summary": "Live kitchen state: low/expiring stock (Grocy) + recipes and today's meal plan (Mealie).",
+      "use_when": "The user asks what's low/expiring, what to cook or what to buy, or about meals.",
+      "avoid_when": "General cooking questions unrelated to their actual stock."
+    },
+    {
+      "tool": "knowledge_lookup", "node": "api",
+      "summary": "Read durable home facts from Vera's knowledge store (server, network gear, appliances, HVAC, vehicles, wine batches).",
+      "use_when": "The user asks about something durable they own or how the home/server/network is configured (e.g. 'what GPU is in the server', 'when was the water heater installed').",
+      "avoid_when": "Live readings like current CPU/temp/clients (that is telemetry - use home_assistant or the server status tools)."
+    },
+    {
+      "tool": "knowledge_record", "node": "api",
+      "summary": "Record or update a durable home fact (preview-then-confirm; first call returns a preview + token, second call with the token commits).",
+      "use_when": "The user tells you something durable changed or worth remembering about their home/gear ('remember I replaced the GPU with a 5090', 'the water heater is a Rheem from 2021').",
+      "avoid_when": "Personal preferences or episodic notes (that is memory, not home facts); never commit without showing the preview and getting a yes."
+    },
+    {
+      "tool": "home_assistant", "node": "api->HA",
+      "summary": "Control and query Home Assistant devices and entity states.",
+      "use_when": "The user asks to control a device or about home state (lights, climate, sensors).",
+      "avoid_when": "Currently offline - the HA token needs renewal."
+    },
+    {
+      "tool": "see_image", "node": "vision-worker",
+      "summary": "Describe and read attached images and PDFs (Qwen3-VL vision model).",
+      "use_when": "The user attaches an image or document and asks about it.",
+      "avoid_when": "No image/doc attached. Runs on the on-demand vision worker - unavailable when it is offline."
+    }
+  ]
+}

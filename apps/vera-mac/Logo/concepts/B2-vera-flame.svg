@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="232" fill="#0E0F12"/>
+  <!-- Hearth flame, but the negative space is a crisp V — Vera literally inside the fire.
+       Curved organic flame vs. straight-cut V = the "second look" that makes it not-generic. -->
+  <path d="M 512 232
+           C 372 384 326 520 326 614
+           C 326 736 418 800 512 800
+           C 606 800 698 736 698 614
+           C 698 520 652 384 512 232 Z"
+        fill="#E8923B"/>
+  <!-- carved V (background colour) -->
+  <path d="M 424 472 L 512 690 L 600 472"
+        fill="none" stroke="#0E0F12" stroke-width="70"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

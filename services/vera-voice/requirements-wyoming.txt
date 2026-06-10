@@ -1,0 +1,6 @@
+# vera-voice Wyoming deps — installed in ~/vera-voice/.venv-wyoming on the voice host
+# (separate from the batch service's .venv so the streaming servers never disturb it).
+wyoming
+parakeet-mlx
+mlx-audio
+mlx-whisper

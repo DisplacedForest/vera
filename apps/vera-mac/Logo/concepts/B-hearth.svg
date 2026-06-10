@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="232" fill="#0E0F12"/>
+  <!-- Hearth: the home server is the fire that stays lit for you. Outer ember flame... -->
+  <path d="M 512 250
+           C 372 392 332 520 332 612
+           C 332 730 420 792 512 792
+           C 604 792 692 730 692 612
+           C 692 520 652 392 512 250 Z"
+        fill="#E8923B"/>
+  <!-- ...inner negative-space flame reads as a V (Vera) -->
+  <path d="M 512 470
+           C 452 540 436 588 436 626
+           C 436 690 470 724 512 724
+           C 554 724 588 690 588 626
+           C 588 588 572 540 512 470 Z"
+        fill="#0E0F12"/>
+</svg>

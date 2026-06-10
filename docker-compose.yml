@@ -1,0 +1,23 @@
+# Vera backend — one container, every capability a router inside it.
+#
+#   cp .env.example .env   # fill in your endpoints (everything unset degrades gracefully)
+#   docker compose up -d
+#   curl localhost:8089/health && docker compose logs vera-api | head -40   # the config report
+#
+# The built-in scheduler runs Pulse, weather, signals, grooming, home model/reconcile,
+# heartbeat, healthcheck, updates, and media curation — no external cron or n8n needed.
+services:
+  vera-api:
+    build: services/vera-api
+    container_name: vera-api
+    restart: unless-stopped
+    ports:
+      - "8089:8080"
+    env_file:
+      - .env
+    volumes:
+      - vera-data:/data
+      - ./VERSION:/app/VERSION:ro
+
+volumes:
+  vera-data:

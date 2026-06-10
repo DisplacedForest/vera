@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="232" fill="#0E0F12"/>
+  <!-- V that doubles as a check: Vera (V) + verus / true / verified -->
+  <path d="M 296 356 L 460 688 L 744 296"
+        fill="none" stroke="#ECEAE3" stroke-width="78"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- ember at the turn: the always-lit home node -->
+  <circle cx="460" cy="688" r="40" fill="#E8923B"/>
+</svg>

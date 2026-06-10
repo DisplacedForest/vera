@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="232" fill="#0E0F12"/>
+  <!-- The hearth itself: a warm arched mouth (fireplace / always-open door home) in off-white,
+       an ember flame lit inside. Reads as "home", not "fire app". -->
+  <path d="M 318 706 L 318 512 A 194 194 0 0 1 706 512 L 706 706 Z"
+        fill="none" stroke="#ECEAE3" stroke-width="60" stroke-linejoin="round"/>
+  <!-- ember flame inside the hearth -->
+  <path d="M 512 470
+           C 446 532 426 588 426 628
+           C 426 700 466 736 512 736
+           C 558 736 598 700 598 628
+           C 598 588 578 532 512 470 Z"
+        fill="#E8923B"/>
+</svg>

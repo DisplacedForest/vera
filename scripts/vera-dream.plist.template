@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Nightly Dreaming timer — runs on the machine that serves the dream/coder LLM
+     (it must start that model server locally, which is why this stays launchd).
+     Install on that machine:
+       cp scripts/vera-dream.sh ~/.vera/vera-dream.sh && chmod +x ~/.vera/vera-dream.sh
+       scripts/install-launchd.sh scripts/vera-dream.plist.template
+     Put KNOWLEDGE_AGENT_TOKEN + VERA_API (matching vera-api's .env) in ~/.vera/dream.env. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.vera.dream</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>@HOME@/.vera/vera-dream.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/tmp/vera-dream.log</string>
+  <key>StandardErrorPath</key><string>/tmp/vera-dream.err</string>
+</dict>
+</plist>

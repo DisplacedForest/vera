@@ -1,0 +1,30 @@
+# Secrets — never commit
+.env
+
+# Swift / SwiftPM
+.build/
+build/
+*.app
+*.xcodeproj
+DerivedData/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Logs / scratch
+*.log
+/tmp/
+.superpowers/
+
+# Internal reference docs — local only, never tracked, never shipped
+/internal/
+
+# Agent directives — local working files, never tracked, never published
+/AGENTS.md
+/CLAUDE.md

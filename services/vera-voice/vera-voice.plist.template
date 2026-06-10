@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd agent for vera-voice: starts the service at login and keeps it alive.
+     IMPORTANT: launchd cannot read ~/Desktop (TCC-protected), so the runtime is DEPLOYED
+     out of the repo to ~/vera-voice (holds app.py, run.sh, and the .venv). Repo is source.
+     Deploy + install on the voice host: scripts/deploy-vera-voice.sh -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.vera.voice</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@HOME@/vera-voice/run.sh</string>
+  </array>
+  <key>WorkingDirectory</key><string>@HOME@/vera-voice</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>@HOME@/Library/Logs/vera-voice.log</string>
+  <key>StandardErrorPath</key><string>@HOME@/Library/Logs/vera-voice.err</string>
+</dict>
+</plist>

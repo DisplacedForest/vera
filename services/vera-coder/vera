@@ -1,0 +1,30 @@
+#!/bin/sh
+# `vera` — local, offline coding agent.
+#
+# Wakes the on-demand coder LLM server on its host (if a wake host is configured), then
+# launches opencode pointed at it. The main assistant LLM is never touched.
+#
+# Install: cp to ~/.local/bin/vera && chmod +x ~/.local/bin/vera
+# Config (env or shell profile):
+#   VERA_CODER_ENDPOINT   OpenAI-compatible /v1 of the coder server (default http://localhost:8084/v1)
+#   VERA_CODER_SSH_HOST   optional ssh alias that can run '~/.vera/vera-coder.sh ensure' to wake it
+#   VERA_CODER_MODEL      opencode model id (provider/model)
+set -eu
+
+CODER_HOST="${VERA_CODER_SSH_HOST:-}"
+ENDPOINT="${VERA_CODER_ENDPOINT:-http://localhost:8084/v1}"
+MODEL="${VERA_CODER_MODEL:-vera/mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit-dwq-v2}"
+
+# Bring the coder up if it isn't already serving.
+if ! curl -sf "$ENDPOINT/models" >/dev/null 2>&1; then
+  if [ -n "$CODER_HOST" ]; then
+    echo "vera: waking the coder on $CODER_HOST (first launch loads the model, ~20-30s)…"
+    ssh "$CODER_HOST" '~/.vera/vera-coder.sh ensure' \
+      || { echo "vera: could not start the coder server on $CODER_HOST" >&2; exit 1; }
+  else
+    echo "vera: coder server unreachable at $ENDPOINT (set VERA_CODER_ENDPOINT / VERA_CODER_SSH_HOST)" >&2
+    exit 1
+  fi
+fi
+
+exec opencode -m "$MODEL" "$@"

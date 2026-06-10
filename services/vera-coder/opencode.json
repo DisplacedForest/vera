@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "vera": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Vera (local coder)",
+      "options": {
+        "baseURL": "http://localhost:8084/v1"
+      },
+      "models": {
+        "mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit-dwq-v2": {
+          "name": "Qwen3-Coder 30B-A3B (local)",
+          "limit": {
+            "context": 131072,
+            "output": 65536
+          }
+        }
+      }
+    }
+  }
+}

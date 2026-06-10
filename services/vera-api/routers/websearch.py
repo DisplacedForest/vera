@@ -28,6 +28,7 @@ class SearchResult(BaseModel):
     url: str
     content: str
     rendered: bool
+    published: str | None = None  # source publish date (YYYY-MM-DD) when the engine provides one
 
 
 class SearchResponse(BaseModel):
@@ -60,6 +61,7 @@ async def search(req: SearchRequest) -> SearchResponse:
             "url": x.get("url", ""),
             "content": (x.get("content") or "").strip(),
             "rendered": False,
+            "published": (x.get("publishedDate") or "")[:10] or None,
         }
         for x in raw
     ]

@@ -26,7 +26,7 @@ enum Shot {
             )
         } else if view == "blocks" {
             let demo = """
-            Here's how Openda's output stacks up — and why the Juventus dip is system, not talent.
+            Here's how Openda's output stacks up — and why the Juventus dip is system, not talent. [1]
 
             ```vera:stats
             {"cards":[{"value":"33","label":"goals","sub":"69 Bundesliga games"},{"value":"0.23","label":"G+A / 90","sub":"at Juventus"},{"value":"6.64","label":"xG","sub":"this season"}]}
@@ -41,11 +41,13 @@ enum Shot {
             {"type":"groupedBar","title":"League goals by season","yLabel":"goals","series":[{"name":"Openda","points":[{"x":"22-23","y":11},{"x":"23-24","y":14},{"x":"24-25","y":2}]}]}
             ```
 
-            Bottom line: a system that fit his runs, and one that didn't.
+            Bottom line: a system that fit his runs, and one that didn't. [1,2]
             """
+            let demoSources = [PulseSource(n: 1, title: "BBC Sport", url: "https://www.bbc.co.uk/sport"),
+                               PulseSource(n: 2, title: "The Athletic", url: "https://theathletic.com")]
             content = AnyView(
                 VStack(alignment: .leading, spacing: 16) {
-                    MessageRow(message: Message(role: .assistant, text: demo))
+                    MessageRow(message: Message(role: .assistant, text: demo, sources: demoSources))
                 }
                 .padding(24).frame(width: size.width, height: size.height, alignment: .top)
                 .background(Theme.bg).environmentObject(store)

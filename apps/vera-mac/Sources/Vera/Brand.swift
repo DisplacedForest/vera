@@ -56,12 +56,14 @@ enum Brand {
 }
 
 /// The Vera flame mark at a given size — no background tile, so it sits directly on the UI.
-/// Falls back to a filled accent circle. When `animated` is true it "breathes" (scale + opacity +
-/// a soft accent glow, gently rotating) to signal Vera is thinking — like Claude's living mark.
+/// Falls back to a filled accent circle. When `animated` is true it breathes in place — scale +
+/// opacity + a soft accent glow only, never rotation or layout movement. The loop is a
+/// phaseAnimator that exists only on the animated branch, so it is structurally incapable of
+/// outliving `animated == false`: the instant generation ends the static glyph renders at
+/// identity transform.
 struct VeraMark: View {
     var size: CGFloat = 26
     var animated: Bool = false
-    @State private var pulse = false
 
     private var glyph: some View {
         Group {
@@ -71,17 +73,20 @@ struct VeraMark: View {
                 Circle().fill(Theme.accent).frame(width: size, height: size)
             }
         }
+        .frame(width: size, height: size)
     }
 
     var body: some View {
-        glyph
-            .scaleEffect(animated ? (pulse ? 1.10 : 0.90) : 1.0)
-            .opacity(animated ? (pulse ? 1.0 : 0.65) : 1.0)
-            .rotationEffect(.degrees(animated ? (pulse ? 6 : -6) : 0))
-            .shadow(color: Theme.accent.opacity(animated && pulse ? 0.6 : 0.0), radius: animated ? 7 : 0)
-            .animation(animated ? .easeInOut(duration: 0.85).repeatForever(autoreverses: true) : .easeOut(duration: 0.2),
-                       value: pulse)
-            .onChange(of: animated) { _, on in pulse = on }
-            .onAppear { if animated { pulse = true } }
+        if animated {
+            glyph
+                .phaseAnimator([false, true]) { view, phase in
+                    view
+                        .scaleEffect(phase ? 1.06 : 0.94)
+                        .opacity(phase ? 1.0 : 0.7)
+                        .shadow(color: Theme.accent.opacity(phase ? 0.55 : 0.15), radius: 7)
+                } animation: { _ in .easeInOut(duration: 0.85) }
+        } else {
+            glyph
+        }
     }
 }

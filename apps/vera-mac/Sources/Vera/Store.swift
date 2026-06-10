@@ -584,6 +584,8 @@ final class ChatStore: ObservableObject {
                     case .status(let s):
                         streamStatus = s
                         scheduleSettle()   // tool activity counts as "still working"
+                    case .sources(let srcs):
+                        conversations[i].messages[replyIndex].sources = srcs
                     case .done:
                         streamStatus = nil
                         settleTask?.cancel()

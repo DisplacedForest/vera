@@ -159,6 +159,8 @@ final class VoiceSession: ObservableObject {
                 for try await event in socket.streamReply(chatID: chatID, messageID: messageID, messages: messages) {
                     if Task.isCancelled { return }
                     switch event {
+                    case .sources:
+                        break  // voice replies aren't rendered with chips
                     case .content(let raw):
                         content = raw
                         store.updateVoiceReply(chatID: chatID, text: content)

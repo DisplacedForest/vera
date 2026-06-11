@@ -63,6 +63,28 @@ def test_origin_classification_is_lenient():
     assert entries[2]["origin"] == "self"        # no Origin line
 
 
+def test_origin_survives_her_paraphrase():
+    # She rewrites Origin lines in her own words; owner/user phrasings still classify
+    # as requested, while signals- and migration-born wordings stay self.
+    doc = ("## A\nOrigin: New commitment based on user-provided watch list.\n\n"
+           "## B\nOrigin: the owner wanted this tracked.\n\n"
+           "## C\nOrigin: carried over from watches: Hormuz traffic.\n\n"
+           "## D\nOrigin: signals situation, helicopter incident.\n")
+    a, b, c, d = journal.parse_document(doc)
+    assert a["origin"] == "requested"
+    assert b["origin"] == "requested"
+    assert c["origin"] == "self"
+    assert d["origin"] == "self"
+
+
+def test_origin_matches_configured_owner_name(monkeypatch):
+    monkeypatch.setattr(journal, "owner", lambda: "Alex")
+    doc = "## A\nOrigin: Alex, 2026-06-11.\n\n## B\nOrigin: routine self check.\n"
+    a, b = journal.parse_document(doc)
+    assert a["origin"] == "requested"
+    assert b["origin"] == "self"
+
+
 def test_slug_is_stable_and_kebab():
     e = journal.parse_document(DOC)[0]
     assert e["slug"] == "strait-of-hormuz-closure"

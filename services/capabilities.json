@@ -38,6 +38,18 @@
       "avoid_when": "Personal preferences or episodic notes (that is memory, not home facts); never commit without showing the preview and getting a yes."
     },
     {
+      "tool": "read_journal", "node": "api",
+      "summary": "Read Vera's own journal: the standing commitments she is keeping an eye on (why, findings, next check) plus recently resolved entries.",
+      "use_when": "The user asks what you are watching/monitoring/keeping an eye on, or references an existing journal entry ('the Hormuz entry', 'that lumber watch'). Read this BEFORE acting on any such request.",
+      "avoid_when": "The question is about stored facts or past learnings rather than standing watches (use knowledge_lookup or recall_memory)."
+    },
+    {
+      "tool": "journal_commit", "node": "api",
+      "summary": "Create, update, consolidate, or retire a standing commitment in Vera's own journal through her authoring judgment.",
+      "use_when": "The user asks you to keep an eye on something, follow up on a situation over time, or change/close an existing journal entry. Pair with read_journal first when they reference an existing entry.",
+      "avoid_when": "One-off facts or preferences (memory/knowledge, not a standing watch), or anything that should fire once rather than be monitored."
+    },
+    {
       "tool": "home_assistant", "node": "api->HA",
       "summary": "Control and query Home Assistant devices and entity states.",
       "use_when": "The user asks to control a device or about home state (lights, climate, sensors).",

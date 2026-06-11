@@ -65,7 +65,7 @@ enum Shot {
                 .environmentObject(store)
             )
         } else if view == "pulse-nominal" || view == "pulse-status" {
-            // The pinned-lane chip row above a (trimmed) feed so the chips stay on-screen.
+            // The pinned-vein chip row above a (trimmed) feed so the chips stay on-screen.
             // nominal = no status cards (System chip quiet); status = lit (dot + count).
             let feed = Array(PulseCard.mock().prefix(2))
             store.pulseCards = view == "pulse-status" ? feed + PulseCard.statusMock() : feed
@@ -75,10 +75,10 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
-        } else if view == "pulse-lane" {
-            // The System lane overlay — status tiles grouped by category.
+        } else if view == "pulse-vein" {
+            // The System vein overlay — status tiles grouped by category.
             content = AnyView(
-                ShotLaneView(lane: PulseLane.mock()[0], cards: PulseCard.statusMock())
+                ShotVeinView(vein: PulseVein.mock()[0], cards: PulseCard.statusMock())
                     .environmentObject(store)
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
@@ -155,7 +155,7 @@ enum Shot {
             let section: AppSection
             switch view {
             case "pulse": section = .pulse
-            case "lanes": section = .lanes
+            case "veins": section = .veins
             case "journal": section = .journal; store.journalEntries = JournalEntry.mock()
             case "memory": section = .memory
             case "plugins": section = .plugins
@@ -290,20 +290,20 @@ struct ShotDetailView: View {
     }
 }
 
-/// Render-safe mirror of the Pulse lane overlay — no ScrollView, so ImageRenderer captures
+/// Render-safe mirror of the Pulse vein overlay — no ScrollView, so ImageRenderer captures
 /// the text-forward status tiles + their confirm affordance.
-struct ShotLaneView: View {
-    let lane: PulseLane
+struct ShotVeinView: View {
+    let vein: PulseVein
     let cards: [PulseCard]
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                Image(systemName: lane.icon).font(.system(size: 18, weight: .semibold))
-                Text(lane.label).font(.system(size: 22, weight: .bold))
+                Image(systemName: vein.icon).font(.system(size: 18, weight: .semibold))
+                Text(vein.label).font(.system(size: 22, weight: .bold))
             }
             .foregroundStyle(Theme.textPrimary)
-            // The System lane groups by category; other lanes render flat.
-            if lane.kind == "status" {
+            // The System vein groups by category; other veins render flat.
+            if vein.kind == "status" {
                 ForEach(PulseCategory.allCases) { cat in
                     let group = cards.filter { PulseCategory.of($0) == cat }
                     if !group.isEmpty {

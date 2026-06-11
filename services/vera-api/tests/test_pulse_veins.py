@@ -1,4 +1,4 @@
-"""Pulse lane catalog/store — opt-in lanes, cap enforcement, gates, option scoping,
+"""Pulse vein catalog/store — opt-in veins, cap enforcement, gates, option scoping,
 and upgrade seeding. Run under pytest."""
 import asyncio
 import os
@@ -6,13 +6,13 @@ import os
 import pytest
 from fastapi import HTTPException
 
-from routers import lane_store, pulse_lanes, signals
+from routers import vein_store, pulse_veins, signals
 from routers import scheduler as sch
 
 
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch, tmp_path):
-    monkeypatch.setattr(lane_store, "PATH", str(tmp_path / "lanes.json"))
+    monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "veins.json"))
     for var in ("WEATHER_LAT", "WEATHER_LON", "HOME_STATE",
                 "SIGNALS_ORIENTATION", "SIGNALS_IMPACT_GOODS", "TEMPERATURE_UNIT"):
         monkeypatch.delenv(var, raising=False)
@@ -20,28 +20,28 @@ def _fresh(monkeypatch, tmp_path):
 
 
 def _put(kind, **kw):
-    return asyncio.run(pulse_lanes.update_lane(kind, pulse_lanes.LaneUpdate(**kw)))
+    return asyncio.run(pulse_veins.update_vein(kind, pulse_veins.VeinUpdate(**kw)))
 
 
 # --------------------------------------------------------------------------- opt-in posture
 
-def test_fresh_install_has_no_lanes():
-    assert pulse_lanes.lanes() == []
-    assert pulse_lanes.enabled_kinds() == set()
-    cat = asyncio.run(pulse_lanes.catalog())
-    assert cat["active"] == 0 and len(cat["lanes"]) == len(pulse_lanes.LANES)
-    assert all(not l["enabled"] for l in cat["lanes"])
+def test_fresh_install_has_no_veins():
+    assert pulse_veins.veins() == []
+    assert pulse_veins.enabled_kinds() == set()
+    cat = asyncio.run(pulse_veins.catalog())
+    assert cat["active"] == 0 and len(cat["veins"]) == len(pulse_veins.VEINS)
+    assert all(not l["enabled"] for l in cat["veins"])
 
 
 def test_enable_disable_round_trip():
     _put("signals", enabled=True)
-    assert pulse_lanes.is_enabled("signals")
-    assert [l["kind"] for l in pulse_lanes.lanes()] == ["signals"]
+    assert pulse_veins.is_enabled("signals")
+    assert [l["kind"] for l in pulse_veins.veins()] == ["signals"]
     _put("signals", enabled=False)
-    assert pulse_lanes.lanes() == []
+    assert pulse_veins.veins() == []
 
 
-def test_unknown_lane_404():
+def test_unknown_vein_404():
     with pytest.raises(HTTPException) as e:
         _put("nope", enabled=True)
     assert e.value.status_code == 404
@@ -65,18 +65,18 @@ def test_media_requires_overseerr_integration():
 
 
 def test_cap_enforced(monkeypatch):
-    # widen the catalog with stub lanes to exceed the cap (the catalog MAY exceed it)
+    # widen the catalog with stub veins to exceed the cap (the catalog MAY exceed it)
     stubs = [{"kind": f"stub{i}", "label": f"Stub {i}", "icon": "circle", "order": 10 + i,
               "nominal_label": "quiet", "blurb": "stub", "producer_jobs": [],
               "requires": [], "providers": [], "options": []} for i in range(7)]
-    monkeypatch.setattr(pulse_lanes, "LANES", pulse_lanes.LANES + stubs)
-    monkeypatch.setattr(pulse_lanes, "_BY_KIND", {l["kind"]: l for l in pulse_lanes.LANES})
+    monkeypatch.setattr(pulse_veins, "VEINS", pulse_veins.VEINS + stubs)
+    monkeypatch.setattr(pulse_veins, "_BY_KIND", {l["kind"]: l for l in pulse_veins.VEINS})
     for i in range(6):
         _put(f"stub{i}", enabled=True)
     with pytest.raises(HTTPException) as e:
         _put("stub6", enabled=True)
     assert e.value.status_code == 409 and "cap" in e.value.detail
-    # an already-active lane can still be edited past the cap check
+    # an already-active vein can still be edited past the cap check
     assert _put("stub0", enabled=True)["enabled"]
 
 
@@ -84,11 +84,11 @@ def test_cap_enforced(monkeypatch):
 
 def test_option_resolution_store_over_env_over_default(monkeypatch):
     f = {"id": "orientation"}  # signals text option with env fallback
-    assert pulse_lanes.option_values("signals")["orientation"] == ""          # manifest default
+    assert pulse_veins.option_values("signals")["orientation"] == ""          # manifest default
     monkeypatch.setenv("SIGNALS_ORIENTATION", "from env")
-    assert pulse_lanes.option_values("signals")["orientation"] == "from env"  # env seeds
+    assert pulse_veins.option_values("signals")["orientation"] == "from env"  # env seeds
     _put("signals", options={"orientation": "from store"})
-    assert pulse_lanes.option_values("signals")["orientation"] == "from store"  # store wins
+    assert pulse_veins.option_values("signals")["orientation"] == "from store"  # store wins
 
 
 def test_unknown_option_rejected():
@@ -98,24 +98,24 @@ def test_unknown_option_rejected():
 
 
 def test_provider_slot_resolution():
-    assert pulse_lanes.provider_values("weather")["forecast_url"].startswith("https://api.open-meteo.com")
+    assert pulse_veins.provider_values("weather")["forecast_url"].startswith("https://api.open-meteo.com")
     _put("weather", providers={"forecast_url": "https://forecast.example/v1"})
-    assert pulse_lanes.provider_values("weather")["forecast_url"] == "https://forecast.example/v1"
+    assert pulse_veins.provider_values("weather")["forecast_url"] == "https://forecast.example/v1"
 
 
 def test_bool_and_number_coercion():
     _put("status", options={"src_containers": "false"})
     _put("weather", providers=None, options={"gust_threshold": "60"})
-    assert pulse_lanes.option_values("status")["src_containers"] is False
-    assert pulse_lanes.option_values("weather")["gust_threshold"] == 60.0
+    assert pulse_veins.option_values("status")["src_containers"] is False
+    assert pulse_veins.option_values("weather")["gust_threshold"] == 60.0
 
 
 # --------------------------------------------------------------------------- gates
 
-def test_scheduler_gates_follow_lane_state(monkeypatch):
-    assert "lane is off" in sch._gate_reason("weather")
-    assert "lane is off" in sch._gate_reason("signals")
-    assert "lane is off" in sch._gate_reason("updates")
+def test_scheduler_gates_follow_vein_state(monkeypatch):
+    assert "vein is off" in sch._gate_reason("weather")
+    assert "vein is off" in sch._gate_reason("signals")
+    assert "vein is off" in sch._gate_reason("updates")
     _put("signals", enabled=True)
     assert sch._gate_reason("signals") is None
     monkeypatch.setenv("WEATHER_LAT", "39.0")
@@ -126,25 +126,25 @@ def test_scheduler_gates_follow_lane_state(monkeypatch):
 
 def test_disabled_producer_refuses_directly():
     out = asyncio.run(signals.check(signals.SignalsRequest()))
-    assert out.get("disabled") and "lane is off" in out["detail"]
+    assert out.get("disabled") and "vein is off" in out["detail"]
 
 
 # --------------------------------------------------------------------------- signals scoping
 
-def test_lane_sentinels_none_without_stored_choice():
-    assert signals.lane_sentinels() is None  # env/auto gating applies
+def test_vein_sentinels_none_without_stored_choice():
+    assert signals.vein_sentinels() is None  # env/auto gating applies
 
 
-def test_lane_sentinels_select_groups():
+def test_vein_sentinels_select_groups():
     _put("signals", options={"grp_financial": True, "grp_geophysical": False,
                              "grp_civic": False, "grp_grid": False, "grp_news": False})
-    allow = signals.lane_sentinels(fred_key="k", eia_ok=True)
+    allow = signals.vein_sentinels(fred_key="k", eia_ok=True)
     assert allow == {"treasury", "vix", "fred_hy"}
     # key-gated members skip quietly without keys
-    assert signals.lane_sentinels(fred_key="", eia_ok=False) == {"treasury", "vix"}
+    assert signals.vein_sentinels(fred_key="", eia_ok=False) == {"treasury", "vix"}
 
 
-def test_orientation_flows_from_lane_option():
+def test_orientation_flows_from_vein_option():
     _put("signals", options={"orientation": "shift the harvest plan"})
     assert signals.effective_orientation() == "shift the harvest plan"
     assert "shift the harvest plan" in signals.news_judge_sys(signals.effective_orientation())
@@ -167,26 +167,50 @@ def test_updates_scoped_to_monitored_sources():
 # --------------------------------------------------------------------------- seeding
 
 def test_fresh_env_seeds_nothing(monkeypatch, tmp_path):
-    monkeypatch.setattr(lane_store, "PATH", str(tmp_path / "fresh.json"))
-    assert pulse_lanes.enabled_kinds() == set()
-    assert lane_store.load().get("_seeded") is True  # the pass ran and chose nothing
+    monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "fresh.json"))
+    assert pulse_veins.enabled_kinds() == set()
+    assert vein_store.load().get("_seeded") is True  # the pass ran and chose nothing
 
 
 def test_configured_fresh_install_still_seeds_nothing(monkeypatch, tmp_path):
-    # full env config but no prior-deployment artifacts: lanes stay opt-in
-    monkeypatch.setattr(lane_store, "PATH", str(tmp_path / "fresh.json"))
+    # full env config but no prior-deployment artifacts: veins stay opt-in
+    monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "fresh.json"))
     monkeypatch.setenv("WEATHER_LAT", "39.0")
     monkeypatch.setenv("WEATHER_LON", "-95.0")
     monkeypatch.setenv("HOME_STATE", "KS")
-    assert pulse_lanes.enabled_kinds() == set()
-    assert lane_store.load().get("_seeded") is True
+    assert pulse_veins.enabled_kinds() == set()
+    assert vein_store.load().get("_seeded") is True
 
 
-def test_upgraded_deployment_seeds_its_lanes(monkeypatch, tmp_path):
-    monkeypatch.setattr(lane_store, "PATH", str(tmp_path / "upgrade.json"))
+def test_upgraded_deployment_seeds_its_veins(monkeypatch, tmp_path):
+    monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "upgrade.json"))
     (tmp_path / "pulse.db").touch()  # a data volume that already ran Vera
     monkeypatch.setenv("WEATHER_LAT", "39.0")
     monkeypatch.setenv("WEATHER_LON", "-95.0")
     monkeypatch.setenv("HOME_STATE", "KS")
-    assert {"weather", "signals"} <= pulse_lanes.enabled_kinds()
-    assert "media" not in pulse_lanes.enabled_kinds()  # no overseerr integration here
+    assert {"weather", "signals"} <= pulse_veins.enabled_kinds()
+    assert "media" not in pulse_veins.enabled_kinds()  # no overseerr integration here
+
+
+# --------------------------------------------------------------------------- legacy adoption
+
+def test_legacy_lanes_file_is_adopted_once(monkeypatch, tmp_path):
+    # a pre-rename data volume: lanes.json holds the deployment's choices
+    monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "veins.json"))
+    (tmp_path / "lanes.json").write_text(
+        '{"signals": {"enabled": true, "options": {"grp_news": false}}, "_seeded": true}',
+        encoding="utf-8")
+    assert pulse_veins.is_enabled("signals")
+    assert pulse_veins.option_values("signals").get("grp_news") is False
+    assert not (tmp_path / "lanes.json").exists()  # adopted, not copied
+    assert (tmp_path / "veins.json").exists()
+
+
+def test_existing_vein_store_wins_over_legacy_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "veins.json"))
+    (tmp_path / "veins.json").write_text('{"weather": {"enabled": true}, "_seeded": true}',
+                                         encoding="utf-8")
+    (tmp_path / "lanes.json").write_text('{"signals": {"enabled": true}, "_seeded": true}',
+                                         encoding="utf-8")
+    assert pulse_veins.enabled_kinds() == {"weather"}
+    assert (tmp_path / "lanes.json").exists()  # untouched when the vein store already exists

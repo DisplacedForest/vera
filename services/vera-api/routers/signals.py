@@ -1,11 +1,11 @@
-"""Signals lane — a structured external-watch monitor.
+"""Signals vein — a structured external-watch monitor.
 
 Hybrid design: **quantitative live feeds drive the trip; an LLM only explains what tripped.**
 Thresholds are pre-declared module constants (auditable, never LLM-chosen). Live data only — a
 collector that can't reach its source is skipped and surfaced in `errors[]`, never replaced by a
-fabricated or default reading. Silent by default: no trips -> no card -> the lane stays "quiet".
+fabricated or default reading. Silent by default: no trips -> no card -> the vein stays "quiet".
 
-WHAT the lane watches for is config, not code: SIGNALS_NEWS_QUERIES picks the news beats,
+WHAT the vein watches for is config, not code: SIGNALS_NEWS_QUERIES picks the news beats,
 SIGNALS_ORIENTATION sets the household's bar for "worth surfacing", and SIGNALS_SENTINELS selects
 which collectors run (the keyless US-centric sources auto-gate on the home region).
 
@@ -14,9 +14,9 @@ Four units:
   2. Evaluator   — pure functions mapping readings -> trips, each tagged tier + reason + sources.
   3. Sentinels   — economic (numeric, multi-factor) and democratic-stability (anchored LLM judge).
   4. Composer    — one LLM call writes the human card body from the trips it is handed; it never
-                   decides whether to fire. Max trip tier -> lane severity; posts via _inject.
+                   decides whether to fire. Max trip tier -> vein severity; posts via _inject.
 
-Tiers map to pulse lane severities: notice < alert < critical. Critical is the loud banner and may
+Tiers map to pulse vein severities: notice < alert < critical. Critical is the loud banner and may
 only come from the two sentinels.
 """
 
@@ -99,17 +99,17 @@ NEWS_QUERIES = _env_list("SIGNALS_NEWS_QUERIES", [
 ])
 
 def effective_orientation() -> str:
-    """The household's bar for "worth surfacing": the signals lane's stored option, else the
+    """The household's bar for "worth surfacing": the signals vein's stored option, else the
     SIGNALS_ORIENTATION env / neutral default. Shared with the journal's recheck judge — one bar."""
-    from . import pulse_lanes
-    return (str(pulse_lanes.option_values("signals").get("orientation") or "").strip()
+    from . import pulse_veins
+    return (str(pulse_veins.option_values("signals").get("orientation") or "").strip()
             or orientation())
 
 
 # News judge: turns the qualitative corpus into structured candidates. It JUDGES significance but
 # cannot manufacture a critical trigger — the democratic-stability critical tier requires a citable
 # primary-source act (anchored=true with an anchor_url). Everything else caps at alert/notice.
-# The household's bar comes from the lane orientation option; the silent-by-default calibration
+# The household's bar comes from the vein orientation option; the silent-by-default calibration
 # is fixed.
 def news_judge_sys(orient: str) -> str:
     return (
@@ -416,7 +416,7 @@ def enabled_sentinels(allow: str | None = None, us: bool | None = None,
     return out
 
 
-# Lane source groups -> collector sets (the Lanes pane's scoping toggles).
+# Vein source groups -> collector sets (the Veins pane's scoping toggles).
 GROUP_COLLECTORS = {
     "grp_financial": {"treasury", "vix", "fred_hy"},
     "grp_geophysical": {"usgs", "gdacs"},
@@ -425,16 +425,16 @@ GROUP_COLLECTORS = {
 }
 
 
-def lane_sentinels(opts: dict | None = None, fred_key: str | None = None,
+def vein_sentinels(opts: dict | None = None, fred_key: str | None = None,
                    eia_ok: bool | None = None) -> set[str] | None:
-    """The collector set the lane's stored source-group choices select, or None when the
+    """The collector set the vein's stored source-group choices select, or None when the
     deployment has made no explicit choice (the env/region auto-gating applies instead).
     Key-gated members still skip quietly when their keys are absent."""
-    from . import pulse_lanes
+    from . import pulse_veins
     if opts is None:
-        if not pulse_lanes.has_stored_options("signals"):
+        if not pulse_veins.has_stored_options("signals"):
             return None
-        opts = pulse_lanes.option_values("signals")
+        opts = pulse_veins.option_values("signals")
     allow: set[str] = set()
     for gid, names in GROUP_COLLECTORS.items():
         if opts.get(gid):
@@ -575,7 +575,7 @@ SIGNAL_CARD_SYS = (
     "specific things to keep monitoring (no JSON, no brackets, just short noun phrases).>\n"
     "No severity labels, no preamble before SUMMARY."
 )
-# Goods-impact line on supply/geopolitical cards — an orientation choice, off unless the lane's
+# Goods-impact line on supply/geopolitical cards — an orientation choice, off unless the vein's
 # impact_goods option (seeded by SIGNALS_IMPACT_GOODS) asks for it.
 IMPACT_INSTR = (
     "Then, on its own new line, write the bold label '**Affected goods:**' followed by a "
@@ -627,20 +627,20 @@ async def _compose_signal(headline, members, sources, deepen):
 
 @router.post("/signals/check", tags=["signals"])
 async def check(req: SignalsRequest):
-    from . import pulse_lanes
-    if not pulse_lanes.is_enabled("signals"):
-        return {"ok": False, "disabled": True, "detail": pulse_lanes.gate_reason("signals")}
-    lane_opts = pulse_lanes.option_values("signals")
+    from . import pulse_veins
+    if not pulse_veins.is_enabled("signals"):
+        return {"ok": False, "disabled": True, "detail": pulse_veins.gate_reason("signals")}
+    vein_opts = pulse_veins.option_values("signals")
     folder = req.pulse_folder_id or DEFAULT_FOLDER
     out = {"ok": True, "trips": [], "injected": False, "severity": None, "errors": [],
            "readings": {}, "considered": []}
 
     async with aiohttp.ClientSession() as session:
         # 1) collectors — only the enabled sentinels run; each isolated; a failure is
-        # recorded, never fabricated. Skipped sentinels are surfaced so a quiet lane is legible.
-        # The lane's stored source-group choices are the authority; with none stored, the
+        # recorded, never fabricated. Skipped sentinels are surfaced so a quiet vein is legible.
+        # The vein's stored source-group choices are the authority; with none stored, the
         # env/region auto-gating decides.
-        enabled = lane_sentinels()
+        enabled = vein_sentinels()
         if enabled is None:
             enabled = enabled_sentinels()
         skipped = sorted(set(COLLECTORS) - enabled)
@@ -666,8 +666,8 @@ async def check(req: SignalsRequest):
         trips += _eval_economic(readings.get("treasury"), readings.get("vix"), readings.get("fred_hy"))
 
         # 3) qualitative sentinel (news judge) — democratic / supply / severe / geopolitical.
-        # Off when the lane's news group is toggled off (an explicit stored choice).
-        news_off = pulse_lanes.has_stored_options("signals") and not lane_opts.get("grp_news")
+        # Off when the vein's news group is toggled off (an explicit stored choice).
+        news_off = pulse_veins.has_stored_options("signals") and not vein_opts.get("grp_news")
         if not req.skip_news and not news_off:
             try:
                 corpus = (await _collect_news(session))["corpus"]
@@ -686,7 +686,7 @@ async def check(req: SignalsRequest):
     out["trips"] = trips
     if not trips:
         _log_run(out, req)
-        return out  # silent baseline — lane stays "quiet"
+        return out  # silent baseline — vein stays "quiet"
 
     # 4) emit ONE card per distinct situation: cluster the trips, then research and write each on its own.
     top = max(trips, key=lambda t: TIER_RANK.get(t["tier"], 0))["tier"]
@@ -695,8 +695,8 @@ async def check(req: SignalsRequest):
         _log_run(out, req)
         return out  # assess-only (tuning) mode
 
-    # Robust no-dup: rebuild the lane each run — drop the current active signals cards, then post one
-    # fresh card per distinct situation, so the lane always shows exactly this run's events and never
+    # Robust no-dup: rebuild the vein each run — drop the current active signals cards, then post one
+    # fresh card per distinct situation, so the vein always shows exactly this run's events and never
     # stacks. (Bookmarked/promoted cards are preserved; LLM clustering is unstable run-to-run, so we
     # don't try to match situations across runs — we just rebuild.)
     for c in [x for x in store.list_cards()
@@ -724,7 +724,7 @@ async def check(req: SignalsRequest):
         if not members:
             continue
         tier = max((m["tier"] for m in members), key=lambda x: TIER_RANK.get(x, 0))
-        deepen = bool(lane_opts.get("impact_goods")) and any(
+        deepen = bool(vein_opts.get("impact_goods")) and any(
             m.get("sentinel") in ("supply", "geopolitical") for m in members)
         headline = (cl.get("headline") or members[0]["title"]).strip().rstrip(".,;:… ")
 

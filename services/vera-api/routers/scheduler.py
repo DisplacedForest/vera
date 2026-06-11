@@ -130,17 +130,17 @@ def _gate_media_curation() -> str | None:
     return "requires the overseerr integration with its media_curation feature enabled"
 
 
-def _lane_gate(kind: str):
-    """Gate factory: a lane's producer jobs run only while the lane is enabled (and its
+def _vein_gate(kind: str):
+    """Gate factory: a vein's producer jobs run only while the vein is enabled (and its
     requirements hold) — no orphaned producers burning tokens for a hidden chip."""
     def gate() -> str | None:
-        from . import pulse_lanes
-        return pulse_lanes.gate_reason(kind)
+        from . import pulse_veins
+        return pulse_veins.gate_reason(kind)
     return gate
 
 
 def _gate_media() -> str | None:
-    return _lane_gate("media")() or _gate_media_curation()
+    return _vein_gate("media")() or _gate_media_curation()
 
 
 GATES: dict[str, object] = {
@@ -148,10 +148,10 @@ GATES: dict[str, object] = {
     "home_reconcile": _gate_home_modeling,
     "home_digest": _gate_home_modeling,
     "media_curate": _gate_media,
-    "weather": _lane_gate("weather"),
-    "signals": _lane_gate("signals"),
-    "updates": _lane_gate("status"),
-    "healthcheck": _lane_gate("status"),
+    "weather": _vein_gate("weather"),
+    "signals": _vein_gate("signals"),
+    "updates": _vein_gate("status"),
+    "healthcheck": _vein_gate("status"),
 }
 
 
@@ -264,10 +264,10 @@ async def _loop():
 
 async def start():
     global _task
-    # Settle the lane store's one-time seeding decision now, before any job runs —
+    # Settle the vein store's one-time seeding decision now, before any job runs —
     # jobs write data artifacts that would otherwise read as a prior deployment.
-    from . import lane_store
-    lane_store.load()
+    from . import vein_store
+    vein_store.load()
     if ENABLED and _task is None:
         _task = asyncio.create_task(_loop())
         log.info("scheduler running (%d jobs, poll %ds, tz %s)", len(REGISTRY), _POLL_SECONDS, TZ)

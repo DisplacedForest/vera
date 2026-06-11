@@ -279,15 +279,15 @@ class ProposeCard(BaseModel):
     actor: str = "vera"
     chat_id: str | None = None
     message_id: str | None = None
-    kind: str = "status"           # action cards default to the System lane
+    kind: str = "status"           # action cards default to the System vein
     severity: str | None = None    # "notice" | "alert" | "critical" (null = neutral)
-    category: str | None = None    # System-lane sub-group ("vera" | "infra" | "health" | "update")
+    category: str | None = None    # System-vein sub-group ("vera" | "infra" | "health" | "update")
 
 
 @router.post("/actions/propose_card", tags=["actions"])
 async def propose_card(p: ProposeCard):
     """Stage an action AND inject a Pulse card carrying it — the producer path for action cards.
-    Propose-for-review cards land in the System lane (kind=status) via this path."""
+    Propose-for-review cards land in the System vein (kind=status) via this path."""
     ok, err = _stage(p.verb, p.args, p.source, p.actor, p.chat_id, p.message_id)
     if err:
         return err

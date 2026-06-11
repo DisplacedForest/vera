@@ -1,27 +1,27 @@
-"""Pulse lane catalog — declarative manifests for the pinned ambient lanes, plus the
+"""Pulse vein catalog — declarative manifests for the pinned ambient veins, plus the
 opt-in state API. NOTHING is enabled by default: a fresh install shows an empty chip
-row, and lanes are activated through the app's Lanes pane (or this API).
+row, and veins are activated through the app's Veins pane (or this API).
 
-Pulse has two tiers: the research feed (image-rich briefings, core Vera, NOT a lane)
-and a row of pinned ambient lanes above it. Each lane groups one card `kind`; the Mac
-app renders a slim chip per enabled lane that sits quiet until a producer posts a card
-of that kind. Any card whose kind has no ENABLED lane falls back into the feed.
+Pulse has two tiers: the research feed (image-rich briefings, core Vera, NOT a vein)
+and a row of pinned ambient veins above it. Each vein groups one card `kind`; the Mac
+app renders a slim chip per enabled vein that sits quiet until a producer posts a card
+of that kind. Any card whose kind has no ENABLED vein falls back into the feed.
 
-THE MANIFEST SCHEMA (the extensibility contract — a new lane is one entry here plus a
-producer; the app hardcodes nothing and renders unknown lanes/options generically):
+THE MANIFEST SCHEMA (the extensibility contract — a new vein is one entry here plus a
+producer; the app hardcodes nothing and renders unknown veins/options generically):
 
-  kind           card kind this lane groups (chip identity)
+  kind           card kind this vein groups (chip identity)
   label / icon / order / nominal_label    chip presentation (SF Symbol icon)
-  blurb          one line: what this lane watches
-  producer_jobs  scheduler job ids that feed the lane; all gate on the lane's enabled
-                 state (first id is "primary" — its cron is the lane's editable schedule)
+  blurb          one line: what this vein watches
+  producer_jobs  scheduler job ids that feed the vein; all gate on the vein's enabled
+                 state (first id is "primary" — its cron is the vein's editable schedule)
   requires       requirement dicts blocking enable while unmet:
                    {"kind": "integration", "id": <integrations registry id>}
                    {"kind": "feature", "integration": id, "feature": id}
                    {"kind": "env", "names": [...], "label": "human name"}
   providers      endpoint slots, declared as contracts (id, label, hint, default) —
-                 point the lane at any compatible service, never a hardcoded pick
-  options        groups of per-lane scoping fields the producer honors at run time:
+                 point the vein at any compatible service, never a hardcoded pick
+  options        groups of per-vein scoping fields the producer honors at run time:
                    {"group": label, "fields": [{id, label, type: bool|text|number|choice,
                     choices?, default, env?, hint?}]}
                  resolution per field: store value > env (when declared) > default —
@@ -34,13 +34,13 @@ import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from . import lane_store
+from . import vein_store
 
 router = APIRouter()
 
 MAX_ACTIVE = 6  # chip-row constraint, enforced at enable time
 
-LANES: list[dict] = [
+VEINS: list[dict] = [
     {
         "kind": "status", "label": "System", "icon": "gearshape", "order": 0,
         "nominal_label": "nominal",
@@ -133,7 +133,7 @@ LANES: list[dict] = [
     },
 ]
 
-_BY_KIND = {l["kind"]: l for l in LANES}
+_BY_KIND = {l["kind"]: l for l in VEINS}
 
 
 # --------------------------------------------------------------------- state resolution
@@ -143,20 +143,20 @@ def manifest(kind: str) -> dict | None:
 
 
 def is_enabled(kind: str) -> bool:
-    """Whether a lane is on. Lanes are opt-in: absent from the store means off."""
-    return bool((lane_store.load().get(kind) or {}).get("enabled"))
+    """Whether a vein is on. Veins are opt-in: absent from the store means off."""
+    return bool((vein_store.load().get(kind) or {}).get("enabled"))
 
 
 def enabled_kinds() -> set[str]:
-    doc = lane_store.load()
-    return {l["kind"] for l in LANES if (doc.get(l["kind"]) or {}).get("enabled")}
+    doc = vein_store.load()
+    return {l["kind"] for l in VEINS if (doc.get(l["kind"]) or {}).get("enabled")}
 
 
-def lanes() -> list[dict]:
-    """ENABLED lanes only, chip fields, ordered left→right — the `GET /pulse/lanes` view."""
+def veins() -> list[dict]:
+    """ENABLED veins only, chip fields, ordered left→right — the `GET /pulse/veins` view."""
     on = enabled_kinds()
     return sorted(({k: l[k] for k in ("kind", "label", "icon", "order", "nominal_label")}
-                   for l in LANES if l["kind"] in on), key=lambda l: l["order"])
+                   for l in VEINS if l["kind"] in on), key=lambda l: l["order"])
 
 
 def _coerce(field: dict, value):
@@ -184,11 +184,11 @@ def _field_default(field: dict):
 
 
 def option_values(kind: str) -> dict:
-    """One lane's effective option values: store > env > manifest default."""
+    """One vein's effective option values: store > env > manifest default."""
     spec = _BY_KIND.get(kind)
     if not spec:
         return {}
-    stored = (lane_store.load().get(kind) or {}).get("options") or {}
+    stored = (vein_store.load().get(kind) or {}).get("options") or {}
     out = {}
     for grp in spec.get("options", []):
         for f in grp["fields"]:
@@ -197,17 +197,17 @@ def option_values(kind: str) -> dict:
 
 
 def has_stored_options(kind: str) -> bool:
-    """Whether the deployment has made any explicit option choice for this lane (the
+    """Whether the deployment has made any explicit option choice for this vein (the
     signal that the store, not env/auto behavior, is the authority)."""
-    return bool((lane_store.load().get(kind) or {}).get("options"))
+    return bool((vein_store.load().get(kind) or {}).get("options"))
 
 
 def provider_values(kind: str) -> dict:
-    """One lane's effective provider endpoints: store > slot default."""
+    """One vein's effective provider endpoints: store > slot default."""
     spec = _BY_KIND.get(kind)
     if not spec:
         return {}
-    stored = (lane_store.load().get(kind) or {}).get("providers") or {}
+    stored = (vein_store.load().get(kind) or {}).get("providers") or {}
     return {s["id"]: (str(stored.get(s["id"]) or "").strip() or s.get("default") or "")
             for s in spec.get("providers", [])}
 
@@ -238,20 +238,20 @@ def requirements(kind: str) -> list[dict]:
 
 
 def gate_reason(kind: str) -> str | None:
-    """Scheduler-gate hook: why this lane's producer jobs may not run, or None."""
+    """Scheduler-gate hook: why this vein's producer jobs may not run, or None."""
     if not is_enabled(kind):
         label = _BY_KIND.get(kind, {}).get("label", kind)
-        return f"the {label} lane is off — enable it in Lanes"
+        return f"the {label} vein is off. Enable it in Veins."
     unmet = [r for r in requirements(kind) if not r["met"]]
     if unmet:
-        return f"the {_BY_KIND[kind]['label']} lane needs {unmet[0]['label']} — {unmet[0]['detail']}"
+        return f"the {_BY_KIND[kind]['label']} vein needs {unmet[0]['label']} ({unmet[0]['detail']})"
     return None
 
 
 # --------------------------------------------------------------------- one-time seeding
 
 # Artifacts only a running deployment writes (briefing history, heartbeat ticks,
-# memory stores). Their presence next to the lane store is what distinguishes an
+# memory stores). Their presence next to the vein store is what distinguishes an
 # upgrade from a fresh install — env config alone is not evidence, since a fresh
 # install may arrive fully parameterized.
 _UPGRADE_MARKERS = ("pulse.db", "heartbeat.db", "knowledge.db", "actions.db",
@@ -259,16 +259,16 @@ _UPGRADE_MARKERS = ("pulse.db", "heartbeat.db", "knowledge.db", "actions.db",
 
 
 def _prior_deployment() -> bool:
-    from . import lane_store
-    base = os.path.dirname(os.path.abspath(lane_store.PATH))
+    from . import vein_store
+    base = os.path.dirname(os.path.abspath(vein_store.PATH))
     return any(os.path.exists(os.path.join(base, name)) for name in _UPGRADE_MARKERS)
 
 
 def seed_states() -> dict[str, dict]:
-    """Upgrade seeding (called once by lane_store): on a data volume that already ran
-    Vera, a lane whose producer is demonstrably configured seeds enabled, so the
+    """Upgrade seeding (called once by vein_store): on a data volume that already ran
+    Vera, a vein whose producer is demonstrably configured seeds enabled, so the
     deployment keeps its chip row across the upgrade. A fresh install seeds nothing —
-    lanes are opt-in no matter how much config is present."""
+    veins are opt-in no matter how much config is present."""
     if not _prior_deployment():
         return {}
     from . import integrations
@@ -288,11 +288,11 @@ def seed_states() -> dict[str, dict]:
 
 # --------------------------------------------------------------------- API
 
-class LaneUpdate(BaseModel):
+class VeinUpdate(BaseModel):
     enabled: bool | None = None
     options: dict | None = None
     providers: dict | None = None
-    cron: str | None = None  # schedule of the lane's primary producer job
+    cron: str | None = None  # schedule of the vein's primary producer job
 
 
 def _job_views(job_ids: list[str]) -> list[dict]:
@@ -325,20 +325,20 @@ def _entry(spec: dict, doc: dict) -> dict:
     }
 
 
-@router.get("/pulse/lanes/catalog", tags=["pulse"])
+@router.get("/pulse/veins/catalog", tags=["pulse"])
 async def catalog():
-    """Every lane manifest merged with its runtime state — the Lanes pane's feed."""
-    doc = lane_store.load()
-    return {"lanes": [_entry(l, doc) for l in sorted(LANES, key=lambda x: x["order"])],
+    """Every vein manifest merged with its runtime state — the Veins pane's feed."""
+    doc = vein_store.load()
+    return {"veins": [_entry(l, doc) for l in sorted(VEINS, key=lambda x: x["order"])],
             "active": len(enabled_kinds()), "cap": MAX_ACTIVE}
 
 
-@router.put("/pulse/lanes/{kind}", tags=["pulse"])
-async def update_lane(kind: str, req: LaneUpdate):
+@router.put("/pulse/veins/{kind}", tags=["pulse"])
+async def update_vein(kind: str, req: VeinUpdate):
     from fastapi import HTTPException
     spec = _BY_KIND.get(kind)
     if not spec:
-        raise HTTPException(status_code=404, detail=f"unknown lane '{kind}'")
+        raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
 
     if req.options:
         known = {f["id"]: f for g in spec.get("options", []) for f in g["fields"]}
@@ -355,29 +355,29 @@ async def update_lane(kind: str, req: LaneUpdate):
         unmet = [r for r in requirements(kind) if not r["met"]]
         if unmet:
             raise HTTPException(status_code=409,
-                                detail=f"cannot enable: needs {unmet[0]['label']} — {unmet[0]['detail']}")
+                                detail=f"cannot enable: needs {unmet[0]['label']} ({unmet[0]['detail']})")
         active = enabled_kinds()
         if kind not in active and len(active) >= MAX_ACTIVE:
             raise HTTPException(status_code=409,
-                                detail=f"lane cap reached ({MAX_ACTIVE} active) — disable one first")
+                                detail=f"vein cap reached ({MAX_ACTIVE} active). Disable one first.")
 
-    lane_store.update(kind, enabled=req.enabled, options=req.options, providers=req.providers)
+    vein_store.update(kind, enabled=req.enabled, options=req.options, providers=req.providers)
     if req.cron is not None and spec["producer_jobs"]:
         from croniter import croniter
         if not croniter.is_valid(req.cron):
             raise HTTPException(status_code=422, detail=f"invalid cron expression '{req.cron}'")
         from . import scheduler_store
         scheduler_store.set_override(spec["producer_jobs"][0], cron=req.cron)
-    return _entry(spec, lane_store.load())
+    return _entry(spec, vein_store.load())
 
 
-@router.post("/pulse/lanes/{kind}/test", tags=["pulse"])
-async def test_lane(kind: str):
-    """Exercise the lane's provider slots / sources; per-slot results, nothing persisted."""
+@router.post("/pulse/veins/{kind}/test", tags=["pulse"])
+async def test_vein(kind: str):
+    """Exercise the vein's provider slots / sources; per-slot results, nothing persisted."""
     from fastapi import HTTPException
     spec = _BY_KIND.get(kind)
     if not spec:
-        raise HTTPException(status_code=404, detail=f"unknown lane '{kind}'")
+        raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
     results = []
     if kind == "weather":
         url = provider_values("weather").get("forecast_url", "")

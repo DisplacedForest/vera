@@ -15,7 +15,7 @@ struct ContentView: View {
                     switch store.section {
                     case .chat: ChatPane().background(Theme.bg)
                     case .pulse: PulseView()
-                    case .lanes: LanesView()
+                    case .veins: VeinsView()
                     case .journal: JournalView()
                     case .memory: MemoryView()
                     case .plugins: PluginsView()
@@ -99,7 +99,7 @@ private struct Sidebar: View {
             VStack(spacing: 1) {
                 navRow("New chat", "square.and.pencil", active: false, action: store.newConversation)
                 navRow("Pulse", "newspaper", active: store.section == .pulse) { store.goToPulse() }
-                navRow("Lanes", "rectangle.split.3x1", active: store.section == .lanes) { store.section = .lanes }
+                navRow("Veins", "rectangle.split.3x1", active: store.section == .veins) { store.section = .veins }
                 navRow("Journal", "book.closed", active: store.section == .journal) { store.section = .journal }
                 navRow("Memory", "tray.full", active: store.section == .memory) { store.section = .memory }
                 navRow("Plugins", "shippingbox", active: store.section == .plugins) { store.section = .plugins }

@@ -108,15 +108,15 @@ def _active_health_cards() -> list[dict]:
 
 @router.post("/health/check", tags=["health"])
 async def check(req: HealthCheck):
-    """Fold service health into the System lane. A failed/degraded check injects a
+    """Fold service health into the System vein. A failed/degraded check injects a
     kind=status, category=health card (lands under the System chip's Health group); when the
     down-set changes or everything recovers, stale cards are cleared so the chip reflects live
     state on the next pass (the daily sweep is just the overnight backstop)."""
-    from . import pulse_lanes
-    if not pulse_lanes.is_enabled("status"):
-        return {"ok": False, "disabled": True, "detail": pulse_lanes.gate_reason("status")}
-    if pulse_lanes.option_values("status").get("src_service_health") is False:
-        return {"ok": True, "disabled": True, "detail": "service-health probes are off in the System lane"}
+    from . import pulse_veins
+    if not pulse_veins.is_enabled("status"):
+        return {"ok": False, "disabled": True, "detail": pulse_veins.gate_reason("status")}
+    if pulse_veins.option_values("status").get("src_service_health") is False:
+        return {"ok": True, "disabled": True, "detail": "service-health probes are off in the System vein"}
     res = await _run()
     down = [r for r in res if not r["ok"]]
     title = ", ".join(d["name"] for d in down) + " down" if down else ""

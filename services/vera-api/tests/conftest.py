@@ -28,7 +28,7 @@ _STORE_PATHS = {
     "HOME_RECONCILE_DB_PATH": "home_reconcile.db",
     "GROOM_DB_PATH": "groom.db",
     "KNOWLEDGE_DB_PATH": "knowledge.db",
-    "LANES_PATH": "lanes.json",
+    "VEINS_PATH": "veins.json",
     "MEDIA_DB_PATH": "media.db",
     "PULSE_DB_PATH": "pulse.db",
     "SIGNALS_LOG_PATH": "signals_log.jsonl",

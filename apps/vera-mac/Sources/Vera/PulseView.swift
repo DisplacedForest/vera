@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Shared width of the Pulse content column. Header, the ambient-lane chip row, and the card feed
+/// Shared width of the Pulse content column. Header, the ambient-vein chip row, and the card feed
 /// all align to this same centered column so nothing floats off to the page edge.
 let pulseFeedWidth: CGFloat = 620
 
@@ -13,9 +13,9 @@ let showProvenanceByline = true
 /// Tapping a card opens it in the chat view. The grid is reused (render-safe) for screenshots.
 struct PulseView: View {
     @EnvironmentObject var store: ChatStore
-    // Detail/lane selection lives in the store so the sidebar Pulse button can dismiss it.
+    // Detail/vein selection lives in the store so the sidebar Pulse button can dismiss it.
     private var detail: PulseCard? { store.pulseDetail }
-    private var laneDetail: PulseLane? { store.pulseLaneDetail }
+    private var veinDetail: PulseVein? { store.pulseVeinDetail }
 
     var body: some View {
         ZStack {
@@ -31,17 +31,17 @@ struct PulseView: View {
                 .frame(maxWidth: pulseFeedWidth, alignment: .leading).frame(maxWidth: .infinity)
                 .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
 
-                // Pinned ambient lanes — quiet chips above the feed; tap a lit one for its cards.
-                if !store.pulseLanes.isEmpty {
-                    LaneChipRow(lanes: store.pulseLanes, cards: store.pulseCards, onTap: { store.pulseLaneDetail = $0 })
+                // Pinned ambient veins — quiet chips above the feed; tap a lit one for its cards.
+                if !store.pulseVeins.isEmpty {
+                    VeinChipRow(veins: store.pulseVeins, cards: store.pulseCards, onTap: { store.pulseVeinDetail = $0 })
                         .frame(maxWidth: pulseFeedWidth, alignment: .leading).frame(maxWidth: .infinity)
                         .padding(.horizontal, 28).padding(.bottom, 8)
                 } else if store.isLive {
-                    // No lanes enabled — a quiet affordance instead of dead space.
-                    Button { store.section = .lanes } label: {
+                    // No veins enabled — a quiet affordance instead of dead space.
+                    Button { store.section = .veins } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "plus.circle").font(.system(size: 11))
-                            Text("Add lanes — pin ambient watches above the feed")
+                            Text("Add veins to pin ambient watches above the feed")
                                 .font(.system(size: 12))
                         }
                         .foregroundStyle(Theme.textSecondary)
@@ -75,16 +75,16 @@ struct PulseView: View {
                     .transition(.opacity)
                     .zIndex(1)
             }
-            if let lane = laneDetail {
-                PulseLaneView(lane: lane, cards: store.laneCards(lane.kind),
-                              onClose: { store.pulseLaneDetail = nil })
+            if let vein = veinDetail {
+                PulseVeinView(vein: vein, cards: store.veinCards(vein.kind),
+                              onClose: { store.pulseVeinDetail = nil })
                     .transition(.opacity)
                     .zIndex(2)
             }
         }
         .animation(.easeInOut(duration: 0.18), value: detail)
-        .animation(.easeInOut(duration: 0.18), value: laneDetail)
-        .task { await store.refreshPulse() }   // pull the latest feed + lanes whenever Pulse opens
+        .animation(.easeInOut(duration: 0.18), value: veinDetail)
+        .task { await store.refreshPulse() }   // pull the latest feed + veins whenever Pulse opens
     }
 }
 
@@ -219,7 +219,7 @@ struct PulseCardTile: View {
     }
 }
 
-// MARK: - Ambient lanes (pinned chips + lane overlay)
+// MARK: - Ambient veins (pinned chips + vein overlay)
 
 /// Map an ambient-card severity to a rank/color. `notice`/nil read as neutral (accent), `alert`
 /// amber, `critical` red — the chip dot and status-tile marker use these.
@@ -235,47 +235,47 @@ func pulseSeverityColor(_ s: String?) -> Color {
     }
 }
 
-/// The highest severity among a lane's cards (drives the chip dot color), or nil if none.
+/// The highest severity among a vein's cards (drives the chip dot color), or nil if none.
 func pulseMaxSeverity(_ cards: [PulseCard]) -> String? {
     cards.max(by: { pulseSeverityRank($0.severity) < pulseSeverityRank($1.severity) })?.severity
 }
 
-/// The pinned ambient-lane chips above the research feed. A lane is quiet ("nominal") until it has
+/// The pinned ambient-vein chips above the research feed. A vein is quiet ("nominal") until it has
 /// active cards, then it shows a count + severity-colored dot and becomes tappable. Render-safe (no
 /// ScrollView) so the screenshot harness captures it.
-struct LaneChipRow: View {
-    let lanes: [PulseLane]
+struct VeinChipRow: View {
+    let veins: [PulseVein]
     let cards: [PulseCard]
-    var onTap: ((PulseLane) -> Void)? = nil
+    var onTap: ((PulseVein) -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 10) {
-            ForEach(lanes) { lane in
-                LaneChip(lane: lane, cards: cards.filter { $0.kind == lane.kind }, onTap: onTap)
+            ForEach(veins) { vein in
+                VeinChip(vein: vein, cards: cards.filter { $0.kind == vein.kind }, onTap: onTap)
             }
             Spacer(minLength: 0)
         }
     }
 }
 
-struct LaneChip: View {
-    let lane: PulseLane
+struct VeinChip: View {
+    let vein: PulseVein
     let cards: [PulseCard]
-    var onTap: ((PulseLane) -> Void)? = nil
+    var onTap: ((PulseVein) -> Void)? = nil
 
-    // "Lit" = has UNREAD events (dot + count). Always tappable — the lane view reports
+    // "Lit" = has UNREAD events (dot + count). Always tappable — the vein view reports
     // "Nothing to report" honestly when empty. Dot color comes from the max UNREAD severity.
-    private var unread: Bool { lane.unread > 0 }
-    private var dotColor: Color { pulseSeverityColor(lane.maxSeverity) }
+    private var unread: Bool { vein.unread > 0 }
+    private var dotColor: Color { pulseSeverityColor(vein.maxSeverity) }
 
     var body: some View {
         HStack(spacing: 9) {
-            Image(systemName: lane.icon).font(.system(size: 13, weight: .medium))
+            Image(systemName: vein.icon).font(.system(size: 13, weight: .medium))
                 .foregroundStyle(unread ? Theme.textPrimary : Theme.textSecondary)
             VStack(alignment: .leading, spacing: 1) {
-                Text(lane.label).font(.system(size: 13, weight: .semibold))
+                Text(vein.label).font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(unread ? Theme.textPrimary : Theme.textSecondary)
-                Text(unread ? "\(lane.unread) unread" : lane.nominalLabel)
+                Text(unread ? "\(vein.unread) unread" : vein.nominalLabel)
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             if unread { Circle().fill(dotColor).frame(width: 8, height: 8) }
@@ -285,12 +285,12 @@ struct LaneChip: View {
         .overlay(RoundedRectangle(cornerRadius: 12)
             .stroke(unread ? dotColor.opacity(0.5) : Theme.hairline, lineWidth: 1))
         .contentShape(RoundedRectangle(cornerRadius: 12))
-        .onTapGesture { onTap?(lane) }
+        .onTapGesture { onTap?(vein) }
         .pointerCursor()
     }
 }
 
-/// A text-forward status card tile (icon + title + summary, no cover art) for the lane overlay.
+/// A text-forward status card tile (icon + title + summary, no cover art) for the vein overlay.
 /// Carries the Confirm/Dismiss action affordance when the card proposes one; tap opens the full detail.
 struct StatusCardTile: View {
     @EnvironmentObject var store: ChatStore
@@ -384,11 +384,11 @@ struct StatusActionAffordance: View {
     }
 }
 
-/// Full-surface overlay listing one ambient lane's status cards (text-forward), reusing the
+/// Full-surface overlay listing one ambient vein's status cards (text-forward), reusing the
 /// detail-overlay chrome. Tapping a card opens its PulseDetailView.
-struct PulseLaneView: View {
+struct PulseVeinView: View {
     @EnvironmentObject var store: ChatStore
-    let lane: PulseLane
+    let vein: PulseVein
     let cards: [PulseCard]
     var onClose: () -> Void = {}
     @State private var detail: PulseCard?
@@ -399,15 +399,15 @@ struct PulseLaneView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 10) {
-                        Image(systemName: lane.icon).font(.system(size: 18, weight: .semibold))
-                        Text(lane.label).font(.system(size: 22, weight: .bold))
+                        Image(systemName: vein.icon).font(.system(size: 18, weight: .semibold))
+                        Text(vein.label).font(.system(size: 22, weight: .bold))
                     }
                     .foregroundStyle(Theme.textPrimary).padding(.bottom, 2)
                     if cards.isEmpty {
                         Text("Nothing to report.").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                    } else if lane.kind == "status" {
-                        // The System lane groups by category (Vera / Infra / Health / Updates).
-                        ForEach(store.laneCardsByCategory(lane.kind), id: \.0) { (cat, group) in
+                    } else if vein.kind == "status" {
+                        // The System vein groups by category (Vera / Infra / Health / Updates).
+                        ForEach(store.veinCardsByCategory(vein.kind), id: \.0) { (cat, group) in
                             HStack(spacing: 8) {
                                 Image(systemName: cat.icon).font(.system(size: 13, weight: .semibold))
                                 Text(cat.title).font(.system(size: 14, weight: .semibold))
@@ -420,7 +420,7 @@ struct PulseLaneView: View {
                     }
                 }
                 // 36 top (not 24) — the overlay sits under the hidden title bar, which
-                // otherwise slices the top of the lane header.
+                // otherwise slices the top of the vein header.
                 .padding(.horizontal, 24).padding(.bottom, 24).padding(.top, 36)
                 .frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
             }

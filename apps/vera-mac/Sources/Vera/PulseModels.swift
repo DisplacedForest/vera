@@ -3,11 +3,11 @@ import Foundation
 /// App surfaces. `chat` and `agentic` are the top modality tabs; `pulse`/`memory`/`plugins`/`mcp`
 /// are nav rows under the Chat tab.
 enum AppSection: String, CaseIterable, Identifiable {
-    case chat, pulse, lanes, journal, memory, plugins, mcp, agentic
+    case chat, pulse, veins, journal, memory, plugins, mcp, agentic
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .chat: "Chat"; case .pulse: "Pulse"; case .lanes: "Lanes"; case .journal: "Journal"
+        case .chat: "Chat"; case .pulse: "Pulse"; case .veins: "Veins"; case .journal: "Journal"
         case .memory: "Memory"; case .plugins: "Plugins"; case .mcp: "MCP"; case .agentic: "Agentic"
         }
     }
@@ -15,7 +15,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .chat: "message"
         case .pulse: "newspaper"
-        case .lanes: "rectangle.split.3x1"
+        case .veins: "rectangle.split.3x1"
         case .journal: "book.closed"
         case .memory: "tray.full"
         case .plugins: "shippingbox"
@@ -130,7 +130,7 @@ struct GroomOp: Identifiable, Hashable {
     var reversible: Bool { !before.isEmpty }   // undo is offered wherever a before-snapshot exists
 }
 
-/// System-lane sub-groups, fixed render order. `.vera` is the fallback for legacy/untagged cards.
+/// System-vein sub-groups, fixed render order. `.vera` is the fallback for legacy/untagged cards.
 enum PulseCategory: String, CaseIterable, Identifiable {
     case vera, infra, health, update
     var id: String { rawValue }
@@ -148,24 +148,24 @@ enum PulseCategory: String, CaseIterable, Identifiable {
     static func of(_ card: PulseCard) -> PulseCategory { PulseCategory(rawValue: card.category ?? "") ?? .vera }
 }
 
-/// A pinned ambient lane from the backend registry (`GET /pulse/lanes`). Rendered as a
+/// A pinned ambient vein from the backend registry (`GET /pulse/veins`). Rendered as a
 /// slim chip above the research feed; quiet ("nominal") until a card of its `kind` arrives, then it
 /// lights up with a count + severity-colored dot.
-struct PulseLane: Identifiable, Hashable {
+struct PulseVein: Identifiable, Hashable {
     let kind: String
     let label: String
     let icon: String          // SF Symbol name
     let order: Int
-    let nominalLabel: String  // chip text when the lane has no active card today
+    let nominalLabel: String  // chip text when the vein has no active card today
     var unread: Int = 0           // this person's unread count (drives the dot + count)
     var maxSeverity: String? = nil // max severity among UNREAD cards (drives the dot color)
     var id: String { kind }
 
-    static func mock() -> [PulseLane] {
+    static func mock() -> [PulseVein] {
         [
-            PulseLane(kind: "status", label: "System", icon: "gearshape", order: 0, nominalLabel: "nominal"),
-            PulseLane(kind: "weather", label: "Weather", icon: "cloud.sun", order: 1, nominalLabel: "clear"),
-            PulseLane(kind: "signals", label: "Signals", icon: "antenna.radiowaves.left.and.right", order: 2, nominalLabel: "quiet"),
+            PulseVein(kind: "status", label: "System", icon: "gearshape", order: 0, nominalLabel: "nominal"),
+            PulseVein(kind: "weather", label: "Weather", icon: "cloud.sun", order: 1, nominalLabel: "clear"),
+            PulseVein(kind: "signals", label: "Signals", icon: "antenna.radiowaves.left.and.right", order: 2, nominalLabel: "quiet"),
         ]
     }
 }
@@ -183,7 +183,7 @@ struct PulseCard: Identifiable, Hashable {
     var inlineImages: [PulseInlineImage] = []  // real photos placed via [[img:n]] tokens
     var body: String = ""         // full markdown body (markers stripped) for the expanded view
     var status: String? = nil     // vera-api lifecycle: new|seen|bookmarked|promoted
-    var kind: String = "research" // research feed vs an ambient lane (status/weather/signals/…)
+    var kind: String = "research" // research feed vs an ambient vein (status/weather/signals/…)
     var severity: String? = nil   // ambient severity — notice|alert|critical (nil = neutral)
     var action: PulseAction? = nil // a confirm-able action this card proposes
     var provenance: String = "scheduled" // "scheduled" (morning run) | "heartbeat" (noticed for you)
@@ -213,7 +213,7 @@ struct PulseCard: Identifiable, Hashable {
         ]
     }
 
-    /// Mock System-lane status cards for the lit-state + grouped-detail shots —
+    /// Mock System-vein status cards for the lit-state + grouped-detail shots —
     /// text-forward, no cover art, spread across categories (Vera / Infra / Health / Updates).
     static func statusMock() -> [PulseCard] {
         [
@@ -288,7 +288,7 @@ struct PulseCard: Identifiable, Hashable {
             ])
     }
 
-    /// The weekly media-curation digest — a multi-item approve/skip card for the Media lane.
+    /// The weekly media-curation digest — a multi-item approve/skip card for the Media vein.
     static func mediaDigestMock() -> PulseCard {
         func item(_ id: String, _ t: String, _ s: String, _ mt: String, _ tmdb: Int, _ state: String = "pending") -> PulseDigestItem {
             PulseDigestItem(itemID: id, title: t, subtitle: s, mediaType: mt, tmdbID: tmdb, token: id, state: state,

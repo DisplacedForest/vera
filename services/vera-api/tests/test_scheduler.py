@@ -11,7 +11,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from routers import lane_store  # noqa: E402
+from routers import vein_store  # noqa: E402
 from routers import scheduler as sch  # noqa: E402
 from routers import scheduler_store as store  # noqa: E402
 
@@ -19,7 +19,7 @@ from routers import scheduler_store as store  # noqa: E402
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch, tmp_path):
     monkeypatch.setattr(store, "DB_PATH", str(tmp_path / "scheduler.db"))
-    monkeypatch.setattr(lane_store, "PATH", str(tmp_path / "lanes.json"))
+    monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "veins.json"))
     # Scrub any SCHEDULE_* env so precedence tests start from registry defaults.
     for k in list(os.environ):
         if k.startswith("SCHEDULE_"):
@@ -27,11 +27,11 @@ def _clean(monkeypatch, tmp_path):
     yield
 
 
-def _open_weather_lane(monkeypatch):
-    """Open the weather job's lane gate: lane enabled + its coordinate requirement met."""
+def _open_weather_vein(monkeypatch):
+    """Open the weather job's vein gate: vein enabled + its coordinate requirement met."""
     monkeypatch.setenv("WEATHER_LAT", "39.0")
     monkeypatch.setenv("WEATHER_LON", "-95.0")
-    lane_store.update("weather", enabled=True)
+    vein_store.update("weather", enabled=True)
 
 
 def test_registry_defaults_apply():
@@ -74,7 +74,7 @@ def test_outcome_recording():
     assert "concerns" in j["last_run"]["detail"]
 
 
-def test_fire_refuses_while_lane_gate_closed(monkeypatch):
+def test_fire_refuses_while_vein_gate_closed(monkeypatch):
     fired = []
 
     async def handler():
@@ -82,7 +82,7 @@ def test_fire_refuses_while_lane_gate_closed(monkeypatch):
         return {"ok": True}
 
     monkeypatch.setitem(sch.REGISTRY, "weather", ("Weather check", "0 */6 * * *", handler))
-    asyncio.run(sch._fire("weather"))  # weather lane off -> the gate refuses the fire
+    asyncio.run(sch._fire("weather"))  # weather vein off -> the gate refuses the fire
     assert not fired
 
 
@@ -90,7 +90,7 @@ def test_fire_failure_is_isolated_and_recorded(monkeypatch):
     async def boom():
         raise RuntimeError("collector exploded")
 
-    _open_weather_lane(monkeypatch)
+    _open_weather_vein(monkeypatch)
     monkeypatch.setitem(sch.REGISTRY, "weather", ("Weather check", "0 */6 * * *", boom))
     asyncio.run(sch._fire("weather"))
     row = store.overrides()["weather"]
@@ -102,7 +102,7 @@ def test_fire_skips_overlapping_run(monkeypatch):
     async def ok():
         return {"ok": True}
 
-    _open_weather_lane(monkeypatch)
+    _open_weather_vein(monkeypatch)
     monkeypatch.setitem(sch.REGISTRY, "weather", ("Weather check", "0 */6 * * *", ok))
     sch._running.add("weather")
     try:

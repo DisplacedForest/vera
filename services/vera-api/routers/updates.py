@@ -1,7 +1,7 @@
-"""Available stack updates — a System-lane producer.
+"""Available stack updates — a System-vein producer.
 
 Like `health`, this is a scheduled producer that folds into the System chip rather than owning its
-own lane: when updates are available across the stack it injects ONE `kind=status,
+own vein: when updates are available across the stack it injects ONE `kind=status,
 category=update` card (renders under the System detail's Updates group); when everything
 is current it clears the card and posts nothing (zero-floor).
 
@@ -63,7 +63,7 @@ _PLATFORM_GROUP = {
 # Render order for the card body. "Containers" comes from the Unraid file; the rest from HA.
 GROUP_ORDER = ["Containers", "Unraid OS", "Home Assistant", "HACS", "Network", "Apps"]
 
-# Card group -> the System lane's monitored-source toggle that governs it.
+# Card group -> the System vein's monitored-source toggle that governs it.
 _GROUP_SOURCE = {"Containers": "src_containers", "Unraid OS": "src_host",
                  "Home Assistant": "src_home_assistant", "HACS": "src_home_assistant",
                  "Network": "src_network", "Apps": "src_apps"}
@@ -273,10 +273,10 @@ async def check(req: UpdateCheck):
     update card. Runs from the built-in scheduler (or any cron). Zero-floor + dedup: unchanged set
     leaves the card in place (no re-incremented unread), a changed set replaces it, nothing pending
     clears it. Each actionable row carries a Confirm-to-apply action."""
-    from . import pulse_lanes
-    if not pulse_lanes.is_enabled("status"):
-        return {"ok": False, "disabled": True, "detail": pulse_lanes.gate_reason("status")}
-    sources = pulse_lanes.option_values("status")
+    from . import pulse_veins
+    if not pulse_veins.is_enabled("status"):
+        return {"ok": False, "disabled": True, "detail": pulse_veins.gate_reason("status")}
+    sources = pulse_veins.option_values("status")
     docker_status = req.docker_status
     if not docker_status:
         # Container-update visibility needs the host's update-status JSON. A caller (host cron)
@@ -297,7 +297,7 @@ async def check(req: UpdateCheck):
             components += _ha_pending(states, platforms)
         except Exception as e:  # HA unreachable — still report containers; note the gap.
             ha_detail = f"HA unreachable: {str(e)[:70]}"
-    # The lane's monitored-source toggles scope what the card carries (all default on).
+    # The vein's monitored-source toggles scope what the card carries (all default on).
     components = _scope_components(components, sources)
 
     signature = _signature(components)

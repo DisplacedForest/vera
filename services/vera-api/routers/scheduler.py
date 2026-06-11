@@ -42,7 +42,9 @@ _POLL_SECONDS = 20
 
 async def _job_pulse():
     from . import pulse
-    return await pulse.run(pulse.PulseRequest())
+    # Follow the 202 trigger to completion so the job's recorded outcome is the run's
+    # actual result (cards, starvation warnings, gate kills), not the acknowledgement.
+    return await pulse.run_outcome(await pulse.run(pulse.PulseRequest()))
 
 
 async def _job_weather():

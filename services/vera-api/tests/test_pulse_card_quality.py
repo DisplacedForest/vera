@@ -93,7 +93,19 @@ def test_fresh_verdict_passes(monkeypatch):
     async def vera_fresh(messages, temperature=0.4):
         return "FRESH"
     monkeypatch.setattr(pulse, "_vera", vera_fresh)
-    assert _run(pulse.is_stale_news({"title": "Yeast strain tannin research"}, None)) is False
+    assert _run(pulse.is_stale_news({"title": "Yeast strain tannin research"}, "2026-06-01")) is False
+
+
+def test_undated_corpus_passes_without_consulting_model(monkeypatch):
+    calls = []
+
+    async def vera_stale(messages, temperature=0.4):
+        calls.append(1)
+        return "STALE"
+
+    monkeypatch.setattr(pulse, "_vera", vera_stale)
+    assert _run(pulse.is_stale_news({"title": "anything"}, None)) is False
+    assert calls == []  # no date evidence -> nothing to judge, model never consulted
 
 
 def test_gate_fails_open(monkeypatch):
@@ -117,13 +129,46 @@ def test_gate_prompt_carries_today_and_date(monkeypatch):
     _run(pulse.is_stale_news({"title": "T", "angle": "A"}, "2025-01-16"))
     assert time.strftime("%Y-%m-%d") in seen["sys"]
     assert "Newest source date: 2025-01-16" in seen["usr"]
-    _run(pulse.is_stale_news({"title": "T"}, None))
-    assert "no dated sources" in seen["usr"]
 
 
 def test_card_sys_requires_absolute_dates():
     card = pulse.CARD_SYS.format(img_instr="", who="Z", today="2026-06-10")
     assert "month and year" in card and "'in January 2025'" in card
+
+
+# --- empty synthesis marker ----------------------------------------------------------
+
+def test_empty_synthesis_is_marked(monkeypatch):
+    from types import SimpleNamespace
+
+    async def none_covered(topic, user_id):
+        return None
+
+    async def fake_search(req):
+        return SimpleNamespace(results=[])
+
+    async def not_stale(topic, newest):
+        return False
+
+    async def on_topic(topic, sources):
+        return (False, None)
+
+    async def no_images(idx, q, tops):
+        return []
+
+    async def empty_vera(messages, temperature=0.4):
+        return ""
+
+    monkeypatch.setattr(pulse, "already_covered", none_covered)
+    monkeypatch.setattr(pulse, "web_search", fake_search)
+    monkeypatch.setattr(pulse, "is_stale_news", not_stale)
+    monkeypatch.setattr(pulse, "is_off_topic", on_topic)
+    monkeypatch.setattr(pulse, "_gather_images", no_images)
+    monkeypatch.setattr(pulse, "_vera", empty_vera)
+    errs = []
+    card = _run(pulse.research_topic({"title": "T", "query": "t"}, who="Z", user_id="u", errors=errs))
+    assert card is None
+    assert any(e.startswith("skipped (empty synthesis)") for e in errs)
 
 
 # --- coherence gate ------------------------------------------------------------------

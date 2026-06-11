@@ -10,6 +10,7 @@ The scheduler's only job is to trigger this each morning. All logic lives here, 
 import asyncio
 import base64
 import json
+import logging
 import os
 import re
 import time
@@ -25,11 +26,13 @@ from pydantic import BaseModel
 from . import pulse_lanes
 from . import pulse_store as store
 from . import user_profile_store as up
+from . import vera_interests_store as vi
 from .persona import voiced
 from .images import ImageSearchRequest, search as image_search
 from .websearch import SearchRequest, search as web_search
 
 router = APIRouter()
+log = logging.getLogger("vera.pulse")
 
 OWUI_BASE = os.environ.get("OWUI_BASE", "").rstrip("/")          # Open WebUI (memory, chat promotion)
 OWUI_KEY = os.environ.get("OWUI_KEY", "")
@@ -45,6 +48,8 @@ TZ = ZoneInfo(os.environ.get("HOME_TZ", "UTC"))  # untouched cards expire the da
 PULSE_MIN_CARDS = int(os.environ.get("PULSE_MIN_CARDS", "2"))
 PULSE_MAX_CARDS = int(os.environ.get("PULSE_MAX_CARDS", "8"))
 PULSE_TRIAGE_ROUNDS = int(os.environ.get("PULSE_TRIAGE_ROUNDS", "3"))
+# Variety guarantee within one run: at most this many research cards per standing interest.
+PULSE_MAX_PER_INTEREST = int(os.environ.get("PULSE_MAX_PER_INTEREST", "1"))
 
 # Image generation resolves through the integrations registry's 'image_gen' entry
 # (env-seeded by VERA_IMAGE_BASE / IMAGE_PROTOCOL, editable in the plugin store) — the
@@ -229,10 +234,13 @@ async def _get_memories():
 TRIAGE_SYS = (
     'You\'re planning {who}\'s proactive morning briefing ("Pulse") for {today}. '
     "From their standing interests and what you know about them, pick AT MOST {n} topics "
-    "genuinely worth briefing on today. Quality over quantity. If nothing is genuinely "
-    "worth surfacing, return an empty list. No filler. For each topic give a concise web "
-    "search query that surfaces the latest on it. Return ONLY JSON: "
-    '{{"topics":[{{"title":"short card title","angle":"why it matters today","query":"web search query"}}]}}.'
+    "genuinely worth briefing on today. Quality over quantity, and SPREAD: never two topics "
+    "serving the same interest. If nothing is genuinely worth surfacing, return an empty "
+    "list. No filler. For each topic give a concise web search query that surfaces the "
+    "latest on it, and name the standing interest it serves (copied verbatim from the list, "
+    "or null when it serves none). Return ONLY JSON: "
+    '{{"topics":[{{"title":"short card title","angle":"why it matters today",'
+    '"query":"web search query","interest":"the standing interest it serves or null"}}]}}.'
 )
 
 TRIAGE_RETRY = (
@@ -609,8 +617,12 @@ async def is_off_topic(topic, sources):
 
 async def is_stale_news(topic, newest):
     """The freshness gate — True only when the topic is time-sensitive news whose newest coverage
-    (`newest`, a YYYY-MM-DD string or None) is too old to brief as news today. Fail-open: an error
-    or an unparseable verdict can never suppress research."""
+    (`newest`, a YYYY-MM-DD string or None) is too old to brief as news today. An undated corpus
+    passes without consulting the model: with no date evidence there is nothing to judge, and
+    engines that omit dates must never read as staleness. Fail-open: an error or an unparseable
+    verdict can never suppress research."""
+    if not newest:
+        return False
     try:
         raw = await _vera(
             [{"role": "system", "content": FRESH_SYS.format(today=time.strftime("%Y-%m-%d"))},
@@ -825,6 +837,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     # only the search plan and may name things that don't exist. Fall back to it if absent.
     headline, body = _split_headline(body)
     if not body:
+        errs.append(f"skipped (empty synthesis): {topic.get('title')}")
         return None  # nothing synthesized — don't inject an empty card
 
     # Cross-model claim validation — the coder audits the body against its own corpus and
@@ -882,6 +895,34 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     return card
 
 
+# Skip-marker prefix -> gate name, for the per-run kill tally that makes a starved run
+# (gates ate the proposals) distinguishable from a quiet news day (triage had nothing).
+_GATE_MARKERS = (
+    ("skipped (already covered)", "dedup"),
+    ("skipped (stale news)", "freshness"),
+    ("skipped (off-topic corpus)", "coherence"),
+    ("skipped (empty synthesis)", "empty"),
+)
+
+
+def _gate_kind(new_errors):
+    for e in new_errors:
+        for prefix, kind in _GATE_MARKERS:
+            if e.startswith(prefix):
+                return kind
+    return "empty"
+
+
+def _stamp_interest(interest):
+    """Put a shipped interest on the fixation cooldown so consecutive runs and for-you
+    ticks rotate to something else. Best-effort — never blocks a card."""
+    try:
+        vi.observe(interest, source="chat", salience_bump=0.0)
+        vi.touch(interest)
+    except Exception:
+        pass
+
+
 async def _triage(who, persona, interests, memories, exclusions, want, rnd):
     """One triage round: propose up to `want` topics, avoiding `exclusions`. Retry rounds
     (rnd > 0) carry an explicit branch-out instruction and a hotter temperature so the model
@@ -935,6 +976,15 @@ async def _do_run(req: PulseRequest):
             out["errors"].append(f"memories: {e}")
 
     all_interests = list(dict.fromkeys(list(req.interests) + [i["topic"] for i in profile.get("interests", [])]))
+    # Fixation cooldown: an interest that just shipped a card (here or via a for-you tick)
+    # sits out until its cooldown lapses, so consecutive runs rotate instead of replaying
+    # whichever interest happens to search best.
+    try:
+        cooling = vi.cooled(all_interests)
+    except Exception:
+        cooling = set()
+    if cooling:
+        all_interests = [t for t in all_interests if t not in cooling]
     persona = profile.get("persona")
 
     # 2) the novelty loop: triage -> per-topic research (deep-research -> illustrate ->
@@ -948,6 +998,8 @@ async def _do_run(req: PulseRequest):
     target = min(req.max_cards or PULSE_MAX_CARDS, PULSE_MAX_CARDS)
     out["rounds"] = []
     attempt = 0  # running per-topic index across rounds (rotates cover-art styles)
+    gates = {"dedup": 0, "freshness": 0, "coherence": 0, "empty": 0, "interest_cap": 0}
+    shipped_per_interest = {}  # lowercased interest -> cards shipped this run
 
     await _vision(pause=True)  # free the image host's memory so cover-gen fits (restored below)
     try:
@@ -968,14 +1020,28 @@ async def _do_run(req: PulseRequest):
             for t in topics:
                 if len(out["injected"]) >= target:
                     break
+                interest = (t.get("interest") or "").strip()
+                if interest and shipped_per_interest.get(interest.lower(), 0) >= PULSE_MAX_PER_INTEREST:
+                    gates["interest_cap"] += 1
+                    out["errors"].append(
+                        f"skipped (interest cap): {t.get('title')} — '{interest}' already shipped this run")
+                    out["skipped"].append(t.get("title"))
+                    record["skipped"].append(t.get("title"))
+                    continue
+                before = len(out["errors"])
                 try:
                     card = await research_topic(t, who=who, user_id=user_id, idx=attempt,
                                                 provenance="scheduled", errors=out["errors"])
                     if card:
                         out["injected"].append(card["title"])
                         record["injected"].append(card["title"])
+                        if interest:
+                            shipped_per_interest[interest.lower()] = \
+                                shipped_per_interest.get(interest.lower(), 0) + 1
+                            _stamp_interest(interest)
                     else:
-                        out["skipped"].append(t.get("title"))  # dup gate or empty synthesis
+                        gates[_gate_kind(out["errors"][before:])] += 1
+                        out["skipped"].append(t.get("title"))  # a gate fired or synthesis was empty
                         record["skipped"].append(t.get("title"))
                 except Exception as e:
                     out["errors"].append(f"{t.get('title')}: {e}")
@@ -984,6 +1050,13 @@ async def _do_run(req: PulseRequest):
     finally:
         await _vision(pause=False)  # bring the vision model back up after the image batch
 
+    out["gates"] = gates
+    if len(out["injected"]) < target and any(gates.values()):
+        msg = (f"starved run: {len(out['injected'])}/{target} cards after "
+               f"{len(out['rounds'])} triage round(s); gate kills — "
+               + ", ".join(f"{k}={v}" for k, v in gates.items()))
+        out["errors"].append(msg)
+        log.warning("%s", msg)
     floor = min(PULSE_MIN_CARDS, target)  # an explicit small max_cards lowers the floor too
     if len(out["injected"]) < floor:
         out["errors"].append(
@@ -1012,11 +1085,16 @@ async def _runner(fn, req, run_id, kind):
         if kind == "run_all":
             injected = [t for u in out.get("users", []) for t in (u.get("injected") or [])]
             topics, errors = [], [e for u in out.get("users", []) for e in (u.get("errors") or [])]
+            gates = {}
+            for u in out.get("users", []):
+                for k, v in (u.get("gates") or {}).items():
+                    gates[k] = gates.get(k, 0) + v
         else:
             injected, topics, errors = out.get("injected", []), out.get("topics", []), out.get("errors", [])
+            gates = out.get("gates", {})
         store.set_run_status({"run_id": run_id, "state": "ok", "kind": kind, "started_at": started,
                               "finished_at": int(time.time()), "topics": topics,
-                              "injected": injected, "errors": errors,
+                              "injected": injected, "errors": errors, "gates": gates,
                               "rounds": out.get("rounds", []) if kind != "run_all" else []})
     except Exception as e:
         store.set_run_status({"run_id": run_id, "state": "error", "kind": kind, "started_at": started,
@@ -1052,8 +1130,29 @@ async def run(req: PulseRequest):
 @router.get("/pulse/run_status", tags=["pulse"])
 async def run_status():
     """The current/last run state — {run_id, state(idle|running|ok|error|stale), kind,
-    started_at, finished_at, topics, injected, errors}. Schedulers poll this to completion."""
+    started_at, finished_at, topics, injected, errors, gates}. Schedulers poll this to completion."""
     return store.get_run_status()
+
+
+async def run_outcome(trigger, poll_secs=10, timeout=2700):
+    """Follow a /pulse/run 202 trigger to the run's terminal record and distill the outcome
+    a scheduler should keep: state, shipped cards, starvation warnings, per-gate kill counts.
+    Inline results (sweep_only) pass through untouched; a run still going when the wait
+    expires reports itself as such rather than blocking the job slot forever."""
+    if trigger.get("state") != "running":
+        return trigger
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await asyncio.sleep(poll_secs)
+        st = store.get_run_status()
+        if st.get("state") == "running":
+            continue
+        errors = st.get("errors") or []
+        return {"state": st.get("state"),
+                "warnings": [e for e in errors if e.startswith(("starved run", "under floor"))],
+                "gates": st.get("gates") or {},
+                "injected": st.get("injected") or []}
+    return {"state": "running", "warnings": [f"run still going after {timeout}s — see /pulse/run_status"]}
 
 
 async def _active_users():
@@ -1085,7 +1184,7 @@ async def _do_run_all(req: RunAllRequest):
                                        max_cards=req.max_cards, sweep_only=False))
         out["users"].append({"user_id": u["id"], "name": u.get("name"),
                              "injected": r.get("injected", []), "errors": r.get("errors", []),
-                             "rounds": r.get("rounds", [])})
+                             "gates": r.get("gates", {}), "rounds": r.get("rounds", [])})
     return out
 
 

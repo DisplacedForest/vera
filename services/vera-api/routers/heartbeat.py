@@ -230,6 +230,17 @@ async def _ensure_glosses(uid, name, prof, interests):
         pass
 
 
+def _cool(*topics):
+    """Put each named topic/interest on the fixation cooldown (creating its interest row if
+    needed). Best-effort bookkeeping — never blocks the tick."""
+    for t in {t for t in topics if t}:
+        try:
+            vi.observe(t, source="self", salience_bump=0.0)
+            vi.touch(t)
+        except Exception:
+            pass
+
+
 async def _for_you(now_str, recent):
     """Chase ONE person's interests this tick (round-robin across active users). When a candidate
     clears the relevance gate (a real concept-level link, not a shared word) AND the substance gate
@@ -251,10 +262,21 @@ async def _for_you(now_str, recent):
     # Lazy backfill: give interests a one-line meaning so the relevance gate is semantic, not lexical.
     await _ensure_glosses(uid, name, prof, interests)
     interests = up.interests(uid)  # re-read with any freshly-written glosses
+    # Fixation cooldown: an interest that just shipped or just got skipped sits out, so the
+    # candidate model can't re-pitch rewordings of it tick after tick.
+    try:
+        cooling = vi.cooled([i["topic"] for i in interests])
+    except Exception:
+        cooling = set()
+    interests = [i for i in interests if i["topic"] not in cooling]
+    if not interests:
+        return None  # everything she follows for them is cooling off — quiet tick
     interest_lines = "\n".join(
         f"- {i['topic']}" + (f" — {i['gloss']}" if i.get("gloss") else "") for i in interests)
+    # Skips count as surfaced: a topic the dedup gate killed must not be re-proposed either.
     recent_for = [o["detail"].split(":", 1)[1] for o in recent
-                  if o.get("kind") == "foryou" and o.get("detail", "").startswith(f"{uid}:")]
+                  if o.get("kind") in ("foryou", "foryou_skip")
+                  and o.get("detail", "").startswith(f"{uid}:")]
     # The actual cards already in their feed — show her so she stops proposing dupes.
     feed_titles = [c["title"] for c in _recent_for_user(uid)]
 
@@ -273,7 +295,8 @@ async def _for_you(now_str, recent):
     query = (decide.get("query") or "").strip()
     if not topic or not query:
         return None
-    if any(o.get("kind") == "foryou" and o.get("detail") == f"{uid}:{topic}" for o in recent):
+    if any(o.get("kind") in ("foryou", "foryou_skip") and o.get("detail") == f"{uid}:{topic}"
+           for o in recent):
         return None
 
     # 2) relevance gate — a concept-level link, not a shared word (kills wine != Wine-OS) BEFORE research
@@ -308,9 +331,12 @@ async def _for_you(now_str, recent):
     finally:
         await _vision(pause=False)
     if not card:
-        # Distinguish "already covered" (gate fired) from empty synthesis, and log it.
-        if any(e.startswith("skipped (already covered)") for e in rt_errs):
-            hb.log("foryou_skip", f"{uid}:{topic}", extra={"reason": "already covered"})
+        # Name the gate that killed it, log the skip, and cool the topic AND its proposing
+        # interest — a skipped candidate must back off, not return reworded next tick.
+        reason = next((m.group(1) for e in rt_errs
+                       for m in [re.match(r"skipped \(([^)]+)\)", e)] if m), "empty synthesis")
+        hb.log("foryou_skip", f"{uid}:{topic}", extra={"reason": reason})
+        _cool(topic, interest_name)
         return None
 
     # the underlying fact is shared (one brain); grounded so no invented specifics
@@ -324,6 +350,9 @@ async def _for_you(now_str, recent):
     except Exception:
         pass
     hb.log("foryou", f"{uid}:{topic}", extra={"query": query, "name": name})
+    # Stamp the serving interest (and the topic) onto the fixation cooldown so the next
+    # ticks and the morning run rotate to something else.
+    _cool(topic, interest_name)
     return {"user": name, "topic": topic}
 
 

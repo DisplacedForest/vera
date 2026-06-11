@@ -34,6 +34,21 @@ def test_touch_cooldown_hides_from_active():
     assert a["times_explored"] == 1 and a["cooldown_until"] > int(time.time())
 
 
+def test_cooled_names_the_cooling_subset():
+    vi.observe("topic A")
+    vi.observe("topic B")
+    vi.touch("topic A")
+    assert vi.cooled(["topic A", "topic B", "never seen"]) == {"topic A"}
+
+
+def test_cooled_expires_with_the_clock():
+    vi.observe("topic A")
+    vi.touch("topic A")
+    future = int(time.time()) + 10 * 24 * 3600
+    assert vi.cooled(["topic A"], now=future) == set()
+    assert vi.cooled([]) == set()
+
+
 def test_active_tempers_salience_by_novelty():
     vi.observe("worked", salience_bump=4.0)
     vi.touch("worked"); vi.touch("worked"); vi.touch("worked")  # heavily explored

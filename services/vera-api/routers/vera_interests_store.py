@@ -118,6 +118,22 @@ def touch(topic, cooldown_hours=COOLDOWN_HOURS):
     return until
 
 
+def cooled(topics, now=None):
+    """The subset of `topics` currently on a fixation cooldown — what a proposing loop
+    (pulse triage, the for-you tick) must withhold so it rotates instead of replaying."""
+    if not topics:
+        return set()
+    init()
+    now = now if now is not None else int(time.time())
+    out = set()
+    with _conn() as c:
+        for t in topics:
+            r = c.execute("SELECT cooldown_until FROM interest WHERE id=?", (_iid(t),)).fetchone()
+            if r and r["cooldown_until"] and r["cooldown_until"] > now:
+                out.add(t)
+    return out
+
+
 def _row(r):
     return {"id": r["id"], "topic": r["topic"], "stance": r["stance"], "salience": r["salience"],
             "source": r["source"], "times_explored": r["times_explored"] or 0,

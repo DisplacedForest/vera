@@ -134,7 +134,7 @@ vera-api runs all recurring work itself — no external cron. Defaults:
 
 A gated job never fires while its gate is closed — on a fresh install, nothing is monitored until its lane is enabled or its feature is consented to. Edit any schedule in the app's **Agentic** tab (live, no restart) or pin it with `SCHEDULE_<JOB>` / `SCHEDULE_<JOB>_ENABLED` env overrides. A gated job reports *why* it is gated instead of running.
 
-The heartbeat tick also services Vera's **journal** — the self-authored document of standing commitments she checks, updates, and retires on her own (stored at `VERA_JOURNAL_PATH`, default `/data/journal/JOURNAL.md`; rendered read-only in the app's Journal view and at `GET /journal`). With no journal file and nothing to commit to, the step is a no-op.
+The heartbeat tick also services Vera's **journal** — the self-authored document of standing commitments she checks, updates, and retires on her own (stored at `VERA_JOURNAL_PATH`, default `/data/journal/JOURNAL.md`; rendered read-only in the app's Journal view and at `GET /journal`). With no journal file and nothing to commit to, the step is a no-op. Chat steers the journal through the `self_author.py` tool's `read_journal` / `journal_commit` functions, so install that tool if you want "keep an eye on X" and "what are you watching" to work in conversation.
 
 ## 8. Verifying the install
 

@@ -21,10 +21,13 @@ struct AssistantBody: View {
 
     private var prose: some View {
         let parsed = ToolCallParser.parse(message.text)
+        // Cited replies drop their trailing plain-text "Sources" list — the SourcesRow below
+        // renders the real thing (no-op when the section is absent).
+        let display = message.sources.isEmpty ? parsed.clean : PulseMarkers.stripSourcesSection(parsed.clean)
         return VStack(alignment: .leading, spacing: 10) {
             ForEach(ToolCallParser.group(parsed.calls)) { ToolGroupChip(group: $0) }
             // Interleave prose (markdown — incl. tables) with native chart / stat-card blocks.
-            ForEach(VeraBlocks.segments(parsed.clean)) { seg in
+            ForEach(VeraBlocks.segments(display)) { seg in
                 switch seg {
                 case .prose(_, let t):
                     // Cited replies get the Pulse treatment: refs stripped, chips beneath.
@@ -39,6 +42,10 @@ struct AssistantBody: View {
             }
             ForEach(message.artifacts) { art in
                 Button { onOpenArtifact?(art) } label: { ArtifactChip(artifact: art) }.buttonStyle(.plain)
+            }
+            // Pulse parity: the expandable sources row at the bottom of a cited reply.
+            if !message.sources.isEmpty {
+                SourcesRow(sources: message.sources)
             }
             // Response actions — copy + thumbs up/down (ratings feed the preference log).
             if !parsed.clean.isEmpty {

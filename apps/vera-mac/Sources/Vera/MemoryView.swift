@@ -31,6 +31,7 @@ struct MemoryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
+        .task { await store.refreshMemories() }   // always current when the view opens
     }
 }
 

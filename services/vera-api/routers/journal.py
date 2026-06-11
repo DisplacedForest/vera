@@ -370,9 +370,12 @@ async def tick_step(errors):
     Returns the headings whose check surfaced something."""
     fired = []
     try:
-        if not os.path.exists(JOURNAL_PATH) and not await migrate_legacy_watches():
-            return fired
+        # Legacy watch rows fold in here — a cheap no-op once they're gone, and the retry
+        # path for any group whose authoring failed on an earlier attempt.
+        await migrate_legacy_watches()
         entries = parse_document(read_document())
+        if not entries:
+            return fired
         for e in due_entries(entries, now=time.time(), cap=DUE_CAP):
             try:
                 res = await _check_entry(e)
@@ -388,13 +391,14 @@ async def tick_step(errors):
 # --------------------------------------------------------------------------- legacy watches
 
 async def migrate_legacy_watches():
-    """One-time: hand the interests store's mechanical watch rows to her authoring pass so
-    they collapse into per-situation journal entries, then drop the rows. True if anything
-    migrated. Safe on stores that never grew the watch columns."""
+    """Hand the interests store's mechanical watch rows to her authoring pass so they
+    collapse into per-situation journal entries. Rows are deleted per GROUP and only after
+    that group's authoring succeeds — a failed group stays in the store for the next
+    attempt. True if anything migrated. Safe on stores that never grew the watch columns."""
     try:
         c = sqlite3.connect(vi.DB_PATH)
         c.row_factory = sqlite3.Row
-        rows = c.execute("SELECT topic, watch_query, origin, last_finding FROM interest "
+        rows = c.execute("SELECT id, topic, watch_query, origin, last_finding FROM interest "
                          "WHERE COALESCE(is_watch,0)=1").fetchall()
     except sqlite3.Error:
         return False
@@ -404,6 +408,7 @@ async def migrate_legacy_watches():
     groups = {}
     for r in rows:
         groups.setdefault(r["origin"] or r["topic"], []).append(r)
+    migrated = False
     for origin_label, group in groups.items():
         lines = [f"- {r['topic']}" + (f": last known {r['last_finding']}" if r["last_finding"] else "")
                  for r in group]
@@ -412,11 +417,12 @@ async def migrate_legacy_watches():
         try:
             await author(material, origin=f"carried over from watches: {origin_label}")
         except Exception:
-            continue  # a failed group stays in the store for the next attempt
-    with c:
-        c.execute("DELETE FROM interest WHERE COALESCE(is_watch,0)=1")
+            continue  # this group's rows stay for the next attempt
+        with c:
+            c.executemany("DELETE FROM interest WHERE id=?", [(r["id"],) for r in group])
+        migrated = True
     c.close()
-    return os.path.exists(JOURNAL_PATH)
+    return migrated and os.path.exists(JOURNAL_PATH)
 
 
 # --------------------------------------------------------------------------- endpoints

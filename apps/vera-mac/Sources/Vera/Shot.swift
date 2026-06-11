@@ -156,6 +156,7 @@ enum Shot {
             switch view {
             case "pulse": section = .pulse
             case "lanes": section = .lanes
+            case "journal": section = .journal; store.journalEntries = JournalEntry.mock()
             case "memory": section = .memory
             case "plugins": section = .plugins
             case "mcp": section = .mcp

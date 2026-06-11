@@ -30,18 +30,19 @@ def _conn():
 
 
 # Extra columns added after the original schema shipped — created on existing DBs via ALTER (below).
-# A "watch" is a standing question Vera re-asks until it resolves: a thing to monitor, re-checked on
-# her heartbeat, surfacing a card only when its answer materially changes.
+# Legacy watch columns: standing watches now live in Vera's journal (routers/journal.py); these
+# columns remain only so `active()` works on every store vintage and so the journal's one-time
+# migration can read any rows that predate it.
 _WATCH_COLUMNS = [
-    ("is_watch", "INTEGER DEFAULT 0"),   # 1 = monitored watch (excluded from the curiosity-explore set)
-    ("watch_query", "TEXT"),             # the search to re-run each check
-    ("metric", "TEXT"),                  # optional numeric hint (e.g. "USD/ton") → enables a delta test
-    ("last_finding", "TEXT"),            # the last grounded finding (the baseline to compare against)
-    ("last_value", "REAL"),              # the last extracted number, when metric is set
+    ("is_watch", "INTEGER DEFAULT 0"),   # 1 = legacy watch row (excluded from the curiosity-explore set)
+    ("watch_query", "TEXT"),
+    ("metric", "TEXT"),
+    ("last_finding", "TEXT"),
+    ("last_value", "REAL"),
     ("last_checked", "INTEGER"),
     ("last_changed_at", "INTEGER"),
-    ("origin", "TEXT"),                  # the situation/headline that spawned the watch
-    ("expire_at", "INTEGER"),            # auto-retire when the situation goes stale
+    ("origin", "TEXT"),
+    ("expire_at", "INTEGER"),
 ]
 
 
@@ -156,85 +157,6 @@ def delete(interest_id):
     init()
     with _conn() as c:
         c.execute("DELETE FROM interest WHERE id=?", (interest_id,))
-
-
-# --------------------------------------------------------------------------- watches
-
-def _watch_row(r):
-    return {"id": r["id"], "topic": r["topic"], "watch_query": r["watch_query"], "metric": r["metric"],
-            "last_finding": r["last_finding"], "last_value": r["last_value"],
-            "last_checked": r["last_checked"], "origin": r["origin"], "expire_at": r["expire_at"]}
-
-
-def add_watch(topic, query, metric=None, origin=None, ttl_days=14, now=None):
-    """Register a standing watch: a thing to monitor + the search to re-run. Idempotent on topic —
-    re-adding refreshes the query/expiry but PRESERVES the last finding so monitoring continuity
-    survives. Returns the interest id, or None if topic/query is empty."""
-    if not (topic and topic.strip() and query and query.strip()):
-        return None
-    init()
-    iid = _iid(topic)
-    now = now if now is not None else int(time.time())
-    expire = now + int(ttl_days) * 86400
-    with _conn() as c:
-        row = c.execute("SELECT learned_at FROM interest WHERE id=?", (iid,)).fetchone()
-        learned = row["learned_at"] if row else now
-        c.execute(
-            """INSERT INTO interest(id,topic,stance,salience,source,times_explored,last_explored,
-                                    cooldown_until,provenance,learned_at,updated_at,
-                                    is_watch,watch_query,metric,origin,expire_at)
-               VALUES(?,?,NULL,?,?,0,NULL,NULL,NULL,?,?,1,?,?,?,?)
-               ON CONFLICT(id) DO UPDATE SET
-                 is_watch=1, watch_query=excluded.watch_query, metric=excluded.metric,
-                 origin=COALESCE(excluded.origin, interest.origin),
-                 expire_at=excluded.expire_at, updated_at=excluded.updated_at""",
-            (iid, topic.strip(), 0.1, "watch", learned, now, query.strip(), metric, origin, expire))
-    return iid
-
-
-def due_watches(now=None, stale_after_hours=24, limit=5):
-    """Active, non-expired watches not checked within `stale_after_hours` — never-checked first, then
-    oldest-checked. `limit` spreads load across heartbeat ticks."""
-    init()
-    now = now if now is not None else int(time.time())
-    cutoff = now - int(stale_after_hours) * 3600
-    with _conn() as c:
-        rows = c.execute(
-            "SELECT * FROM interest WHERE COALESCE(is_watch,0)=1 "
-            "AND (expire_at IS NULL OR expire_at > ?) "
-            "AND (last_checked IS NULL OR last_checked <= ?) "
-            "ORDER BY last_checked IS NOT NULL, last_checked ASC LIMIT ?",
-            (now, cutoff, limit)).fetchall()
-    return [_watch_row(r) for r in rows]
-
-
-def record_watch_check(interest_id, finding=None, value=None, changed=False, now=None):
-    """Record a re-check. Always stamps last_checked. Writes last_finding/last_value only when given
-    (caller passes them to set the baseline or on a detected change), so unchanged re-checks compare
-    against the last KNOWN state rather than resetting it."""
-    init()
-    now = now if now is not None else int(time.time())
-    sets, args = ["last_checked=?"], [now]
-    if finding is not None:
-        sets.append("last_finding=?"); args.append(finding)
-    if value is not None:
-        sets.append("last_value=?"); args.append(value)
-    if changed:
-        sets.append("last_changed_at=?"); args.append(now)
-    sets.append("updated_at=?"); args.append(now)
-    args.append(interest_id)
-    with _conn() as c:
-        c.execute(f"UPDATE interest SET {', '.join(sets)} WHERE id=?", args)
-
-
-def purge_expired_watches(now=None):
-    """Drop watches whose situation has gone stale (past expire_at). Returns the count removed."""
-    init()
-    now = now if now is not None else int(time.time())
-    with _conn() as c:
-        cur = c.execute("DELETE FROM interest WHERE COALESCE(is_watch,0)=1 "
-                        "AND expire_at IS NOT NULL AND expire_at <= ?", (now,))
-        return cur.rowcount
 
 
 def _norm(f):

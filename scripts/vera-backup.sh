@@ -34,22 +34,7 @@ tar czf "$DEST/owui-data.tgz" -C "$APP/open-webui" \
   --exclude='webui.db' --exclude='webui.db-wal' --exclude='webui.db-shm' . 2>/dev/null \
   && log "OK   owui-data.tgz ($(du -h "$DEST/owui-data.tgz" | cut -f1))" || { log "FAIL owui-data.tgz"; fail=1; }
 
-# 3. Plane Postgres (optional). Discover the DB container; creds via its own env — never logged.
-#    Absent Plane is a SKIP (not a failure); an empty dump from a *present* Plane is a real FAIL.
-PLANE_DB="$(docker ps --format '{{.Names}}' | grep -Ei 'plane.*(db|postgres)' | head -1)"
-if [ -n "$PLANE_DB" ]; then
-  docker exec "$PLANE_DB" sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' 2>/dev/null | gzip > "$DEST/plane-db.sql.gz"
-  if [ "$(stat -c%s "$DEST/plane-db.sql.gz" 2>/dev/null || echo 0)" -gt 100 ]; then
-    log "OK   plane-db.sql.gz ($(du -h "$DEST/plane-db.sql.gz" | cut -f1))"
-  else
-    log "FAIL plane-db (empty dump from $PLANE_DB)"; fail=1
-  fi
-else
-  rm -f "$DEST/plane-db.sql.gz"
-  log "SKIP plane-db (no Plane DB container present)"
-fi
-
-# 4. vera-api config (.env, routers), llama-swap config, n8n.
+# 3. vera-api config (.env, routers), llama-swap config, n8n.
 tar czf "$DEST/vera-api.tgz"  -C "$APP" vera-api  2>/dev/null && log "OK   vera-api.tgz"  || { log "FAIL vera-api.tgz"; fail=1; }
 cp "$APP/llama-swap/config.yaml" "$DEST/llama-swap-config.yaml" 2>/dev/null && log "OK   llama-swap config" || log "WARN llama-swap config"
 tar czf "$DEST/n8n.tgz" -C "$APP" n8n 2>/dev/null && log "OK   n8n.tgz ($(du -h "$DEST/n8n.tgz" | cut -f1))" || { log "FAIL n8n.tgz"; fail=1; }

@@ -334,6 +334,19 @@ struct OWUIClient: Sendable {
         }.sorted { $0.order < $1.order }
     }
 
+    /// Vera's self-authored journal of standing commitments (read-only surface).
+    func fetchJournal() async -> ([JournalEntry], [JournalArchiveMonth]) {
+        guard let url = veraAPI("/journal"),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return ([], []) }
+        let entries = (obj["entries"] as? [[String: Any]] ?? []).compactMap(JournalEntry.parse)
+        let archive = (obj["archive"] as? [[String: Any]] ?? []).compactMap { m -> JournalArchiveMonth? in
+            guard let month = m["month"] as? String, let text = m["text"] as? String else { return nil }
+            return JournalArchiveMonth(id: month, text: text)
+        }
+        return (entries, archive)
+    }
+
     /// Mark a Pulse card read — fired when its detail opens. Idempotent.
     func markPulseRead(id: String) async {
         guard let url = veraAPI("/pulse/read") else { return }

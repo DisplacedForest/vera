@@ -35,7 +35,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from . import env_compat
-from . import vera_interests_store as vi
+from . import journal
 from .pulse import DEFAULT_FOLDER, _inject, _vera, store
 from .persona import home_region_is_us, orientation, owner, voiced
 from .websearch import SearchRequest, search as web_search
@@ -100,7 +100,7 @@ NEWS_QUERIES = _env_list("SIGNALS_NEWS_QUERIES", [
 
 def effective_orientation() -> str:
     """The household's bar for "worth surfacing": the signals lane's stored option, else the
-    SIGNALS_ORIENTATION env / neutral default. Shared with the heartbeat watch judge — one bar."""
+    SIGNALS_ORIENTATION env / neutral default. Shared with the journal's recheck judge — one bar."""
     from . import pulse_lanes
     return (str(pulse_lanes.option_values("signals").get("orientation") or "").strip()
             or orientation())
@@ -575,10 +575,6 @@ SIGNAL_CARD_SYS = (
     "specific things to keep monitoring (no JSON, no brackets, just short noun phrases).>\n"
     "No severity labels, no preamble before SUMMARY."
 )
-# Topics whose movement is numeric — the heartbeat watch-judge gets a 'weigh a material % move' hint.
-NUMERIC_KEYWORDS = tuple(_env_list(
-    "SIGNALS_NUMERIC_KEYWORDS",
-    ["price", "cost", "rate", "spread", "yield", "index", "inflation"], sep=","))
 # Goods-impact line on supply/geopolitical cards — an orientation choice, off unless the lane's
 # impact_goods option (seeded by SIGNALS_IMPACT_GOODS) asks for it.
 IMPACT_INSTR = (
@@ -596,8 +592,7 @@ def _numbered(sources):
 async def _compose_signal(headline, members, sources, deepen):
     """Write ONE situation's (summary, body, watch) from its member trips and researched sources.
     `deepen` flags a supply/geopolitical situation that also gets the grounded 'Affected goods' line.
-    `watch` is the structured watch-list (the "Watching:" line as monitorable specs). Uses a plain
-    SUMMARY/=== /body/~~~WATCH~~~ delimiter (not JSON — multi-line markdown breaks JSON escaping)."""
+    `watch` is the "Watching:" line's topics — the material her journal authoring pass receives."""
     sysp = SIGNAL_CARD_SYS.format(impact_instr=(IMPACT_INSTR if deepen else ""))
     usr = (f"Situation: {headline}\n\nVetted signal facts:\n"
            + json.dumps([{"title": m["title"], "detail": m["detail"]} for m in members], indent=2)
@@ -616,17 +611,14 @@ async def _compose_signal(headline, members, sources, deepen):
     # so without a blank line "Affected goods…" and "Watching:" run inline into the prose.
     body = re.sub(r"\s*\*\*Affected goods\b", "\n\n**Affected goods", body)
     body = re.sub(r"\s*(?<!\*)\bWatching:", "\n\nWatching:", body)
-    # Parse the human "Watching:" line into structured watches deterministically (no model JSON — the
-    # model conflates an inline JSON block with the prose line and leaks it into the card).
+    # Parse the human "Watching:" line deterministically (no model JSON — the model conflates an
+    # inline JSON block with the prose line and leaks it into the card).
     watch = []
     mline = re.search(r"(?im)^\s*Watching:\s*(.+)$", body)
     if mline:
-        for it in re.split(r",|;|\band\b", mline.group(1)):
-            topic = it.strip().strip(".").strip()
-            if topic and len(topic) <= 60:
-                metric = "the tracked figure" if any(k in topic.lower() for k in NUMERIC_KEYWORDS) else None
-                watch.append({"topic": topic, "query": f"{topic} latest", "metric": metric})
-        watch = watch[:4]
+        watch = [t for t in (it.strip().strip(".").strip()
+                             for it in re.split(r",|;|\band\b", mline.group(1)))
+                 if t and len(t) <= 60][:4]
     return (summary.replace("\n", " ") if summary else None), body.strip(), watch
 
 
@@ -767,13 +759,16 @@ async def check(req: SignalsRequest):
         res = await _inject(title, body, kind="signals", severity=tier,
                             sources=card_sources, summary=summary)
         out["cards"].append(res.get("id"))
-        # Register this situation's "Watching:" items as standing watches she'll re-check on her
-        # heartbeat and surface a card on a material change.
-        for w in watch:
-            try:
-                vi.add_watch(w["topic"], w["query"], metric=w.get("metric"), origin=headline)
-            except Exception as e:
-                out["errors"].append(f"watch {w.get('topic')}: {e}")
+        # Hand the situation to her journal: she folds a repeat of a known situation into its
+        # existing entry or authors a new commitment, and her heartbeat acts on it from there.
+        try:
+            topics = ", ".join(watch) or "(none stated)"
+            await journal.author(
+                f"A signals situation you just briefed:\n\n{body}\n\n"
+                f"The card's watching line: {topics}",
+                origin=f"signals: {headline}")
+        except Exception as e:
+            out["errors"].append(f"journal {headline}: {e}")
 
     out["injected"] = bool(out["cards"])
     _log_run(out, req)

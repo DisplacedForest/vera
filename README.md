@@ -74,6 +74,10 @@ A row of status chips above the feed — System, Weather, Signals, Media — eac
 
 <div align="center"><img src="docs/assets/pulse.png" alt="The Pulse surface with its lane chips" width="850"></div>
 
+### Journal — her standing commitments, in her own words
+
+When a monitored situation deserves follow-through (a signals event, or simply "keep an eye on lumber prices for me"), Vera writes a commitment into her journal: what she is watching, why it matters, what would resolve it, and when to check next. Each heartbeat she acts on the entries that are due, appends dated findings, surfaces a card only when something materially changed, and retires an entry when its own resolve condition is met. The journal is a plain markdown document she authors and maintains herself — the app renders it read-only, and every touch is logged. It follows the same contract as her self-authored heartbeat instructions: the code parses only entry boundaries and a cadence line; the content is entirely hers.
+
 ### Scheduler — visible, editable, gated
 
 All recurring work — briefings, weather, signals, grooming, health probes — runs on a built-in scheduler with a visible, editable schedule. A job tied to a lane or integration does not fire until that lane or integration is enabled, and gated jobs report why they are not running.

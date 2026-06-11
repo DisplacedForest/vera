@@ -16,6 +16,7 @@ struct ContentView: View {
                     case .chat: ChatPane().background(Theme.bg)
                     case .pulse: PulseView()
                     case .lanes: LanesView()
+                    case .journal: JournalView()
                     case .memory: MemoryView()
                     case .plugins: PluginsView()
                     case .mcp: MCPView()
@@ -99,6 +100,7 @@ private struct Sidebar: View {
                 navRow("New chat", "square.and.pencil", active: false, action: store.newConversation)
                 navRow("Pulse", "newspaper", active: store.section == .pulse) { store.goToPulse() }
                 navRow("Lanes", "rectangle.split.3x1", active: store.section == .lanes) { store.section = .lanes }
+                navRow("Journal", "book.closed", active: store.section == .journal) { store.section = .journal }
                 navRow("Memory", "tray.full", active: store.section == .memory) { store.section = .memory }
                 navRow("Plugins", "shippingbox", active: store.section == .plugins) { store.section = .plugins }
                 navRow("MCP", "puzzlepiece.extension", active: store.section == .mcp) { store.section = .mcp }

@@ -26,14 +26,14 @@ from . import action_spec
 from . import authoring
 from . import authoring_store
 from . import heartbeat_store as hb
+from . import journal
 from . import units
 from . import vera_memory_store as vm
 from . import user_profile_store as up
 from . import vera_interests_store as vi
-from . import pulse_store as store
 from .home import compute_deviations
 from .persona import orientation, owner, personalize, voiced
-from .pulse import (OWUI_BASE, _active_users, _get_memories, _headers, _inject, _recent_for_user, _vera,
+from .pulse import (OWUI_BASE, _active_users, _get_memories, _headers, _recent_for_user, _vera,
                     _vision, research_topic)
 from .websearch import SearchRequest, search as web_search
 
@@ -327,90 +327,6 @@ async def _for_you(now_str, recent):
     return {"user": name, "topic": topic}
 
 
-# A standing watch is a question Vera re-asks until it resolves. Each heartbeat she re-checks a few
-# due watches and surfaces a card ONLY when the answer materially changed — finding nothing is success.
-# The bar is the signals lane's orientation — the same bar the news judge uses.
-def _watch_judge_sys() -> str:
-    from .signals import effective_orientation
-    return (
-        f"You monitor a standing watch for {owner()}'s household. Given the PRIOR "
-        "finding and the LATEST finding on the same topic, decide whether something MATERIALLY changed — "
-        f"a real development that would plausibly {effective_orientation()}, not rewording, restatement, "
-        "or noise. Be conservative: when in "
-        'doubt, no. Output ONLY JSON: {"changed": true|false, "what_changed": "one concrete sentence on '
-        'what is newly different (empty if nothing)"}.'
-    )
-
-
-async def _watch_changed(w, finding):
-    """Hybrid change test: an LLM compares the prior vs latest finding and judges a MATERIAL change.
-    For a quantitative watch we hand it the metric so it weighs a real numeric move (the figure lives
-    in the finding's context, where a naive regex can't safely read it). Returns (changed, what)."""
-    hint = (f" This is a quantitative watch tracking {w['metric']}; count a material numeric move "
-            "(roughly 10%+ or a clear directional shift) as a change." if w.get("metric") else "")
-    verdict = _parse_json(await _vera(
-        [{"role": "system", "content": _watch_judge_sys()},
-         {"role": "user", "content": f"Topic: {w['topic']}{hint}\n\nPRIOR finding:\n{w.get('last_finding')}"
-                                      f"\n\nLATEST finding:\n{finding}"}],
-        temperature=0.2))
-    return bool(verdict.get("changed")), (verdict.get("what_changed") or "").strip() or None
-
-
-async def _inject_watch_card(w, finding, what, urls):
-    """Surface one 'Watch update' Signals card for a changed watch, dedup-in-place by category so a
-    re-firing watch refreshes its card instead of stacking. Tagged category=watch:<id> so the
-    /signals/check rebuild leaves it alone."""
-    title = f"Watch update · {w['topic']}"[:80]
-    body = f"{finding}\n\n**What changed:** {what}" if what else finding
-    sources = [{"n": i + 1, "title": u, "url": u} for i, u in enumerate(urls or [])]
-    summary = (what or finding)[:200]
-    cat = f"watch:{w['id']}"
-    existing = sorted([c for c in store.list_cards()
-                       if c.get("kind") == "signals" and c.get("category") == cat
-                       and c.get("status") in ("new", "seen")],
-                      key=lambda c: c.get("created_at") or 0, reverse=True)
-    if existing:
-        store.insert_card({**existing[0], "status": "new", "title": title, "summary": summary,
-                           "body": body, "sources": sources, "severity": "notice", "category": cat})
-    else:
-        await _inject(title, body, kind="signals", severity="notice", sources=sources,
-                      summary=summary, category=cat)
-
-
-async def _check_watches(errors):
-    """Re-check a few due watches. Establish a baseline on first sight, surface a card only on a
-    material change, otherwise stamp-and-move-on (zero-floor). Returns the topics that fired."""
-    fired = []
-    try:
-        vi.purge_expired_watches()
-        due = vi.due_watches(limit=3)  # spread the load across ticks
-    except Exception as e:
-        errors.append(f"watch due: {e}")
-        return fired
-    for w in due:
-        try:
-            res = await web_search(SearchRequest(query=w["watch_query"], fetch_pages=2, max_results=5))
-            grounded = await _grounded_belief(w["topic"], w["watch_query"], res.results)
-            if not grounded:
-                vi.record_watch_check(w["id"])  # couldn't ground it — just stamp checked, surface nothing
-                continue
-            finding, urls, _conf = grounded
-            if not w.get("last_finding"):  # first check — establish the baseline, no card
-                vi.record_watch_check(w["id"], finding=finding)
-                continue
-            changed, what = await _watch_changed(w, finding)
-            if not changed:
-                vi.record_watch_check(w["id"])  # zero-floor: nothing material, nothing surfaced
-                continue
-            await _inject_watch_card(w, finding, what, urls)
-            vi.record_watch_check(w["id"], finding=finding, changed=True)
-            hb.log("watch", w["topic"], extra={"what": what})
-            fired.append(w["topic"])
-        except Exception as e:
-            errors.append(f"watch {w.get('topic')}: {e}")
-    return fired
-
-
 class TickRequest(BaseModel):
     pulse_folder_id: str | None = None
 
@@ -537,14 +453,14 @@ async def tick(req: TickRequest):
     except Exception as e:
         out["errors"].append(f"for_you: {e}")
 
-    # 5) WATCH (free) — re-check due standing watches; surface a 'Watch update' card only on a
-    # material change. Isolated; finding nothing is the expected outcome.
+    # 5) JOURNAL (free) — act on a few due commitments from her self-authored journal;
+    # surface a card only on a material change or a loud close. Quiet is success.
     try:
-        wu = await _check_watches(out["errors"])
+        wu = await journal.tick_step(out["errors"])
         if wu:
-            out["watch_updates"] = wu
+            out["journal"] = wu
     except Exception as e:
-        out["errors"].append(f"watch: {e}")
+        out["errors"].append(f"journal: {e}")
 
     return out
 

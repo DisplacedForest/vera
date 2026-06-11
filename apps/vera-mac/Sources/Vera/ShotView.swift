@@ -16,6 +16,7 @@ struct ShotView: View {
                 switch section {
                 case .pulse: pulse
                 case .lanes: lanesBoard
+                case .journal: journal
                 case .memory: memory
                 case .plugins: pluginsBoard
                 case .mcp: mcpBoard
@@ -156,6 +157,7 @@ struct ShotView: View {
                 shotNav("New chat", "square.and.pencil", active: false)
                 shotNav("Pulse", "newspaper", active: false)
                 shotNav("Lanes", "rectangle.split.3x1", active: section == .lanes)
+                shotNav("Journal", "book.closed", active: section == .journal)
                 shotNav("Memory", "tray.full", active: false)
                 shotNav("Plugins", "shippingbox", active: section == .plugins)
                 shotNav("MCP", "puzzlepiece.extension", active: false)
@@ -279,6 +281,27 @@ struct ShotView: View {
                     .padding(.horizontal, 28).padding(.bottom, 8)
             }
             PulseGrid(cards: store.feedCards).padding(.horizontal, 28).padding(.vertical, 16)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+    }
+
+    private var journal: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Journal").font(.system(size: 22, weight: .bold))
+                Text("\(store.journalEntries.count)").font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Theme.surface).clipShape(Capsule())
+                Spacer()
+                Text("what Vera has committed to keep an eye on")
+                    .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 8)
+            JournalList(entries: store.journalEntries, archive: store.journalArchive)
+                .padding(.horizontal, 28).padding(.vertical, 12)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

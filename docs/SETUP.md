@@ -1,6 +1,6 @@
 # Setting up Vera
 
-This is the end-to-end path from nothing to a working installation: backend, chat, native app, then the optional layers — integrations, lanes, and satellite services. Each stage works without the stages after it, and the system reports what is and isn't configured.
+This is the end-to-end path from nothing to a working installation: backend, chat, native app, then the optional layers — integrations, veins, and satellite services. Each stage works without the stages after it, and the system reports what is and isn't configured.
 
 **The stack** (each component is a URL in config; topology is up to you):
 
@@ -80,10 +80,10 @@ swift build -c release
 scripts/deploy.sh    # packages Vera.app, ad-hoc signs it, installs it to /Applications
 ```
 
-First launch runs **onboarding**: your Open WebUI URL + account, your model, your vera-api URL — then a skippable **Lanes** page. The two opt-in surfaces, both in the sidebar afterward:
+First launch runs **onboarding**: your Open WebUI URL + account, your model, your vera-api URL — then a skippable **Veins** page. The two opt-in surfaces, both in the sidebar afterward:
 
 - **Plugins** — the integration store. Each card is one integration: enter URL + key, **Test**, **Save & Enable**. The app writes vera-api's config and performs the OWUI wiring in the same step. Experimental features (whole-house event modeling, media curation) sit behind their parent integration with an explicit consent sheet — off until consented.
-- **Lanes** — Pulse's ambient monitors (System, Weather, Signals, Media). **None are enabled by default.** Enable the ones you want, point them at your services, and scope each one: the Signals lane can watch only financial stress, the System lane can monitor only Home Assistant — every lane carries its own options.
+- **Veins** — Pulse's ambient monitors (System, Weather, Signals, Media). **None are enabled by default.** Enable the ones you want, point them at your services, and scope each one: the Signals vein can watch only financial stress, the System vein can monitor only Home Assistant — every vein carries its own options.
 
 Both are UI over vera-api's API — headless deployments can do everything with `curl`.
 
@@ -93,10 +93,10 @@ Each integration unlocks its capability when its test passes; each degrades to "
 
 | Integration | Unlocks | Notes |
 |---|---|---|
-| Home Assistant | Live home state in chat and Pulse, confirm-gated device actuation, the System lane's HA sources | Use an IP for the URL, not `.local` — containers can't resolve mDNS. Long-lived access token. |
+| Home Assistant | Live home state in chat and Pulse, confirm-gated device actuation, the System vein's HA sources | Use an IP for the URL, not `.local` — containers can't resolve mDNS. Long-lived access token. |
 | Grocy | Kitchen inventory + expiry awareness, shopping list | Pairs with Mealie: recipe suggestions from expiring inventory unlock when both are on |
 | Mealie | Recipe import, browse, classification | See Grocy pairing |
-| Overseerr | Media requests from chat, availability checks; the Media lane's weekly curation digest (experimental, consent-gated) | |
+| Overseerr | Media requests from chat, availability checks; the Media vein's weekly curation digest (experimental, consent-gated) | |
 | Unraid | Confirm-gated container updates, host actuation, update digests | Official Unraid API (GraphQL) with an API key |
 | SearXNG | Web search for chat, research, Pulse, signals | Strongly recommended; run it next to vera-api |
 
@@ -123,16 +123,16 @@ vera-api runs all recurring work itself — no external cron. Defaults:
 | Job | Default | Gated on |
 |---|---|---|
 | Pulse briefing | daily 5:00 | — (core; needs your LLM + Open WebUI) |
-| Weather check | every 6h | Weather lane |
-| Signals check | 6:00 + 18:00 | Signals lane |
-| Service health probe | every 15 min | System lane |
-| Stack updates check | daily 7:30 | System lane |
-| Media curation digest | Sundays 9:00 | Media lane + Overseerr consent |
+| Weather check | every 6h | Weather vein |
+| Signals check | 6:00 + 18:00 | Signals vein |
+| Service health probe | every 15 min | System vein |
+| Stack updates check | daily 7:30 | System vein |
+| Media curation digest | Sundays 9:00 | Media vein + Overseerr consent |
 | Episodic memory groom | daily 4:00 | — (core; needs Open WebUI) |
 | Home modeling (3 nightly jobs) | 2:00–3:30 | Home Assistant's home-modeling consent |
 | Heartbeat tick | every 20 min | `HEARTBEAT_ENABLED` kill switch |
 
-A gated job never fires while its gate is closed — on a fresh install, nothing is monitored until its lane is enabled or its feature is consented to. Edit any schedule in the app's **Agentic** tab (live, no restart) or pin it with `SCHEDULE_<JOB>` / `SCHEDULE_<JOB>_ENABLED` env overrides. A gated job reports *why* it is gated instead of running.
+A gated job never fires while its gate is closed — on a fresh install, nothing is monitored until its vein is enabled or its feature is consented to. Edit any schedule in the app's **Agentic** tab (live, no restart) or pin it with `SCHEDULE_<JOB>` / `SCHEDULE_<JOB>_ENABLED` env overrides. A gated job reports *why* it is gated instead of running.
 
 The heartbeat tick also services Vera's **journal** — the self-authored document of standing commitments she checks, updates, and retires on her own (stored at `VERA_JOURNAL_PATH`, default `/data/journal/JOURNAL.md`; rendered read-only in the app's Journal view and at `GET /journal`). With no journal file and nothing to commit to, the step is a no-op. Chat steers the journal through the `self_author.py` tool's `read_journal` / `journal_commit` functions, so install that tool if you want "keep an eye on X" and "what are you watching" to work in conversation.
 
@@ -142,6 +142,6 @@ The heartbeat tick also services Vera's **journal** — the self-authored docume
 2. The startup config report lists every endpoint you configured (and flags anything deprecated or missing).
 3. Chat in the app — ask something that needs a tool (e.g. a web search) and confirm the tool fires.
 4. Trigger a Pulse run from the app (or `POST /pulse/run`) and watch cards arrive.
-5. Enable a lane and confirm its chip appears; its producer job in Agentic shows the next run time.
+5. Enable a vein and confirm its chip appears; its producer job in Agentic shows the next run time.
 
 When something doesn't work, check the config report and `docker compose logs vera-api` first.

@@ -8,7 +8,7 @@ Doing nothing is a perfectly valid outcome.
 
 Safety is by recoverability, not by restraint: MEMORY.md is git-snapshotted before any change, so
 anything she removes can be recovered from history. Whatever she does (or doesn't) is surfaced as a
-System-lane Pulse card when she acts.
+System-vein Pulse card when she acts.
 
 POST /memory/self/groom_pass (gated, X-Agent-Token). dry_run reports her choices without applying.
 Kill switch: MEMORY_GROOM_ENABLED=false.

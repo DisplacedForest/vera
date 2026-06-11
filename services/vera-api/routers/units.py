@@ -1,6 +1,6 @@
 """Temperature-unit config — TEMPERATURE_UNIT: fahrenheit (default) | celsius.
 
-Shared by the weather and heartbeat lanes. Sources are asked to report in the
+Shared by the weather and heartbeat veins. Sources are asked to report in the
 configured unit and thresholds are interpreted in it, so no conversion math lives
 in code — the unit is a request parameter and a display label, end to end.
 """

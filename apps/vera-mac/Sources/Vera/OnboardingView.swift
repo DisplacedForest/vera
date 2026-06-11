@@ -2,18 +2,18 @@ import SwiftUI
 
 /// First-run sheet, shown when no usable config exists (instead of a silently dead UI).
 /// Collects the OWUI connection + vera-api URL, tests, saves, and connects live; with a
-/// vera-api URL set, a second page offers the lane catalog (fully skippable — skip = an
+/// vera-api URL set, a second page offers the vein catalog (fully skippable — skip = an
 /// empty chip row). Skippable — the empty chat state offers to reopen it.
 struct OnboardingSheet: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
     @State private var connecting = false
     @State private var error: String?
-    @State private var lanesBase: URL?
+    @State private var veinsBase: URL?
 
     var body: some View {
-        if let base = lanesBase {
-            LanesOnboardingStep(base: base) { config.showOnboarding = false }
+        if let base = veinsBase {
+            VeinsOnboardingStep(base: base) { config.showOnboarding = false }
                 .padding(24).frame(width: 480)
                 .background(Theme.bg)
                 .preferredColorScheme(.dark)
@@ -111,10 +111,10 @@ struct OnboardingSheet: View {
                 return
             }
             store.adopt(resolved)
-            // With vera-api configured, offer the lane catalog as the next step;
+            // With vera-api configured, offer the vein catalog as the next step;
             // without it there's nothing to pick — finish here.
             if let base = resolved.veraAPIBase {
-                lanesBase = base
+                veinsBase = base
             } else {
                 config.showOnboarding = false
             }

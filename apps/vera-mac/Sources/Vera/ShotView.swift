@@ -15,7 +15,7 @@ struct ShotView: View {
             Group {
                 switch section {
                 case .pulse: pulse
-                case .lanes: lanesBoard
+                case .veins: veinsBoard
                 case .journal: journal
                 case .memory: memory
                 case .plugins: pluginsBoard
@@ -156,7 +156,7 @@ struct ShotView: View {
             VStack(spacing: 1) {
                 shotNav("New chat", "square.and.pencil", active: false)
                 shotNav("Pulse", "newspaper", active: false)
-                shotNav("Lanes", "rectangle.split.3x1", active: section == .lanes)
+                shotNav("Veins", "rectangle.split.3x1", active: section == .veins)
                 shotNav("Journal", "book.closed", active: section == .journal)
                 shotNav("Memory", "tray.full", active: false)
                 shotNav("Plugins", "shippingbox", active: section == .plugins)
@@ -275,8 +275,8 @@ struct ShotView: View {
             }
             .frame(maxWidth: pulseFeedWidth, alignment: .leading).frame(maxWidth: .infinity)
             .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 8)
-            if !store.pulseLanes.isEmpty {
-                LaneChipRow(lanes: store.pulseLanes, cards: store.pulseCards)
+            if !store.pulseVeins.isEmpty {
+                VeinChipRow(veins: store.pulseVeins, cards: store.pulseCards)
                     .frame(maxWidth: pulseFeedWidth, alignment: .leading).frame(maxWidth: .infinity)
                     .padding(.horizontal, 28).padding(.bottom, 8)
             }
@@ -389,13 +389,13 @@ struct ShotView: View {
         return parts.joined(separator: "  ·  ")
     }
 
-    // Static Lanes board for screenshots — the lane catalog over mock entries
+    // Static Veins board for screenshots — the vein catalog over mock entries
     // (render-safe: StatePill instead of live Toggles).
-    private var lanesBoard: some View {
-        let entries = LaneEntry.mock()
+    private var veinsBoard: some View {
+        let entries = VeinEntry.mock()
         return VStack(spacing: 0) {
             HStack {
-                Text("Lanes").font(.system(size: 22, weight: .bold))
+                Text("Veins").font(.system(size: 22, weight: .bold))
                 Text("\(entries.filter(\.enabled).count)/6")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surface).clipShape(Capsule())
@@ -408,7 +408,7 @@ struct ShotView: View {
             .frame(maxWidth: .infinity)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 380), spacing: 14, alignment: .top)],
                       alignment: .leading, spacing: 14) {
-                ForEach(entries) { e in shotLaneCard(e) }
+                ForEach(entries) { e in shotVeinCard(e) }
             }
             .padding(.horizontal, 28).padding(.vertical, 18)
             .frame(maxWidth: 860, alignment: .leading)
@@ -419,7 +419,7 @@ struct ShotView: View {
         .background(Theme.bg)
     }
 
-    private func shotLaneCard(_ e: LaneEntry) -> some View {
+    private func shotVeinCard(_ e: VeinEntry) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
                 RoundedRectangle(cornerRadius: 9).fill(Theme.surfaceHover)

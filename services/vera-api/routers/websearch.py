@@ -23,6 +23,14 @@ class SearchRequest(BaseModel):
     language: str = "en"
 
 
+def _search_params(req: SearchRequest) -> dict:
+    """SearXNG query params. The news category rides along with general so publishedDate
+    reaches callers whenever the instance has dated engines; an instance without news
+    engines simply returns its general results."""
+    return {"q": req.query, "format": "json", "language": req.language,
+            "categories": "general,news"}
+
+
 class SearchResult(BaseModel):
     title: str
     url: str
@@ -47,7 +55,7 @@ async def search(req: SearchRequest) -> SearchResponse:
         async with aiohttp.ClientSession() as s:
             async with s.get(
                 searxng,
-                params={"q": req.query, "format": "json", "language": req.language},
+                params=_search_params(req),
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as r:
                 data = await r.json()

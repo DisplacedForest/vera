@@ -58,6 +58,10 @@ pip install -r requirements.txt pytest
 pytest
 ```
 
+The API suite is hermetic (every store runs against a temp dir; no live endpoints), and
+`pytest.ini` sets the import path — `pytest` works from `services/vera-api` or as
+`pytest services/vera-api/tests` from the repo root, no `PYTHONPATH` required.
+
 **Mac app** (no XCTest by design — the app validates through its own harness):
 
 ```sh
@@ -65,6 +69,11 @@ cd apps/vera-mac
 swift build
 .build/debug/Vera --selftest
 ```
+
+The app builds **only on macOS** — it is SwiftUI/AppKit. On Linux (containers, cloud
+agents, CI shells) `swift build` fails at the toolchain or first Apple-framework import;
+that is environmental, not a code defect. Validate Swift changes there by reading the
+diff and rely on the Python suite as the runnable check.
 
 For UI work, render any view headlessly and inspect it:
 

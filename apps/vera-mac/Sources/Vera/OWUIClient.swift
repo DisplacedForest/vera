@@ -107,9 +107,11 @@ struct OWUIClient: Sendable {
         return r
     }
 
+    /// The chat list. Throws on transport AND decode failure — a failed fetch must read as
+    /// "unknown", never as "the server has zero chats" (which would wipe the sidebar on reconcile).
     func listChats() async throws -> [ChatSummary] {
         let (data, _) = try await URLSession.shared.data(for: request("/api/v1/chats/"))
-        return (try? JSONDecoder().decode([ChatSummary].self, from: data)) ?? []
+        return try JSONDecoder().decode([ChatSummary].self, from: data)
     }
 
     /// Upload a document to OWUI (multipart) so it can be referenced in a completion's `files`.
@@ -153,22 +155,26 @@ struct OWUIClient: Sendable {
                 "files": [], "tags": [], "params": [:], "timestamp": now * 1000]
     }
 
-    /// Create a chat in OWUI; returns its id. Mirrors what the web client persists.
-    func createChat(title: String, turns: [(String, String)]) async -> String? {
+    /// Create a chat in OWUI; returns its id and the server's updated_at stamp (the reconcile
+    /// baseline, so our own save never reads as an external change). Mirrors the web client.
+    func createChat(title: String, turns: [(String, String)]) async -> (id: String, updatedAt: Int)? {
         let body = try? JSONSerialization.data(withJSONObject: ["chat": chatObject(title: title, turns: turns)])
         guard let (data, resp) = try? await URLSession.shared.data(for: request("/api/v1/chats/new", method: "POST", body: body)),
               let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return obj["id"] as? String
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = obj["id"] as? String else { return nil }
+        return (id, (obj["updated_at"] as? Int) ?? 0)
     }
 
-    /// Update an existing OWUI chat's full message history.
+    /// Update an existing OWUI chat's full message history. Returns the server's new
+    /// updated_at stamp, or nil on failure.
     @discardableResult
-    func saveChat(id: String, title: String, turns: [(String, String)]) async -> Bool {
+    func saveChat(id: String, title: String, turns: [(String, String)]) async -> Int? {
         let body = try? JSONSerialization.data(withJSONObject: ["chat": chatObject(title: title, turns: turns)])
-        guard let (_, resp) = try? await URLSession.shared.data(for: request("/api/v1/chats/\(id)", method: "POST", body: body)),
-              let code = (resp as? HTTPURLResponse)?.statusCode else { return false }
-        return (200..<300).contains(code)
+        guard let (data, resp) = try? await URLSession.shared.data(for: request("/api/v1/chats/\(id)", method: "POST", body: body)),
+              let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else { return nil }
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (obj?["updated_at"] as? Int) ?? 0
     }
 
     /// Load a chat's message history from OWUI. A promoted Pulse briefing carries vera-* markers
@@ -460,10 +466,11 @@ struct OWUIClient: Sendable {
         return (200..<300).contains(http.statusCode)
     }
 
-    /// Load the user's memory entries from OWUI.
-    func memories() async -> [MemoryItem] {
+    /// Load the user's memory entries from OWUI. Nil means the fetch failed — distinct from
+    /// an empty list, so an unreachable server never reads as "all memories deleted".
+    func memories() async -> [MemoryItem]? {
         guard let (data, _) = try? await URLSession.shared.data(for: request("/api/v1/memories/")),
-              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return nil }
         return arr.compactMap { m in
             guard let id = m["id"] as? String, let content = m["content"] as? String else { return nil }
             return MemoryItem.parse(id: id, content: content)

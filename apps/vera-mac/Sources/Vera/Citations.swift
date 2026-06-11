@@ -61,6 +61,53 @@ enum OWUISources {
     }
 }
 
+/// Bottom Sources row — favicons collapsed, tap to expand into numbered linked titles.
+struct SourcesRow: View {
+    let sources: [PulseSource]
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+            HStack(spacing: 8) {
+                HStack(spacing: -6) { ForEach(sources.prefix(5)) { Favicon(urlString: $0.url) } }
+                Text("Sources").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                Text("\(sources.count)").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 6).padding(.vertical, 1).background(Theme.surface).clipShape(Capsule())
+                Spacer()
+                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } }
+            .pointerCursor()
+            if expanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(sources) { s in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("\(s.n)").font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.textSecondary).frame(width: 18, alignment: .trailing)
+                            Favicon(urlString: s.url)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(s.title.isEmpty ? sourceHost(s.url) : s.title)
+                                    .font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(2).multilineTextAlignment(.leading)
+                                Text(sourceHost(s.url)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { openExternal(s.url) }
+                        .pointerCursor()
+                    }
+                }
+                .padding(.bottom, 12)
+            }
+        }
+    }
+}
+
 /// A chat prose segment with the Pulse citation treatment: paragraphs render with their `[n]`
 /// refs stripped and the matching chips beneath. Segments containing fenced code render whole
 /// (never split a fence), with the segment's chips aggregated below.

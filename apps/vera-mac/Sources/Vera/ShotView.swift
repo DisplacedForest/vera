@@ -58,6 +58,11 @@ struct ShotView: View {
         m.append(Message(role: .assistant, text: "Happy to line up the next batch — which direction?", ask: VeraAsk.mock()))
         m.append(Message(role: .assistant, text: "Sketched the label mark — open it in the Canvas to tweak.", artifacts: [Artifact.mock()]))
         m.append(Message.assistant(from: "The downtown farmers market kicks off its 2026 season today.\n\n**Sources** https://www.springfield-downtown.example/news_detail.php https://www.heraldpress.example/story/news/local/2026/06/03/events/90354139007/ https://www.localtv.example/news/downtown-market-2026-schedule.html\n\nLet me know if you want the full vendor list."))
+        // A deep-research style cited reply — exercises chips, Sources-section stripping, and the row.
+        m.append(Message.assistant(
+            from: "Cover crops measurably improve vineyard soil health [1]. Clover mixes also fix nitrogen between rows [2].\n\n**Sources**\n1. Vineyard soil study\n2. Cover crop guide",
+            sources: [PulseSource(n: 1, title: "Vineyard soil study", url: "https://viticulture.example/soil-health"),
+                      PulseSource(n: 2, title: "Cover crop guide", url: "https://extension.example/cover-crops")]))
         return m
     }
 

@@ -25,7 +25,7 @@ router = APIRouter()
 
 
 def _coord(name: str) -> float | None:
-    """Home coordinate from env; None when unset so the lane reports unconfigured
+    """Home coordinate from env; None when unset so the vein reports unconfigured
     instead of silently watching someone else's sky."""
     v = os.environ.get(name, "").strip()
     try:
@@ -44,17 +44,17 @@ FORECAST_URL_TMPL = os.environ.get("WEATHER_FORECAST_URL", "").strip()
 
 
 def _provider_url() -> str:
-    """The forecast endpoint (any Open-Meteo-compatible API): the weather lane's provider
+    """The forecast endpoint (any Open-Meteo-compatible API): the weather vein's provider
     slot, defaulting to the public instance."""
-    from . import pulse_lanes
-    return pulse_lanes.provider_values("weather").get("forecast_url") or OPEN_METEO
+    from . import pulse_veins
+    return pulse_veins.provider_values("weather").get("forecast_url") or OPEN_METEO
 
 
-def _lane_unit() -> tuple[str, str]:
-    """(unit, label) for this run: the lane's unit option (store > TEMPERATURE_UNIT env >
+def _vein_unit() -> tuple[str, str]:
+    """(unit, label) for this run: the vein's unit option (store > TEMPERATURE_UNIT env >
     fahrenheit)."""
-    from . import pulse_lanes
-    u = str(pulse_lanes.option_values("weather").get("unit") or "").strip().lower()
+    from . import pulse_veins
+    u = str(pulse_veins.option_values("weather").get("unit") or "").strip().lower()
     if not u.startswith("c") and not u.startswith("f"):
         u = units.unit()
     u = "celsius" if u.startswith("c") else "fahrenheit"
@@ -81,7 +81,7 @@ WMO_DESC = {
     95: "Thunderstorm", 96: "Thunderstorm, hail", 99: "Severe thunderstorm",
 }
 
-# Current-conditions cache: the lane endpoint is polled often; Open-Meteo is refreshed at
+# Current-conditions cache: the vein endpoint is polled often; Open-Meteo is refreshed at
 # most every 10 min. None on failure -> the chip shows "N/A" (live-data rule: no hardcoded default).
 _current = {"ts": 0.0, "label": None}
 _CURRENT_TTL = 600
@@ -97,7 +97,7 @@ async def current_label(lat: float | None = None, lon: float | None = None) -> s
     lon = lon if lon is not None else LON
     if lat is None or lon is None:
         return None  # location unconfigured -> explicit N/A, never a made-up sky
-    u, lbl = _lane_unit()
+    u, lbl = _vein_unit()
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -154,7 +154,7 @@ class WeatherRequest(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     forecast_days: int = 3
-    # Threshold precedence: an explicit request value > the weather lane's stored option >
+    # Threshold precedence: an explicit request value > the weather vein's stored option >
     # the default (45 mph gusts; heat/freeze are unit-appropriate, see resolve_thresholds).
     gust_mph_threshold: float | None = None
     heat_threshold: float | None = None
@@ -175,24 +175,24 @@ def _forecast_sources(lat, lon):
 
 @router.post("/weather/check", tags=["weather"])
 async def check(req: WeatherRequest):
-    from . import pulse_lanes
-    if not pulse_lanes.is_enabled("weather"):
-        return {"ok": False, "disabled": True, "detail": pulse_lanes.gate_reason("weather")}
-    lane_opts = pulse_lanes.option_values("weather")
+    from . import pulse_veins
+    if not pulse_veins.is_enabled("weather"):
+        return {"ok": False, "disabled": True, "detail": pulse_veins.gate_reason("weather")}
+    vein_opts = pulse_veins.option_values("weather")
     lat = req.latitude if req.latitude is not None else LAT
     lon = req.longitude if req.longitude is not None else LON
     if lat is None or lon is None:
         return {"ok": False, "configured": False,
                 "error": "weather unconfigured — set WEATHER_LAT and WEATHER_LON"}
     folder = req.pulse_folder_id or DEFAULT_FOLDER
-    u, lbl = _lane_unit()
-    # explicit request values win; else the lane's stored thresholds; else unit-appropriate defaults
+    u, lbl = _vein_unit()
+    # explicit request values win; else the vein's stored thresholds; else unit-appropriate defaults
     heat_threshold, freeze_threshold = resolve_thresholds(
         u,
-        req.heat_threshold if req.heat_threshold is not None else lane_opts.get("heat_threshold"),
-        req.freeze_threshold if req.freeze_threshold is not None else lane_opts.get("freeze_threshold"))
+        req.heat_threshold if req.heat_threshold is not None else vein_opts.get("heat_threshold"),
+        req.freeze_threshold if req.freeze_threshold is not None else vein_opts.get("freeze_threshold"))
     gust_threshold = req.gust_mph_threshold if req.gust_mph_threshold is not None else (
-        lane_opts.get("gust_threshold") if lane_opts.get("gust_threshold") is not None else 45.0)
+        vein_opts.get("gust_threshold") if vein_opts.get("gust_threshold") is not None else 45.0)
     params = {
         "latitude": lat,
         "longitude": lon,

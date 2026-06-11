@@ -23,7 +23,7 @@ import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from . import pulse_lanes
+from . import pulse_veins
 from . import pulse_store as store
 from . import user_profile_store as up
 from . import vera_interests_store as vi
@@ -201,7 +201,7 @@ async def _inject(title, body, folder_id=None, image_url=None, tint=None, source
                   user_id=None, provenance="scheduled", category=None, change_set=None, items=None):
     """Store a Pulse card. Compat shim for the helper routers (health/signals/kitchen/weather/
     heartbeat) that surface cards. `folder_id` is ignored — Pulse is store-backed.
-    `kind`/`severity` place the card in an ambient lane; default is the research feed.
+    `kind`/`severity` place the card in an ambient vein; default is the research feed.
     `user_id` is the person the card is FOR; defaults to the household owner.
     `provenance` records how the card was triggered — "scheduled" vs "heartbeat".
     `items` carries a multi-item digest's per-row actions. Returns the new card id."""
@@ -1205,7 +1205,7 @@ class BookmarkBody(BaseModel):
 class StatusCard(BaseModel):
     kind: str = "status"
     severity: str | None = None  # "notice" | "alert" | "critical" (null = neutral)
-    category: str | None = None  # System-lane sub-group — vera | infra | health | update
+    category: str | None = None  # System-vein sub-group — vera | infra | health | update
     title: str
     summary: str = ""
     body: str = ""
@@ -1220,7 +1220,7 @@ class ReadBody(BaseModel):
 async def cards(user_id: str | None = None):
     """The feed for one person. Defaults to the household owner so existing callers that
     don't pass user_id keep seeing that feed; the app passes the signed-in user's id. Each card is
-    annotated with `read` for this person so the lane overlay shows per-row state."""
+    annotated with `read` for this person so the vein overlay shows per-row state."""
     uid = user_id or store.DEFAULT_USER
     cards = store.list_cards(user_id=uid)
     read = store.read_ids(uid)
@@ -1229,29 +1229,29 @@ async def cards(user_id: str | None = None):
     return {"cards": cards}
 
 
-@router.get("/pulse/lanes", tags=["pulse"])
-async def lanes(user_id: str | None = None):
-    """The pinned ambient-lane catalog, each merged with this person's UNREAD count +
+@router.get("/pulse/veins", tags=["pulse"])
+async def veins(user_id: str | None = None):
+    """The pinned ambient-vein catalog, each merged with this person's UNREAD count +
     max unread severity so the chip dot/count reflects what they haven't read."""
     uid = user_id or store.DEFAULT_USER
     counts = store.unread_counts(uid)
     out = []
-    for lane in pulse_lanes.lanes():
-        cnt = counts.get(lane["kind"], {})
-        merged = {**lane, "unread": cnt.get("unread", 0), "max_severity": cnt.get("max_severity")}
+    for vein in pulse_veins.veins():
+        cnt = counts.get(vein["kind"], {})
+        merged = {**vein, "unread": cnt.get("unread", 0), "max_severity": cnt.get("max_severity")}
         # The Weather chip's calm state shows live current conditions, not a static word.
         # Lazy import avoids a circular load (weather imports from pulse). N/A if the feed is down.
-        if lane["kind"] == "weather":
+        if vein["kind"] == "weather":
             from . import weather
             merged["nominal_label"] = (await weather.current_label()) or "N/A"
         out.append(merged)
-    return {"lanes": out}
+    return {"veins": out}
 
 
 @router.post("/pulse/read", tags=["pulse"])
 async def read(b: ReadBody):
     """Record that this person opened a card's detail. Idempotent. Fired only on detail
-    open (not on a lane-list glance), so the chip's unread count reflects real reads."""
+    open (not on a vein-list glance), so the chip's unread count reflects real reads."""
     store.mark_read(b.user_id or store.DEFAULT_USER, b.card_id)
     return {"ok": True}
 

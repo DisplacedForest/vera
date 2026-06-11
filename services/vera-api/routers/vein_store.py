@@ -1,12 +1,12 @@
-"""Lane state store — which Pulse lanes a deployment runs, in one JSON document.
+"""Vein state store — which Pulse veins a deployment runs, in one JSON document.
 
-The lane CATALOG (what lanes exist, their producers, provider slots, and option
-groups) lives in pulse_lanes.py; this store holds only what a deployment chooses at
-runtime: per-lane `enabled`, option values, and provider config. Nothing is enabled
+The vein CATALOG (what veins exist, their producers, provider slots, and option
+groups) lives in pulse_veins.py; this store holds only what a deployment chooses at
+runtime: per-vein `enabled`, option values, and provider config. Nothing is enabled
 by default — an empty store means an empty chip row.
 
 One-time seeding: on the first load of a deployment whose producers are demonstrably
-configured (home coordinates set, integrations enabled), those lanes seed enabled so
+configured (home coordinates set, integrations enabled), those veins seed enabled so
 an upgrade keeps its chip row; a genuinely fresh install seeds nothing.
 
 Writes are atomic (tmp file + rename) so a crash mid-save never corrupts the store.
@@ -17,11 +17,24 @@ import os
 import tempfile
 import threading
 
-PATH = os.environ.get("LANES_PATH", "/data/lanes.json")
+PATH = os.environ.get("VEINS_PATH", "/data/veins.json")
 _lock = threading.Lock()
 
 
+def _adopt_legacy() -> None:
+    """Veins were once called lanes. A data volume from that era holds `lanes.json`;
+    when the vein store doesn't exist yet, adopt it in place (same volume, atomic)."""
+    legacy = os.path.join(os.path.dirname(PATH) or ".", "lanes.json")
+    if os.path.exists(PATH) or not os.path.exists(legacy):
+        return
+    try:
+        os.replace(legacy, PATH)
+    except OSError:
+        pass
+
+
 def _read() -> dict:
+    _adopt_legacy()
     try:
         with open(PATH, encoding="utf-8") as f:
             doc = json.load(f)
@@ -33,7 +46,7 @@ def _read() -> dict:
 def _save(doc: dict) -> None:
     d = os.path.dirname(PATH) or "."
     os.makedirs(d, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=d, prefix=".lanes-")
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".veins-")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(doc, f, indent=2)
@@ -52,8 +65,8 @@ def load() -> dict:
     with _lock:
         doc = _read()
         if not doc.get("_seeded"):
-            from . import pulse_lanes
-            for kind, state in pulse_lanes.seed_states().items():
+            from . import pulse_veins
+            for kind, state in pulse_veins.seed_states().items():
                 doc.setdefault(kind, {}).update(state)
             doc["_seeded"] = True
             _save(doc)
@@ -62,7 +75,7 @@ def load() -> dict:
 
 def update(kind: str, *, enabled: bool | None = None, options: dict | None = None,
            providers: dict | None = None) -> None:
-    """Merge one lane's runtime state."""
+    """Merge one vein's runtime state."""
     with _lock:
         doc = _read()
         row = doc.setdefault(kind, {})

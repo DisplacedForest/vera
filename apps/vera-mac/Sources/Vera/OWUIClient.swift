@@ -323,15 +323,15 @@ struct OWUIClient: Sendable {
         }
     }
 
-    /// The pinned ambient-lane catalog from vera-api, ordered for the chip row.
-    func fetchPulseLanes() async -> [PulseLane] {
-        guard let url = veraAPI("/pulse/lanes"),
+    /// The pinned ambient-vein catalog from vera-api, ordered for the chip row.
+    func fetchPulseVeins() async -> [PulseVein] {
+        guard let url = veraAPI("/pulse/veins"),
               let (data, _) = try? await URLSession.shared.data(from: url),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let arr = obj["lanes"] as? [[String: Any]] else { return [] }
+              let arr = obj["veins"] as? [[String: Any]] else { return [] }
         return arr.compactMap { l in
             guard let kind = l["kind"] as? String, let label = l["label"] as? String else { return nil }
-            return PulseLane(kind: kind, label: label,
+            return PulseVein(kind: kind, label: label,
                              icon: (l["icon"] as? String) ?? "circle",
                              order: (l["order"] as? Int) ?? 0,
                              nominalLabel: (l["nominal_label"] as? String) ?? "nominal",

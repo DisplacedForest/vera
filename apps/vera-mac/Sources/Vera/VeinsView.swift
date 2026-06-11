@@ -1,23 +1,23 @@
 import SwiftUI
 
-/// Live state for the Lanes pane — vera-api's lane catalog (manifests merged with
-/// runtime state). Cards render purely from the API; the app hardcodes no lane list,
-/// fields, or option groups, so a new server-side lane appears here with no app change.
+/// Live state for the Veins pane — vera-api's vein catalog (manifests merged with
+/// runtime state). Cards render purely from the API; the app hardcodes no vein list,
+/// fields, or option groups, so a new server-side vein appears here with no app change.
 @MainActor
-final class LanesStore: ObservableObject {
+final class VeinsStore: ObservableObject {
     enum Phase { case loading, unconfigured, unreachable, unsupported, ready }
     @Published var phase: Phase = .loading
-    @Published var entries: [LaneEntry] = []
+    @Published var entries: [VeinEntry] = []
     @Published var active = 0
     @Published var cap = 6
     @Published var busy: Set<String> = []
     @Published var error: String?
 
-    private var client: LanesClient?
+    private var client: VeinsClient?
     var baseDescription: String { client?.base.absoluteString ?? "vera-api" }
 
     func configure(base: URL?) {
-        client = base.map { LanesClient(base: $0) }
+        client = base.map { VeinsClient(base: $0) }
         if client == nil { phase = .unconfigured }
     }
 
@@ -34,7 +34,7 @@ final class LanesStore: ObservableObject {
         }
     }
 
-    func setEnabled(_ entry: LaneEntry, _ on: Bool) {
+    func setEnabled(_ entry: VeinEntry, _ on: Bool) {
         guard let client else { return }
         busy.insert(entry.kind)
         Task {
@@ -59,19 +59,19 @@ final class LanesStore: ObservableObject {
     }
 }
 
-/// The Lanes pane — which ambient watch lanes run, each scoped and scheduled to taste.
-struct LanesView: View {
+/// The Veins pane — which ambient watch veins run, each scoped and scheduled to taste.
+struct VeinsView: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
-    @StateObject private var lanes = LanesStore()
-    @State private var editing: LaneEntry?
+    @StateObject private var veins = VeinsStore()
+    @State private var editing: VeinEntry?
 
     var body: some View {
         VStack(spacing: 0) {
             header
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    if let e = lanes.error { errorRow(e) }
+                    if let e = veins.error { errorRow(e) }
                     content
                 }
                 .padding(.horizontal, 28).padding(.vertical, 18)
@@ -82,24 +82,24 @@ struct LanesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
         .task {
-            lanes.configure(base: config.resolved?.veraAPIBase)
-            await lanes.refresh()
+            veins.configure(base: config.resolved?.veraAPIBase)
+            await veins.refresh()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
-                await lanes.refresh()
+                await veins.refresh()
             }
         }
         .sheet(item: $editing) { entry in
-            LaneSheet(entry: entry, lanes: lanes,
+            VeinSheet(entry: entry, veins: veins,
                       openPlugins: { store.section = .plugins })
         }
     }
 
     private var header: some View {
         HStack {
-            Text("Lanes").font(.system(size: 22, weight: .bold))
-            if case .ready = lanes.phase {
-                Text("\(lanes.active)/\(lanes.cap)")
+            Text("Veins").font(.system(size: 22, weight: .bold))
+            if case .ready = veins.phase {
+                Text("\(veins.active)/\(veins.cap)")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Theme.surface).clipShape(Capsule())
@@ -114,27 +114,27 @@ struct LanesView: View {
     }
 
     @ViewBuilder private var content: some View {
-        switch lanes.phase {
+        switch veins.phase {
         case .loading:
             RowCard {
                 ProgressView().controlSize(.small)
-                Text("Loading lanes…").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                Text("Loading veins…").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
         case .unconfigured:
             statusCard(icon: "gearshape", title: "vera-api isn't configured",
-                       note: "Set the vera-api URL in Settings to manage lanes.")
+                       note: "Set the vera-api URL in Settings to manage veins.")
         case .unreachable:
             statusCard(icon: "exclamationmark.triangle", title: "vera-api unreachable",
-                       note: "Couldn't load the lane catalog from \(lanes.baseDescription).", retry: true)
+                       note: "Couldn't load the vein catalog from \(veins.baseDescription).", retry: true)
         case .unsupported:
-            statusCard(icon: "rectangle.split.3x1", title: "Lanes not available",
-                       note: "This vera-api doesn't expose the lane catalog yet — update vera-api to manage lanes here.",
+            statusCard(icon: "rectangle.split.3x1", title: "Veins not available",
+                       note: "This vera-api doesn't expose the vein catalog yet. Update vera-api to manage veins here.",
                        retry: true)
         case .ready:
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 380), spacing: 14, alignment: .top)],
                       alignment: .leading, spacing: 14) {
-                ForEach(lanes.entries) { entry in
-                    LaneCard(entry: entry, lanes: lanes,
+                ForEach(veins.entries) { entry in
+                    VeinCard(entry: entry, veins: veins,
                              onConfigure: { editing = entry },
                              openPlugins: { store.section = .plugins })
                 }
@@ -146,7 +146,7 @@ struct LanesView: View {
         HStack {
             Text(e).font(.system(size: 12)).foregroundStyle(.red)
             Spacer()
-            Button { lanes.error = nil } label: {
+            Button { veins.error = nil } label: {
                 Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
             }.buttonStyle(.plain)
@@ -164,7 +164,7 @@ struct LanesView: View {
             }
             Spacer(minLength: 0)
             if retry {
-                Button("Retry") { Task { await lanes.refresh() } }
+                Button("Retry") { Task { await veins.refresh() } }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.accent)
             }
@@ -172,11 +172,11 @@ struct LanesView: View {
     }
 }
 
-// MARK: - One lane card
+// MARK: - One vein card
 
-private struct LaneCard: View {
-    let entry: LaneEntry
-    @ObservedObject var lanes: LanesStore
+private struct VeinCard: View {
+    let entry: VeinEntry
+    @ObservedObject var veins: VeinsStore
     var onConfigure: () -> Void
     var openPlugins: () -> Void
 
@@ -199,11 +199,11 @@ private struct LaneCard: View {
                     }
                 }
                 Spacer(minLength: 8)
-                if lanes.busy.contains(entry.kind) {
+                if veins.busy.contains(entry.kind) {
                     ProgressView().controlSize(.small)
                 } else if entry.canEnable || entry.enabled {
                     Toggle("", isOn: Binding(get: { entry.enabled },
-                                             set: { lanes.setEnabled(entry, $0) }))
+                                             set: { veins.setEnabled(entry, $0) }))
                         .toggleStyle(.switch).controlSize(.small).labelsHidden()
                         .tint(Theme.accent)
                 }
@@ -256,11 +256,11 @@ private struct LaneCard: View {
 
 // MARK: - Configure sheet (generated from the manifest)
 
-/// Field/option editor generated from the lane's declared providers and option groups.
-/// Test runs the lane's live provider probes before anything is saved.
-struct LaneSheet: View {
-    let entry: LaneEntry
-    @ObservedObject var lanes: LanesStore
+/// Field/option editor generated from the vein's declared providers and option groups.
+/// Test runs the vein's live provider probes before anything is saved.
+struct VeinSheet: View {
+    let entry: VeinEntry
+    @ObservedObject var veins: VeinsStore
     var openPlugins: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
 
@@ -343,9 +343,9 @@ struct LaneSheet: View {
         .background(Theme.bg)
     }
 
-    // MARK: editors (by declared type — nothing lane-specific)
+    // MARK: editors (by declared type — nothing vein-specific)
 
-    private func providerEditor(_ p: LaneProvider) -> some View {
+    private func providerEditor(_ p: VeinProvider) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(p.label).font(.system(size: 13, weight: .medium))
             if !p.hint.isEmpty {
@@ -358,7 +358,7 @@ struct LaneSheet: View {
         }
     }
 
-    private func optionGroup(_ group: LaneOptionGroup) -> some View {
+    private func optionGroup(_ group: VeinOptionGroup) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(group.group.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(0.6)
                 .foregroundStyle(Theme.textSecondary)
@@ -366,7 +366,7 @@ struct LaneSheet: View {
         }
     }
 
-    @ViewBuilder private func fieldEditor(_ f: LaneField) -> some View {
+    @ViewBuilder private func fieldEditor(_ f: VeinField) -> some View {
         switch f.type {
         case "bool":
             HStack(spacing: 8) {
@@ -409,7 +409,7 @@ struct LaneSheet: View {
         }
     }
 
-    private func scheduleEditor(_ job: LaneJob) -> some View {
+    private func scheduleEditor(_ job: VeinJob) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("SCHEDULE").font(.system(size: 10, weight: .semibold)).tracking(0.6)
                 .foregroundStyle(Theme.textSecondary)
@@ -451,7 +451,7 @@ struct LaneSheet: View {
     private func test() {
         testing = true; testResults = []
         Task {
-            testResults = await lanes.test(kind: entry.kind)
+            testResults = await veins.test(kind: entry.kind)
             testing = false
         }
     }
@@ -460,7 +460,7 @@ struct LaneSheet: View {
         saving = true; error = nil
         let payload = editedPayload()
         Task {
-            let detail = await lanes.save(kind: entry.kind, enabled: enable,
+            let detail = await veins.save(kind: entry.kind, enabled: enable,
                                           options: payload.options, providers: payload.providers,
                                           cron: payload.cron)
             saving = false
@@ -471,32 +471,32 @@ struct LaneSheet: View {
 
 // MARK: - Onboarding step
 
-/// The lane catalog as an onboarding pick-list — fully skippable (skip = an empty chip
-/// row, the honest default). Selecting a lane opens its config sheet.
-struct LanesOnboardingStep: View {
+/// The vein catalog as an onboarding pick-list — fully skippable (skip = an empty chip
+/// row, the honest default). Selecting a vein opens its config sheet.
+struct VeinsOnboardingStep: View {
     let base: URL
     var onDone: () -> Void
-    @StateObject private var lanes = LanesStore()
-    @State private var editing: LaneEntry?
+    @StateObject private var veins = VeinsStore()
+    @State private var editing: VeinEntry?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Pick your lanes").font(.system(size: 18, weight: .semibold))
-                Text("Ambient watches pinned above the Pulse feed — weather, stack health, external signals. All optional; add them any time from the Lanes pane.")
+                Text("Pick your veins").font(.system(size: 18, weight: .semibold))
+                Text("Ambient watches pinned above the Pulse feed: weather, stack health, external signals. All optional; add them any time from the Veins pane.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            switch lanes.phase {
+            switch veins.phase {
             case .loading:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Loading the lane catalog…").font(.system(size: 12))
+                    Text("Loading the vein catalog…").font(.system(size: 12))
                         .foregroundStyle(Theme.textSecondary)
                 }
             case .ready:
                 VStack(spacing: 6) {
-                    ForEach(lanes.entries) { e in
+                    ForEach(veins.entries) { e in
                         HStack(spacing: 10) {
                             Image(systemName: e.icon).font(.system(size: 13)).frame(width: 18)
                             VStack(alignment: .leading, spacing: 1) {
@@ -520,7 +520,7 @@ struct LanesOnboardingStep: View {
                     }
                 }
             default:
-                Text("Couldn't load the lane catalog from vera-api — you can set lanes up later from the Lanes pane.")
+                Text("Couldn't load the vein catalog from vera-api. You can set veins up later from the Veins pane.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -530,11 +530,11 @@ struct LanesOnboardingStep: View {
             }
         }
         .task {
-            lanes.configure(base: base)
-            await lanes.refresh()
+            veins.configure(base: base)
+            await veins.refresh()
         }
         .sheet(item: $editing) { entry in
-            LaneSheet(entry: entry, lanes: lanes)
+            VeinSheet(entry: entry, veins: veins)
         }
     }
 }

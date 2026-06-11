@@ -27,8 +27,8 @@ All endpoints, model servers, thresholds, and behavioral defaults are configurat
 Three components, connected by URLs:
 
 - **[Open WebUI](https://github.com/open-webui/open-webui)** — conversations, memory, and tool execution, against any OpenAI-compatible model server.
-- **vera-api** — a single FastAPI service; each capability is one router: research briefings, ambient watch lanes, home intelligence, kitchen inventory, memory grooming, a scheduler, and a typed confirm-before-acting actuation layer.
-- **Vera.app** — a native SwiftUI macOS client: chat, the Pulse feed, lanes, memory curation, integrations, and voice.
+- **vera-api** — a single FastAPI service; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, memory grooming, a scheduler, and a typed confirm-before-acting actuation layer.
+- **Vera.app** — a native SwiftUI macOS client: chat, the Pulse feed, veins, memory curation, integrations, and voice.
 
 ```mermaid
 flowchart LR
@@ -68,11 +68,11 @@ Vera researches overnight — topics drawn from her own accumulating interests a
 
 <div align="center"><img src="docs/assets/pulse-detail.png" alt="A Pulse briefing card — stats, sourced prose, charts" width="850"></div>
 
-### Lanes — opt-in ambient monitoring
+### Veins — opt-in ambient monitoring
 
-A row of status chips above the feed — System, Weather, Signals, Media — each an independently configured monitor that stays quiet until a configured threshold is crossed. **None are enabled by default.** Each lane is scoped: the Signals lane can watch only financial stress indicators; the System lane can monitor only Home Assistant. Thresholds determine what surfaces; the model only explains what crossed them.
+A row of status chips above the feed — System, Weather, Signals, Media — each an independently configured monitor that stays quiet until a configured threshold is crossed. **None are enabled by default.** Each vein is scoped: the Signals vein can watch only financial stress indicators; the System vein can monitor only Home Assistant. Thresholds determine what surfaces; the model only explains what crossed them.
 
-<div align="center"><img src="docs/assets/pulse.png" alt="The Pulse surface with its lane chips" width="850"></div>
+<div align="center"><img src="docs/assets/pulse.png" alt="The Pulse surface with its vein chips" width="850"></div>
 
 ### Journal — her standing commitments, in her own words
 
@@ -80,7 +80,7 @@ When a monitored situation deserves follow-through (a signals event, or simply "
 
 ### Scheduler — visible, editable, gated
 
-All recurring work — briefings, weather, signals, grooming, health probes — runs on a built-in scheduler with a visible, editable schedule. A job tied to a lane or integration does not fire until that lane or integration is enabled, and gated jobs report why they are not running.
+All recurring work — briefings, weather, signals, grooming, health probes — runs on a built-in scheduler with a visible, editable schedule. A job tied to a vein or integration does not fire until that vein or integration is enabled, and gated jobs report why they are not running.
 
 <div align="center"><img src="docs/assets/agentic.png" alt="The Agentic tab — every scheduled job, live" width="850"></div>
 
@@ -113,9 +113,9 @@ Every external dependency is a configuration slot with defined behavior when emp
 
 | Integration | Powers | When absent |
 |---|---|---|
-| Home Assistant | Live home state, actuation, System-lane sources | Home features off |
+| Home Assistant | Live home state, actuation, System-vein sources | Home features off |
 | Grocy / Mealie | Kitchen inventory, expiry, recipes (pairing unlocks suggestions) | Kitchen tools off |
-| Overseerr | Media requests, weekly curation digest (consent-gated) | Media lane unavailable |
+| Overseerr | Media requests, weekly curation digest (consent-gated) | Media vein unavailable |
 | Unraid | Container updates, host actuation | Those update sources drop from System |
 | FRED / EIA keys | Credit-spread and grid-stress signals | Those collectors skip cleanly |
 
@@ -148,7 +148,7 @@ docker compose up -d --build        # backend (uncomment `build:` in docker-comp
 cd apps/vera-mac && scripts/deploy.sh   # app — packages Vera.app and installs it to /Applications
 ```
 
-Onboarding asks for your endpoints, then offers the opt-in lanes; integrations are configured anytime from the sidebar.
+Onboarding asks for your endpoints, then offers the opt-in veins; integrations are configured anytime from the sidebar.
 
 <div align="center"><img src="docs/assets/onboarding.png" alt="Onboarding" width="700"></div>
 

@@ -9,7 +9,7 @@ final class ChatStore: ObservableObject {
     @Published var draft: String = ""
     @Published var section: AppSection = .chat
     @Published var pulseCards: [PulseCard] = []
-    @Published var pulseLanes: [PulseLane] = PulseLane.mock()   // pinned ambient lanes
+    @Published var pulseVeins: [PulseVein] = PulseVein.mock()   // pinned ambient veins
     @Published var memories: [MemoryItem] = []
     @Published var journalEntries: [JournalEntry] = []        // her standing commitments (read-only)
     @Published var journalArchive: [JournalArchiveMonth] = [] // recently resolved ones
@@ -24,7 +24,7 @@ final class ChatStore: ObservableObject {
     @Published var actionState: [String: String] = [:]    // Pulse cardID → running/done/dismissed/failed
     @Published var digestItemState: [String: String] = [:] // "<cardID>:<itemID>" → pending/running/approved/skipped/failed
     @Published var pulseDetail: PulseCard? = nil    // open card detail (lifted here so the sidebar can dismiss it)
-    @Published var pulseLaneDetail: PulseLane? = nil // open lane overlay (ditto)
+    @Published var pulseVeinDetail: PulseVein? = nil // open vein overlay (ditto)
     @Published var focusTick: Int = 0         // bump to move the cursor into the composer
     @Published var attachments: [Attachment] = []   // pending composer attachments (images/docs)
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
@@ -190,10 +190,10 @@ final class ChatStore: ObservableObject {
     func refreshPulse() async {
         guard let client else { return }
         async let cardsTask = client.fetchPulseCards()
-        async let lanesTask = client.fetchPulseLanes()
-        let (cards, lanes) = await (cardsTask, lanesTask)
+        async let veinsTask = client.fetchPulseVeins()
+        let (cards, veins) = await (cardsTask, veinsTask)
         pulseCards = cards
-        if !lanes.isEmpty { pulseLanes = lanes }   // keep mock lanes if the backend returns none
+        if !veins.isEmpty { pulseVeins = veins }   // keep mock veins if the backend returns none
         bookmarkedPulseIDs = Set(cards.filter { $0.status == "bookmarked" }.map { $0.id })
         readPulseIDs = Set(cards.filter { $0.read }.map { $0.id })   // per-row read state
     }
@@ -203,8 +203,8 @@ final class ChatStore: ObservableObject {
     func markPulseRead(_ card: PulseCard) {
         guard !readPulseIDs.contains(card.id) else { return }
         readPulseIDs.insert(card.id)
-        if let i = pulseLanes.firstIndex(where: { $0.kind == card.kind }), pulseLanes[i].unread > 0 {
-            pulseLanes[i].unread -= 1
+        if let i = pulseVeins.firstIndex(where: { $0.kind == card.kind }), pulseVeins[i].unread > 0 {
+            pulseVeins[i].unread -= 1
         }
         guard let client else { return }
         Task {
@@ -213,21 +213,21 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    // MARK: - Pulse tiers: pinned ambient lanes vs the research feed
+    // MARK: - Pulse tiers: pinned ambient veins vs the research feed
 
-    /// Kinds that have a pinned lane — every other kind falls into the research feed.
-    private var lanedKinds: Set<String> { Set(pulseLanes.map { $0.kind }) }
+    /// Kinds that have a pinned vein — every other kind falls into the research feed.
+    private var veindKinds: Set<String> { Set(pulseVeins.map { $0.kind }) }
 
-    /// The research feed: cards whose kind has no pinned lane (research + any unknown kind).
-    var feedCards: [PulseCard] { pulseCards.filter { !lanedKinds.contains($0.kind) } }
+    /// The research feed: cards whose kind has no pinned vein (research + any unknown kind).
+    var feedCards: [PulseCard] { pulseCards.filter { !veindKinds.contains($0.kind) } }
 
-    /// Active cards for one lane (matched by kind), newest first as the store returns them.
-    func laneCards(_ kind: String) -> [PulseCard] { pulseCards.filter { $0.kind == kind } }
+    /// Active cards for one vein (matched by kind), newest first as the store returns them.
+    func veinCards(_ kind: String) -> [PulseCard] { pulseCards.filter { $0.kind == kind } }
 
-    /// A lane's cards grouped by category in fixed order (Vera/Infra/Health/Updates),
+    /// A vein's cards grouped by category in fixed order (Vera/Infra/Health/Updates),
     /// newest-first within each group (store order is preserved). Empty groups are dropped.
-    func laneCardsByCategory(_ kind: String) -> [(PulseCategory, [PulseCard])] {
-        let cards = laneCards(kind)
+    func veinCardsByCategory(_ kind: String) -> [(PulseCategory, [PulseCard])] {
+        let cards = veinCards(kind)
         return PulseCategory.allCases.compactMap { cat in
             let group = cards.filter { PulseCategory.of($0) == cat }
             return group.isEmpty ? nil : (cat, group)
@@ -359,12 +359,12 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    /// Go to the Pulse feed, dismissing any open card/lane detail. Lets the sidebar Pulse
+    /// Go to the Pulse feed, dismissing any open card/vein detail. Lets the sidebar Pulse
     /// button act as a "back to feed" from anywhere inside Pulse.
     func goToPulse() {
         section = .pulse
         pulseDetail = nil
-        pulseLaneDetail = nil
+        pulseVeinDetail = nil
     }
 
     /// Approve-all / skip-all the still-pending items of a digest card.

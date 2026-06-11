@@ -9,7 +9,7 @@ A read-mostly nightly pass that keeps the durable Home map (knowledge.db) honest
     entity that's vanished from HA (debounced so a flapping `unavailable` doesn't read as gone);
   * detects STALE FACTS — durable facts overdue for re-verification (`last_verified` convention);
   * AUTO-RESOLVES what's unambiguous (an index pointer that moved to a single clear successor) with no
-    human in the loop, and SURFACES the rest as System-lane cards with confirm/re-verify.
+    human in the loop, and SURFACES the rest as System-vein cards with confirm/re-verify.
 
 Cards name the specific drift deterministically — no LLM narration, nothing invented.
 """

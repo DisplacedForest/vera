@@ -4,7 +4,7 @@ has run once at scale; treat its picks as suggestions and keep the digest gate o
 Once a week: build a candidate pool from Overseerr/TMDB discover + a web_search zeitgeist pass,
 let Vera select against the household's configured taste profile (popularity is a candidate pool,
 not a ranking), drop anything already in the library or previously decided on, and emit ONE
-multi-item approve/skip digest card in the Media lane. Each pick is staged as an
+multi-item approve/skip digest card in the Media vein. Each pick is staged as an
 `overseerr_request` action, so approving it downloads the title and is audited/undoable.
 
 Taste is config, not code: MEDIA_CURATION_TASTE carries the household's hard rules and
@@ -41,11 +41,11 @@ _NEUTRAL_TASTE = (
 
 
 def _taste() -> str:
-    """The household's taste profile — the media lane's taste option (store >
+    """The household's taste profile — the media vein's taste option (store >
     MEDIA_CURATION_TASTE env), else the neutral default that assumes nothing beyond
     distrusting raw popularity."""
-    from . import pulse_lanes
-    return (str(pulse_lanes.option_values("media").get("taste") or "").strip()
+    from . import pulse_veins
+    return (str(pulse_veins.option_values("media").get("taste") or "").strip()
             or _NEUTRAL_TASTE)
 
 
@@ -152,9 +152,9 @@ async def curate(force: bool = False):
     """Run the weekly curation and post the digest card. Gated behind the overseerr
     integration's experimental media_curation feature; `force` bypasses the gate for
     a deliberate manual run (the overseerr integration itself must still be enabled)."""
-    from . import integrations, pulse_lanes
-    if not force and not pulse_lanes.is_enabled("media"):
-        raise HTTPException(status_code=503, detail=pulse_lanes.gate_reason("media"))
+    from . import integrations, pulse_veins
+    if not force and not pulse_veins.is_enabled("media"):
+        raise HTTPException(status_code=503, detail=pulse_veins.gate_reason("media"))
     if not force and not integrations.feature_enabled("overseerr", "media_curation"):
         raise HTTPException(
             status_code=503,
@@ -164,8 +164,8 @@ async def curate(force: bool = False):
     if not pool:
         return {"ok": True, "candidates": 0, "picked": 0, "note": "no eligible candidates"}
 
-    lane_opts = pulse_lanes.option_values("media")
-    cap = int(lane_opts.get("cap") or CAP)
+    vein_opts = pulse_veins.option_values("media")
+    cap = int(vein_opts.get("cap") or CAP)
     chosen = await _select(pool[:POOL_MAX], cap)
     if not chosen:
         return {"ok": True, "candidates": len(pool), "picked": 0, "note": "nothing met the bar"}

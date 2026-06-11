@@ -64,7 +64,7 @@ def init():
             c.execute("ALTER TABLE cards ADD COLUMN provenance TEXT")
             c.execute("UPDATE cards SET provenance='scheduled' WHERE provenance IS NULL")
         if "category" not in cols:
-            # System-lane sub-grouping for status cards — vera | infra | health | update.
+            # System-vein sub-grouping for status cards — vera | infra | health | update.
             c.execute("ALTER TABLE cards ADD COLUMN category TEXT")
         if "change_set" not in cols:
             # reversible memory-tending diff (json) — what merged/forgot/promoted, with full
@@ -74,7 +74,7 @@ def init():
             # multi-item action card (digest) — json list of per-row items, each with its own
             # staged action token + state (pending|approved|skipped). Drives the approve/skip card UI.
             c.execute("ALTER TABLE cards ADD COLUMN items TEXT")
-        # Per-event read receipts — separate from the card, because ambient lane events are
+        # Per-event read receipts — separate from the card, because ambient vein events are
         # one shared mind but read independently per person. Composite PK = idempotent writes.
         c.execute(
             """
@@ -209,7 +209,7 @@ def mark_read(user_id: str, card_id: str):
 
 
 def read_ids(user_id: str) -> set:
-    """The set of card ids this person has read (for annotating the feed + lane overlay rows)."""
+    """The set of card ids this person has read (for annotating the feed + vein overlay rows)."""
     init()
     with _conn() as c:
         rows = c.execute("SELECT card_id FROM pulse_reads WHERE user_id=?", (user_id,)).fetchall()

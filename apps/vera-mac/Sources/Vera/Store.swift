@@ -11,6 +11,8 @@ final class ChatStore: ObservableObject {
     @Published var pulseCards: [PulseCard] = []
     @Published var pulseLanes: [PulseLane] = PulseLane.mock()   // pinned ambient lanes
     @Published var memories: [MemoryItem] = []
+    @Published var journalEntries: [JournalEntry] = []        // her standing commitments (read-only)
+    @Published var journalArchive: [JournalArchiveMonth] = [] // recently resolved ones
     @Published var streamStatus: String?     // live tool/progress line while Vera is thinking
     @Published var generating = false        // true for the whole turn (drives the living flame mark)
     private var settleTask: Task<Void, Never>?  // settles `generating` after the last token if the stream never signals done
@@ -124,6 +126,14 @@ final class ChatStore: ObservableObject {
         let mems = await client.memories()
         if !mems.isEmpty { memories = mems }
         startPolling()
+    }
+
+    /// Re-fetch her journal (self-authored, rendered read-only). Pulled when the view opens.
+    func refreshJournal() async {
+        guard let client else { return }
+        let (entries, archive) = await client.fetchJournal()
+        journalEntries = entries
+        journalArchive = archive
     }
 
     /// Re-fetch the Pulse feed from vera-api (its standalone store). Reflects adds/deletes,

@@ -3,12 +3,12 @@ import Foundation
 /// App surfaces. `chat` and `agentic` are the top modality tabs; `pulse`/`memory`/`plugins`/`mcp`
 /// are nav rows under the Chat tab.
 enum AppSection: String, CaseIterable, Identifiable {
-    case chat, pulse, lanes, memory, plugins, mcp, agentic
+    case chat, pulse, lanes, journal, memory, plugins, mcp, agentic
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .chat: "Chat"; case .pulse: "Pulse"; case .lanes: "Lanes"; case .memory: "Memory"
-        case .plugins: "Plugins"; case .mcp: "MCP"; case .agentic: "Agentic"
+        case .chat: "Chat"; case .pulse: "Pulse"; case .lanes: "Lanes"; case .journal: "Journal"
+        case .memory: "Memory"; case .plugins: "Plugins"; case .mcp: "MCP"; case .agentic: "Agentic"
         }
     }
     var icon: String {
@@ -16,6 +16,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .chat: "message"
         case .pulse: "newspaper"
         case .lanes: "rectangle.split.3x1"
+        case .journal: "book.closed"
         case .memory: "tray.full"
         case .plugins: "shippingbox"
         case .mcp: "puzzlepiece.extension"

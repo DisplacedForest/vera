@@ -110,22 +110,71 @@ final class ChatStore: ObservableObject {
         client = OWUIClient(config: cfg)
     }
 
-    /// Replace mock data with the real chat list from OWUI (called on the live app's appear).
+    /// Load the live chat list from OWUI (called on the live app's appear). Ordered so no
+    /// half-state renders: list arrives, then the "New chat" placeholder, then selection — once.
     func connect() async {
-        guard let client else { return }
-        if let chats = try? await client.listChats(), !chats.isEmpty {
-            let pinned = await client.pinnedChatIDs()
-            conversations = chats.map {
-                Conversation(id: $0.id, title: $0.title, messages: [],
-                             updatedAt: Date(timeIntervalSince1970: TimeInterval($0.updated_at ?? 0)),
-                             owuiID: $0.id, pinned: pinned.contains($0.id))
-            }
-        }
+        guard client != nil else { return }
+        await reconcileChats()
         newConversation()   // open to a fresh chat (like ChatGPT/Claude), not the last one
         await refreshPulse()
-        let mems = await client.memories()
-        if !mems.isEmpty { memories = mems }
-        startPolling()
+        await refreshMemories()
+        startReconcileLoop()
+    }
+
+    private var reconcilingChats = false
+    /// Diff the store's conversations against OWUI's chat list — the server is the source of
+    /// truth for everything persisted; local unpersisted drafts are never touched. One pass at
+    /// a time: a focus-triggered pass and the 30s tick must not interleave their diffs.
+    func reconcileChats() async {
+        guard !reconcilingChats else { return }
+        reconcilingChats = true
+        defer { reconcilingChats = false }
+        guard let client, let chats = try? await client.listChats() else { return }
+        let pinned = await client.pinnedChatIDs()
+        let serverIDs = Set(chats.map(\.id))
+
+        for summary in chats {
+            let serverStamp = summary.updated_at ?? 0
+            guard let i = conversations.firstIndex(where: { $0.id == summary.id }) else {
+                conversations.append(Conversation(
+                    id: summary.id, title: summary.title, messages: [],
+                    updatedAt: Date(timeIntervalSince1970: TimeInterval(serverStamp)),
+                    isPersisted: true, serverUpdatedAt: serverStamp,
+                    pinned: pinned.contains(summary.id)))
+                continue
+            }
+            // Leave the open chat alone mid-stream; the next tick reconciles it once settled.
+            if summary.id == selectedID && generating { continue }
+            let changedElsewhere = serverStamp > conversations[i].serverUpdatedAt
+            conversations[i].title = summary.title
+            conversations[i].updatedAt = Date(timeIntervalSince1970: TimeInterval(serverStamp))
+            conversations[i].serverUpdatedAt = serverStamp
+            conversations[i].pinned = pinned.contains(summary.id)
+            guard changedElsewhere, !conversations[i].messages.isEmpty else { continue }
+            if summary.id == selectedID {
+                // Turns taken elsewhere appear in the open chat without reselecting.
+                let msgs = await client.loadMessages(chatID: summary.id)
+                if let j = conversations.firstIndex(where: { $0.id == summary.id }), !msgs.isEmpty {
+                    conversations[j].messages = msgs
+                }
+            } else {
+                conversations[i].messages = []   // stale history; the next select re-fetches
+            }
+        }
+
+        // Server-side deletions leave the sidebar; a deleted open chat closes gracefully.
+        let selectedWasDeleted = conversations.contains {
+            $0.id == selectedID && $0.isPersisted && !serverIDs.contains($0.id)
+        }
+        conversations.removeAll { $0.isPersisted && !serverIDs.contains($0.id) }
+        if selectedWasDeleted { selectedID = nil; newConversation() }
+    }
+
+    /// Re-fetch memories from OWUI. A failed fetch keeps the current list; an empty result is
+    /// real (memories deleted elsewhere) and applies.
+    func refreshMemories() async {
+        guard let client, let mems = await client.memories() else { return }
+        memories = mems
     }
 
     /// Re-fetch her journal (self-authored, rendered read-only). Pulled when the view opens.
@@ -209,17 +258,35 @@ final class ChatStore: ObservableObject {
         decideDigestItem(card, item, approve: approve)
     }
 
-    private var pollStarted = false
-    /// Light background poll so the Pulse feed stays in sync while the app is open.
-    private func startPolling() {
-        guard !pollStarted else { return }
-        pollStarted = true
+    private var reconcileStarted = false
+    private var reconcileTick = 0
+    /// The app's single sync heartbeat: every 30 seconds (and instantly on window focus) the
+    /// store reconciles against the server. Per-surface fetches run independently so one
+    /// failing endpoint never blocks the others; memories ride a slower multiple.
+    private func startReconcileLoop() {
+        guard !reconcileStarted else { return }
+        reconcileStarted = true
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in await self?.reconcile() }
+        }
         Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
-                await self?.refreshPulse()
+                guard let self else { return }
+                self.reconcileTick += 1
+                await self.reconcile(refreshingMemories: self.reconcileTick % 5 == 0)
             }
         }
+    }
+
+    /// One reconcile pass over every live surface, fetched concurrently.
+    private func reconcile(refreshingMemories: Bool = false) async {
+        async let pulse: Void = refreshPulse()
+        async let chats: Void = reconcileChats()
+        if refreshingMemories { await refreshMemories() }
+        _ = await (pulse, chats)
     }
 
     // MARK: - Bookmark + feedback
@@ -235,7 +302,7 @@ final class ChatStore: ObservableObject {
             if turningOn, let chatID, !conversations.contains(where: { $0.id == chatID }) {
                 conversations.insert(Conversation(id: chatID, title: card.title,
                     messages: [Message(role: .assistant, text: card.body, pulse: card)],
-                    updatedAt: Date(), owuiID: chatID), at: 0)
+                    updatedAt: Date(), isPersisted: true), at: 0)
             } else if !turningOn {
                 conversations.removeAll { $0.messages.count == 1 && $0.messages.first?.pulse?.id == card.id }
             }
@@ -322,7 +389,7 @@ final class ChatStore: ObservableObject {
         Task {
             await client.postFeedback([
                 "kind": "chat", "sentiment": sentiment, "title": convo.title, "content": message.text,
-                "chat_id": convo.owuiID ?? convo.id, "message_id": message.id.uuidString,
+                "chat_id": convo.id, "message_id": message.id.uuidString,
                 "model": config?.model ?? "",
             ])
         }
@@ -378,7 +445,7 @@ final class ChatStore: ObservableObject {
     func togglePin(_ id: String) {
         guard let i = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[i].pinned.toggle()
-        if let client, let owui = conversations[i].owuiID { Task { await client.togglePin(id: owui) } }
+        if let client, conversations[i].isPersisted { Task { await client.togglePin(id: id) } }
     }
 
     // id must be STABLE across renders (title is) — a fresh UUID each compute breaks SwiftUI's
@@ -391,7 +458,7 @@ final class ChatStore: ObservableObject {
         var seenIDs = Set<String>()
         let visible = conversations.filter {
             guard seenIDs.insert($0.id).inserted else { return false }   // defensive: one row per id
-            return (!$0.messages.isEmpty || $0.owuiID != nil) && (q.isEmpty || $0.title.lowercased().contains(q))
+            return (!$0.messages.isEmpty || $0.isPersisted) && (q.isEmpty || $0.title.lowercased().contains(q))
         }
         let pinned = visible.filter { $0.pinned }.sorted { $0.updatedAt > $1.updatedAt }
         let rest = visible.filter { !$0.pinned }.sorted { $0.updatedAt > $1.updatedAt }
@@ -415,14 +482,13 @@ final class ChatStore: ObservableObject {
     /// Remove a conversation (locally and in OWUI) and reselect a neighbour.
     func deleteConversation(_ id: String) {
         let idx = conversations.firstIndex { $0.id == id }
-        // Delete by the OWUI id (a new chat's UI id is a local UUID; its real id is owuiID).
-        let owui = conversations.first { $0.id == id }?.owuiID
+        let persisted = conversations.first { $0.id == id }?.isPersisted ?? false
         conversations.removeAll { $0.id == id }
         if selectedID == id {
             let next = idx.flatMap { conversations.indices.contains($0) ? conversations[$0] : conversations.last }
             selectedID = next?.id ?? conversations.first?.id
         }
-        if let client, let owui { Task { await client.deleteChat(id: owui) } }
+        if let client, persisted { Task { await client.deleteChat(id: id) } }
     }
 
     /// Open a Pulse briefing inside the chat view as a normal conversation (no popup).
@@ -442,7 +508,7 @@ final class ChatStore: ObservableObject {
             var msgs: [Message] = [Message(role: .assistant, text: card.body, pulse: card)]
             if owuiMsgs.count > 1 { msgs.append(contentsOf: owuiMsgs.dropFirst()) }
             conversations.insert(Conversation(id: chatID, title: card.title, messages: msgs,
-                                              updatedAt: Date(), owuiID: chatID), at: 0)
+                                              updatedAt: Date(), isPersisted: true), at: 0)
             selectedID = chatID
         }
     }
@@ -568,7 +634,7 @@ final class ChatStore: ObservableObject {
         conversations[idx].messages.append(.init(role: .assistant, text: ""))
         let replyIndex = conversations[idx].messages.count - 1
         let messageID = UUID().uuidString
-        let chatID = conversations[idx].owuiID ?? id   // real OWUI id once persisted
+        let chatID = id   // the OWUI id once persisted; a local UUID only for a brand-new chat
         streamStatus = "Thinking…"
         generating = true
         // Stream through OWUI's pipeline; `.content` is cumulative. Parse out any vera:ask block live.
@@ -626,17 +692,37 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    /// Persist a conversation to OWUI after a turn so new chats survive relaunch (create-or-update).
+    /// Persist a conversation to OWUI after a turn so new chats survive relaunch
+    /// (create-or-update). A first-time create re-keys the conversation to the OWUI id in one
+    /// step — id, selection, everything — so there is exactly one identity from then on. The
+    /// server's updated_at stamp is recorded so reconciliation never reads our own save as an
+    /// external change.
     private func persistChat(localID: String) async {
         guard let client, let i = conversations.firstIndex(where: { $0.id == localID }) else { return }
         let convo = conversations[i]
         let turns = convo.messages.filter { !$0.text.isEmpty }.map { ($0.role.rawValue, $0.text) }
         guard !turns.isEmpty else { return }
-        if let owui = convo.owuiID {
-            await client.saveChat(id: owui, title: convo.title, turns: turns)
-        } else if let newID = await client.createChat(title: convo.title, turns: turns),
+        if convo.isPersisted {
+            if let stamp = await client.saveChat(id: convo.id, title: convo.title, turns: turns),
+               let j = conversations.firstIndex(where: { $0.id == localID }) {
+                conversations[j].serverUpdatedAt = stamp
+            }
+        } else if let created = await client.createChat(title: convo.title, turns: turns),
                   let j = conversations.firstIndex(where: { $0.id == localID }) {
-            conversations[j].owuiID = newID
+            var rekeyed = Conversation(id: created.id, title: conversations[j].title,
+                                       messages: conversations[j].messages,
+                                       updatedAt: conversations[j].updatedAt,
+                                       isPersisted: true, serverUpdatedAt: created.updatedAt,
+                                       pinned: conversations[j].pinned)
+            // A reconcile pass may have already fetched the new chat from the server — keep one row.
+            if let dup = conversations.firstIndex(where: { $0.id == created.id }), dup != j {
+                rekeyed.pinned = conversations[dup].pinned
+                conversations.remove(at: dup)
+            }
+            if let k = conversations.firstIndex(where: { $0.id == localID }) {
+                conversations[k] = rekeyed
+            }
+            if selectedID == localID { selectedID = created.id }
         }
     }
 }

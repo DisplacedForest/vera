@@ -25,8 +25,11 @@ enum SelfTest {
                 let msgs = await client.loadMessages(chatID: first.id)
                 print("loadMessages OK — '\(first.title.prefix(40))' → \(msgs.count) messages")
             }
-            let mems = await client.memories()
-            print("memories OK — \(mems.count) entries")
+            if let mems = await client.memories() {
+                print("memories OK — \(mems.count) entries")
+            } else {
+                print("memories FAILED — fetch error")
+            }
             // The folder id is deployment config, never baked in: PULSE_FOLDER_ID env or
             // the pulse_folder_id key in ~/.vera/config.json; absent -> skip the check.
             let env = ProcessInfo.processInfo.environment["PULSE_FOLDER_ID"]

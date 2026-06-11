@@ -311,7 +311,7 @@ private struct ChatPane: View {
                 }
                 ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
                     .frame(maxWidth: 760)
-            } else if let convo = store.selected, convo.owuiID != nil {
+            } else if let convo = store.selected, convo.isPersisted {
                 // A real chat whose history is still loading — skeleton, not the welcome flash.
                 ChatLoadingSkeleton()
                 ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)

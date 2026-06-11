@@ -1,10 +1,12 @@
 """Journal document mechanics — the minimal structure the harness owns: `## ` entry
 boundaries, the lenient `Next check:` line, origin classification, section-scoped
-writes, and archive month naming. Everything else in the document is hers and is
-deliberately NOT parsed. Run under pytest."""
+writes, archive month naming, and legacy-watch migration safety. Everything else in
+the document is hers and is deliberately NOT parsed. Run under pytest."""
+import asyncio
+import sqlite3
 import time
 
-from routers import journal
+from routers import journal, vera_interests_store as vi
 
 
 DOC = """# Journal
@@ -131,3 +133,42 @@ def test_archive_month_naming():
 def test_empty_document_parses_to_nothing():
     assert journal.parse_document("") == []
     assert journal.due_entries([], now=T_2026_06_11) == []
+
+
+# --------------------------------------------------------------------------- migration
+
+def test_failed_migration_group_stays_for_retry(monkeypatch, tmp_path):
+    """Rows are deleted per group, only after that group's authoring succeeds — a group
+    whose author pass fails survives in the store for the next attempt."""
+    monkeypatch.setattr(journal, "JOURNAL_PATH", str(tmp_path / "JOURNAL.md"))
+    vi.init()
+    with sqlite3.connect(vi.DB_PATH) as c:
+        c.execute("DELETE FROM interest WHERE COALESCE(is_watch,0)=1")
+        for topic, origin in (("oil prices", "Hormuz"), ("tanker traffic", "Hormuz"),
+                              ("aftershocks", "Quake")):
+            c.execute("INSERT INTO interest(id,topic,is_watch,origin,salience,source) "
+                      "VALUES(?,?,1,?,0.1,'watch')", (topic, topic, origin))
+
+    async def fake_author(material, origin):
+        if "Quake" in origin:
+            raise RuntimeError("model unreachable")
+        journal.write_document(journal.upsert_section(
+            journal.read_document(), f"## Hormuz situation\n{origin}\n"))
+        return "Hormuz situation"
+
+    monkeypatch.setattr(journal, "author", fake_author)
+    assert asyncio.run(journal.migrate_legacy_watches()) is True
+    with sqlite3.connect(vi.DB_PATH) as c:
+        left = [r[0] for r in c.execute(
+            "SELECT topic FROM interest WHERE COALESCE(is_watch,0)=1").fetchall()]
+    assert left == ["aftershocks"]   # the failed Quake group survives; Hormuz rows are gone
+
+    # the surviving group migrates cleanly once authoring recovers
+    async def ok_author(material, origin):
+        journal.write_document(journal.upsert_section(
+            journal.read_document(), f"## Quake situation\n{origin}\n"))
+        return "Quake situation"
+    monkeypatch.setattr(journal, "author", ok_author)
+    assert asyncio.run(journal.migrate_legacy_watches()) is True
+    with sqlite3.connect(vi.DB_PATH) as c:
+        assert c.execute("SELECT COUNT(*) FROM interest WHERE COALESCE(is_watch,0)=1").fetchone()[0] == 0

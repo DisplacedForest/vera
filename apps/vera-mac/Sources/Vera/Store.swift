@@ -216,10 +216,10 @@ final class ChatStore: ObservableObject {
     // MARK: - Pulse tiers: pinned ambient veins vs the research feed
 
     /// Kinds that have a pinned vein — every other kind falls into the research feed.
-    private var veindKinds: Set<String> { Set(pulseVeins.map { $0.kind }) }
+    private var veinedKinds: Set<String> { Set(pulseVeins.map { $0.kind }) }
 
     /// The research feed: cards whose kind has no pinned vein (research + any unknown kind).
-    var feedCards: [PulseCard] { pulseCards.filter { !veindKinds.contains($0.kind) } }
+    var feedCards: [PulseCard] { pulseCards.filter { !veinedKinds.contains($0.kind) } }
 
     /// Active cards for one vein (matched by kind), newest first as the store returns them.
     func veinCards(_ kind: String) -> [PulseCard] { pulseCards.filter { $0.kind == kind } }

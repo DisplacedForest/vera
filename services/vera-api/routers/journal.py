@@ -94,7 +94,12 @@ def parse_document(doc):
             if dates:
                 next_check = max(dates) + 86400
         origin_line = re.search(r"(?im)^\s*Origin:\s*(.+)$", text)
-        requested = bool(origin_line and re.search(r"\b(ask|request)", origin_line.group(1), re.I))
+        # Origin lines are in her words, so classification stays lenient: any owner/user
+        # phrasing (or the configured owner's name) reads as a requested commitment.
+        o = origin_line.group(1) if origin_line else ""
+        requested = bool(origin_line and (
+            re.search(r"\b(ask|request|owner|user)", o, re.I)
+            or owner().lower() in o.lower()))
         entries.append({"heading": heading, "slug": _slug(heading), "text": text,
                         "next_check": next_check,
                         "origin": "requested" if requested else "self"})
@@ -184,7 +189,8 @@ def _conventions():
         "monitoring or following through on. Each commitment is ONE `## ` section in your own "
         "words, and it is a compact living brief, never a transcript. A good entry carries: why "
         "it matters to this household, what you are checking, what would resolve it, an "
-        "`Origin:` line naming where the commitment came from, a `Next check:` line "
+        "`Origin:` line naming where the commitment came from (keep the origin wording you "
+        "were given, especially who asked), a `Next check:` line "
         "(YYYY-MM-DD or YYYY-MM-DD HH:MM) set to when it genuinely needs another look, and a "
         "short log of dated finding lines like `- YYYY-MM-DD: ...`. When the log ages, fold "
         "older lines into one summary line. What matters to this household: anything that would "

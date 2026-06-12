@@ -220,7 +220,7 @@ def test_run_outcome_polls_to_terminal_record(monkeypatch):
     states = [
         {"state": "running"},
         {"state": "ok", "injected": ["A"], "gates": {"dedup": 5},
-         "errors": ["starved run: 1/8 cards after 3 triage round(s); gate kills — dedup=5"]},
+         "errors": ["starved run: 1/8 cards after 3 triage round(s); gate kills: dedup=5"]},
     ]
     monkeypatch.setattr(pulse.store, "get_run_status", lambda: states.pop(0))
     out = run(pulse.run_outcome({"ok": True, "run_id": "1", "state": "running"}, poll_secs=0))

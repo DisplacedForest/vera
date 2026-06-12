@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The Settings window (⌘,) — every endpoint and identity value editable in-app, written to
-/// `~/.vera/config.json`. Env vars still win over file values; env-overridden fields render
-/// locked. Cheap changes apply live; OWUI session changes offer a reconnect.
+/// `~/.vera/config.json`. Env vars still win over file values; env-overridden fields carry
+/// an InfoTip naming the variable. Cheap changes apply live; OWUI session changes offer a reconnect.
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -162,8 +162,8 @@ private struct AboutTab: View {
 
 // MARK: - Building blocks
 
-/// One editable config.json field. Env-overridden keys refuse edits and explain why in
-/// an InfoTip rather than rendering padlocked.
+/// One editable config.json field. Env-overridden keys stay editable (edits land in the
+/// file as usual) but an InfoTip explains that the environment value wins at resolution.
 private struct ConfigField: View {
     @EnvironmentObject var config: ConfigStore
     let label: String
@@ -176,11 +176,9 @@ private struct ConfigField: View {
         HStack(spacing: 6) {
             if secure {
                 SecureField(label, text: config.binding(key), prompt: Text(placeholder))
-                    .disabled(config.envOverride(key) != nil)
             } else {
                 TextField(label, text: config.binding(key), prompt: Text(placeholder))
                     .autocorrectionDisabled()
-                    .disabled(config.envOverride(key) != nil)
             }
             if let env = config.envOverride(key) {
                 InfoTip(text: "Set by \(env) in the environment. The environment value wins; change it there.")

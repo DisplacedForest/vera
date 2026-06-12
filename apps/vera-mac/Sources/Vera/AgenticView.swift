@@ -236,19 +236,19 @@ private struct ScheduleRow: View {
                     } else {
                         Button { sched.runNow(job) } label: {
                             Image(systemName: "play.circle").font(.system(size: 15))
-                                .foregroundStyle(job.envLocked ? Theme.textSecondary.opacity(0.4) : Theme.textSecondary)
+                                .foregroundStyle(Theme.textSecondary)
                         }
-                        .buttonStyle(.plain).disabled(job.envLocked).help("Run now")
+                        .buttonStyle(.plain).help("Run now")
                         Button(action: onEdit) {
                             Image(systemName: "pencil").font(.system(size: 13))
-                                .foregroundStyle(job.envLocked ? Theme.textSecondary.opacity(0.4) : Theme.textSecondary)
+                                .foregroundStyle(Theme.textSecondary)
                         }
-                        .buttonStyle(.plain).disabled(job.envLocked).help("Edit schedule")
+                        .buttonStyle(.plain).help("Edit schedule")
                     }
                     Toggle("", isOn: Binding(get: { job.enabled }, set: { sched.setEnabled(job, $0) }))
                         .toggleStyle(.switch).controlSize(.small).labelsHidden()
                         .tint(Theme.accent)
-                        .disabled(job.envLocked || sched.busy.contains(job.id))
+                        .disabled(sched.busy.contains(job.id))
                 }
                 if expanded {
                     Text(detailLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)

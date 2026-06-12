@@ -68,7 +68,7 @@ final class ConfigStore: ObservableObject {
         Binding(get: { self[key] }, set: { self[key] = $0 })
     }
 
-    /// The active environment override for a key, if one is set (the field is then read-only).
+    /// The active environment override for a key, if one is set (it wins over the file value).
     func envOverride(_ key: String) -> String? {
         guard let name = Self.envNames[key] else { return nil }
         let env = ProcessInfo.processInfo.environment

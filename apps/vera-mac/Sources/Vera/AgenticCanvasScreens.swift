@@ -204,7 +204,8 @@ struct AgenticCanvasView: View {
         }
     }
 
-    /// Which canvas edges an event lights up.
+    /// Which canvas edges an event lights up. A failed run feeds nothing, so failures
+    /// tint their node instead of traveling an edge.
     private func edges(for event: ActivityEvent, graph: AgenticGraph) -> [(String, String)] {
         if event.source == "scheduler", event.kind == "ok",
            let tool = event.tool, let flow = graph.flow(tool) {
@@ -217,6 +218,13 @@ struct AgenticCanvasView: View {
                           "watch": "watch", "foryou": "foryou", "foryou_skip": "foryou"][event.kind]
             let feeds = hb.stages.first { $0.id == branch }?.feeds ?? []
             return feeds.map { (hb.id, $0) }
+        }
+        // Free-lane actions are autonomous by definition (today only the heartbeat runs
+        // that lane), so they travel the heartbeat's edge to the Actions surface.
+        if event.source == "action", event.kind == "auto",
+           let hb = graph.flows.first(where: { $0.kind == "heartbeat" }),
+           hb.feeds.contains("actions") {
+            return [(hb.id, "actions")]
         }
         return []
     }

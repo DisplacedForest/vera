@@ -306,7 +306,10 @@ async def graph():
         except Exception as e:  # noqa: BLE001
             log.warning("graph: surface stat %s failed: %s", s["id"], e)
         surfaces.append({**s, "stat": stat})
-    return {"flows": flows, "surfaces": surfaces}
+    # Explicit edge list (flow -> surface), derived from the same feeds the flows declare:
+    # one source of truth, two readings. The future editor mutates edges through this shape.
+    edges = [{"from": f["id"], "to": sid} for f in flows for sid in f["feeds"]]
+    return {"flows": flows, "surfaces": surfaces, "edges": edges}
 
 
 @router.get("/agentic/activity", tags=["agentic"])

@@ -244,6 +244,56 @@ async def _fire(job_id: str, manual: bool = False):
         log.warning("job %s failed: %s", job_id, e)
     finally:
         _running.discard(job_id)
+        try:
+            await escalate_failures(job_id)
+        except Exception as e:  # noqa: BLE001 — alerting must never break the loop
+            log.warning("failure escalation for %s failed: %s", job_id, e)
+
+
+# Repeated failures surface as a System-vein card — one place to be told; the canvas
+# shows the same state as node tint. One card per streak (no stacking), cleared the
+# moment the job recovers.
+FAIL_CARD_AFTER = int(os.environ.get("SCHEDULER_FAIL_CARD_AFTER", "3"))
+
+
+def fail_streak(job_id: str) -> int:
+    """Consecutive failures at the head of the job's run log (3-day window)."""
+    n = 0
+    for r in store.recent_runs(72):
+        if r["job_id"] != job_id:
+            continue
+        if r["ok"]:
+            break
+        n += 1
+    return n
+
+
+def _failure_card_title(job_id: str) -> str:
+    return f"{REGISTRY[job_id][0]} keeps failing"
+
+
+async def escalate_failures(job_id: str):
+    """Post the failure-streak card (or clear it on recovery)."""
+    from . import pulse_store, pulse_veins
+    title = _failure_card_title(job_id)
+    existing = [c for c in pulse_store.list_cards()
+                if c.get("kind") == "status" and c.get("category") == "vera"
+                and c.get("title") == title]
+    streak = fail_streak(job_id)
+    if streak == 0:
+        for c in existing:  # recovered — the situation is over, the card goes with it
+            pulse_store.delete_card(c["id"])
+        return
+    if streak < FAIL_CARD_AFTER or existing or not pulse_veins.is_enabled("status"):
+        return
+    last_detail = next((r["detail"] for r in store.recent_runs(72) if r["job_id"] == job_id), "")
+    from .pulse import _inject
+    label = REGISTRY[job_id][0]
+    body = (f"**{label}** has failed {streak} runs in a row.\n\n"
+            f"Last error: {last_detail or 'no detail recorded'}\n\n"
+            "The flow's node on the Agentic canvas carries the same state.")
+    await _inject(title, body, summary=f"{label} is failing repeatedly.",
+                  kind="status", category="vera", severity="alert")
 
 
 async def _loop():

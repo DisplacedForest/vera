@@ -66,6 +66,13 @@ def test_feeds_reference_declared_surfaces():
             assert set(stage.get("feeds") or []) <= surface_ids
 
 
+def test_explicit_edges_mirror_feeds():
+    out = _graph()
+    derived = {(f["id"], sid) for f in out["flows"] for sid in f["feeds"]}
+    assert {(e["from"], e["to"]) for e in out["edges"]} == derived
+    assert derived, "the canvas would be edgeless"
+
+
 def test_drill_in_topology():
     out = _graph()
     pulse = _flow(out, "pulse")

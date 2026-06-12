@@ -233,8 +233,9 @@ async def _classify(s, recipe) -> tuple[list, list]:
 async def import_recipe(url: str) -> dict:
     """The recipe write path: scrape a recipe URL into Mealie, then enrich it the way a human
     would — NLP-parse the ingredients into linked foods/units and classify it (one cuisine category
-    + reuse-first tags). Called only by the gated `kitchen.mealie_import` verb (confirm-gated).
-    Enrichment is best-effort: the recipe is always created; failures surface in `warnings`."""
+    + reuse-first tags). Called only through the `kitchen.mealie_import` verb (confirm-gated in
+    chat, free via the autonomous lane). Enrichment is best-effort: the recipe is always created;
+    failures surface in `warnings`."""
     if not (_mealie_url() and _mealie_key()):
         return {"ok": False, "error": "Mealie not configured"}
     warnings: list = []
@@ -279,7 +280,8 @@ async def import_recipe(url: str) -> dict:
                     warnings.append(f"update failed {r.status}: {(await r.text())[:120]}")
 
         return {
-            "ok": True, "slug": slug, "url": f"{_mealie_url()}/g/home/r/{slug}",
+            "ok": True, "slug": slug, "name": recipe.get("name") or slug,
+            "url": f"{_mealie_url()}/g/home/r/{slug}",
             "category": [c["name"] for c in recipe.get("recipeCategory") or []],
             "tags": [t["name"] for t in recipe.get("tags") or []],
             "warnings": warnings,

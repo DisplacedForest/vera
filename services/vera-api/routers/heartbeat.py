@@ -523,7 +523,7 @@ async def tick(req: TickRequest):
     if isinstance(act, dict) and act.get("verb"):
         target = (act.get("args", {}).get("data", {}) or {}).get("entity_id") or json.dumps(act.get("args", {}))
         if _recently_proposed(recent, act["verb"], target):
-            out["proposed"] = "(skipped — already proposed recently)"
+            out["proposed"] = "(skipped, already proposed recently)"
         else:
             try:
                 r = await actions.propose_card(actions.ProposeCard(

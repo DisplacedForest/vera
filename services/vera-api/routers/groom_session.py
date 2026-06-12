@@ -47,8 +47,8 @@ def _flagged_items(review):
             items.append({
                 "item_id": f"review:promote:{r['type']}",
                 "title": f"Codify '{r['type']}' type?",
-                "subtitle": f"{r.get('entities', '?')} entities, {r.get('coverage', '?')} coverage — "
-                            f"stabilizing but not a confident auto-promote.",
+                "subtitle": f"{r.get('entities', '?')} entities, {r.get('coverage', '?')} coverage. "
+                            f"Stabilizing but not a confident auto-promote.",
                 "group": "Flagged for review", "state": "pending",
                 "action": {"verb": "knowledge.promote", "args": {"type": r["type"], "schema": r["schema"]},
                            "token": ok["token"], "preview": ok["preview"], "risk": ok["risk"],
@@ -62,7 +62,7 @@ def _flagged_items(review):
             members = ", ".join([r.get("canonical", "")] + (r.get("members") or []))
             items.append({"item_id": f"review:merge:{i}", "title": "Possible duplicate to reconcile",
                           "subtitle": f"{members} disagree on: {', '.join((r.get('conflicts') or {}).keys())}"
-                                      " — discuss in chat", "group": "Flagged for review", "state": "info"})
+                                      ". Discuss in chat", "group": "Flagged for review", "state": "info"})
     return items
 
 
@@ -112,7 +112,7 @@ async def groom_session(b: SessionBody, x_agent_token: str = Header(default=""))
             res = await _inject(
                 f"Last night I tended my knowledge · {summary_str}",
                 f"Overnight I tended my world-model and the home knowledge store: {summary_str}. "
-                f"Everything I changed is reversible — restore or reject anything below; anything "
+                f"Everything I changed is reversible. Restore or reject anything below; anything "
                 f"ambiguous I left flagged for you to confirm.",
                 summary=summary_str, kind="status", severity=None, category="vera",
                 provenance="scheduled", change_set=change_set or None, items=items or None)

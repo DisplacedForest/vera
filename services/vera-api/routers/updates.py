@@ -175,7 +175,7 @@ def _summary_body(components: list[dict]) -> str:
     for group in GROUP_ORDER:
         names = sorted((c["name"] for c in by_group.get(group, [])), key=str.lower)
         if names:
-            out.append(f"**{group}** — {', '.join(names)}")
+            out.append(f"**{group}** ({', '.join(names)})")
     return "\n\n".join(out)
 
 

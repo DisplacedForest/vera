@@ -107,7 +107,7 @@ These are **documented HTTP contracts** with reference implementations in this r
 
 | Slot | Contract | Reference |
 |---|---|---|
-| Image gen | OpenAI Images API: `POST {base}/v1/images/generations` | `services/vera-image` — serves the standard contract out of the box; `IMAGE_PROTOCOL=vera` adds deterministic seeds + co-located-GPU arbitration |
+| Image gen | OpenAI Images API: `POST {base}/v1/images/generations` | `services/vera-image` — serves the standard contract out of the box; `IMAGE_PROTOCOL=vera` adds deterministic seeds + the vision pause/resume extension |
 | Vision | OpenAI chat completions with `image_url` content parts | Any MLX/vLLM-served VLM; see `services/vera-vision` for the launchd template |
 | Dream/coder | OpenAI `/v1` with tool calling (`DREAM_TOOL_PROTOCOL=mlx` for servers that don't emit `tool_calls`) | `services/vera-coder` |
 | Voice | Wyoming protocol (ASR + TTS) plus a small batch HTTP API | `services/vera-voice`; install with `scripts/deploy-vera-voice.sh` |

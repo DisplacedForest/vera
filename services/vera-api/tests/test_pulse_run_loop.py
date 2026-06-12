@@ -288,7 +288,8 @@ def _phase_harness(monkeypatch, wake="http://hooks/wake", release="http://hooks/
 
 
 def _pending(*titles):
-    return [({"id": f"id-{t}", "title": t, "body": f"{t} body"}, [{"n": 1}]) for t in titles]
+    return [({"id": f"id-{t}", "title": t, "body": f"{t} body"},
+             [{"n": 1, "title": "S", "url": "http://s", "content": "x"}]) for t in titles]
 
 
 def test_audit_phase_audits_every_card_and_applies_revisions(monkeypatch):
@@ -336,6 +337,40 @@ def test_audit_phase_without_hooks_calls_none(monkeypatch):
     run(_audit_phase(_pending("A"), []))
     assert journal["hooks"] == []
     assert journal["audited"] == ["A"]  # today's behavior exactly, just batched
+
+
+def test_audit_phase_wake_failure_real_machinery_stamps_fallback(monkeypatch):
+    """The whole composition through the REAL audit_claims/_auditor: wake fails, the phase
+    still audits, the unreachable audit endpoint drops each card to the main-model self-check,
+    and the card is stamped self (fallback). (The fallback is reach-based by design — the wake
+    is a warm-up, not a gate — so this is the outcome whenever the endpoint is actually down.)"""
+    from routers import coder
+    journal = {"hooks": [], "applied": []}
+
+    async def failing_hook(url):
+        journal["hooks"].append(url)
+        raise RuntimeError("503 from the hook")
+
+    async def coder_unreachable(messages, temperature, tools=None, max_tokens=None):
+        raise RuntimeError("connect refused")
+
+    async def vera_self_audit(messages, temperature=0.4):
+        return '{"claims":[]}'
+
+    monkeypatch.setattr(pulse, "AUDIT_WAKE_URL", "http://hooks/wake")
+    monkeypatch.setattr(pulse, "AUDIT_RELEASE_URL", "http://hooks/stop")
+    monkeypatch.setattr(pulse, "_audit_hook", failing_hook)
+    monkeypatch.setattr(coder, "_endpoint", lambda: ("http://audit.example:1", "m"))
+    monkeypatch.setattr(coder, "_llm", coder_unreachable)
+    monkeypatch.setattr(pulse, "_vera", vera_self_audit)
+    monkeypatch.setattr(pulse.store, "apply_audit",
+                        lambda cid, title, body, audit: journal["applied"].append((cid, audit)))
+    errs = []
+    run(_audit_phase(_pending("A"), errs))
+    assert journal["hooks"] == ["http://hooks/wake"]  # no release: nothing was started
+    assert journal["applied"] == [("id-A", "self (fallback)")]
+    assert any(e.startswith("audit wake failed") for e in errs)
+    assert any("clean (main model (coder unreachable))" in e for e in errs)
 
 
 def test_audit_hook_rejects_non_2xx():

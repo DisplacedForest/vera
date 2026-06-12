@@ -51,9 +51,9 @@ struct VeraAsk: Hashable, Codable {
             question: "Which Spanish white should we plan next?",
             multiSelect: false,
             options: [
-                .init(label: "Albariño", description: "Crisp, saline, coastal — Rías Baixas style."),
-                .init(label: "Verdejo", description: "Aromatic, herbal, a touch of bitterness — Rueda."),
-                .init(label: "Godello", description: "Textured, stone fruit, a step up in body — Valdeorras."),
+                .init(label: "Albariño", description: "Crisp, saline, coastal (Rías Baixas style)."),
+                .init(label: "Verdejo", description: "Aromatic, herbal, a touch of bitterness (Rueda)."),
+                .init(label: "Godello", description: "Textured, stone fruit, a step up in body (Valdeorras)."),
             ]
         )
     }

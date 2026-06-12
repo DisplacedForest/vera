@@ -8,7 +8,7 @@ enum SelfTest {
     static func run() async {
         runPure()
         guard let cfg = OWUIConfig.load() else {
-            print("SELFTEST OK (offline) — no OWUI config (~/.vera/config.json), live checks skipped")
+            print("SELFTEST OK (offline). No OWUI config (~/.vera/config.json), live checks skipped")
             exit(0)
         }
         await runLive(cfg)
@@ -20,15 +20,15 @@ enum SelfTest {
         print("OWUI: \(cfg.baseURL.absoluteString)   model: \(cfg.model)")
         do {
             let chats = try await client.listChats()
-            print("listChats OK — \(chats.count) chats")
+            print("listChats OK (\(chats.count) chats)")
             if let first = chats.first {
                 let msgs = await client.loadMessages(chatID: first.id)
-                print("loadMessages OK — '\(first.title.prefix(40))' → \(msgs.count) messages")
+                print("loadMessages OK ('\(first.title.prefix(40))' → \(msgs.count) messages)")
             }
             if let mems = await client.memories() {
-                print("memories OK — \(mems.count) entries")
+                print("memories OK (\(mems.count) entries)")
             } else {
-                print("memories FAILED — fetch error")
+                print("memories FAILED (fetch error)")
             }
             // The folder id is deployment config, never baked in: PULSE_FOLDER_ID env or
             // the pulse_folder_id key in ~/.vera/config.json; absent -> skip the check.
@@ -37,9 +37,9 @@ enum SelfTest {
                 ?? (ConfigFile.read()["pulse_folder_id"] as? String)
             if let folderID, !folderID.isEmpty {
                 let cards = await client.pulseCards(folderID: folderID)
-                print("pulseCards OK — \(cards.count) cards in the Pulse folder")
+                print("pulseCards OK (\(cards.count) cards in the Pulse folder)")
             } else {
-                print("pulseCards skipped — set PULSE_FOLDER_ID (or pulse_folder_id in ~/.vera/config.json)")
+                print("pulseCards skipped. Set PULSE_FOLDER_ID (or pulse_folder_id in ~/.vera/config.json)")
             }
 
             // Stream through OWUI's pipeline (Socket.IO) — proves tools + memory fire.
@@ -101,7 +101,7 @@ enum SelfTest {
                 iReq.httpBody = try JSONSerialization.data(withJSONObject: ["query": "coastal lighthouse", "max_results": 3])
                 if let (iData, _) = try? await URLSession.shared.data(for: iReq),
                    let iObj = try? JSONSerialization.jsonObject(with: iData) as? [String: Any] {
-                    print("  images/search OK — \((iObj["results"] as? [[String: Any]])?.count ?? 0) hits")
+                    print("  images/search OK (\((iObj["results"] as? [[String: Any]])?.count ?? 0) hits)")
                 } else {
                     print("  images/search SKIP (vera-api not reachable / not deployed)")
                 }
@@ -127,7 +127,7 @@ enum SelfTest {
             guard let parsedAsk, parsedAsk.options.count == 2, !clean.contains("vera:ask"), clean == "Sure, happy to help." else {
                 print("SELFTEST ERROR: vera:ask parse"); exit(1)
             }
-            print("  vera:ask parse OK — \(parsedAsk.options.count) options, clean=\(clean.debugDescription)")
+            print("  vera:ask parse OK (\(parsedAsk.options.count) options, clean=\(clean.debugDescription))")
 
             // vera-artifact block parses out of an assistant reply (pure, local).
             let demoArt = "Here's the page.\n:::vera-artifact id=\"lp\" title=\"Landing\" type=\"html\"\n<h1>Hi</h1>\n<p>x</p>\n:::\nLet me know."
@@ -136,7 +136,7 @@ enum SelfTest {
                   arts[0].content.contains("<h1>Hi</h1>"), !artClean.contains("vera-artifact") else {
                 print("SELFTEST ERROR: vera-artifact parse"); exit(1)
             }
-            print("  vera-artifact parse OK — \(arts[0].type.rawValue) '\(arts[0].title)', clean=\(artClean.debugDescription)")
+            print("  vera-artifact parse OK (\(arts[0].type.rawValue) '\(arts[0].title)', clean=\(artClean.debugDescription))")
 
             // Pulse deep-research markers + block parsing (pure, local).
             let pulseRaw = """
@@ -170,7 +170,7 @@ enum SelfTest {
                   !paras[1].0.contains("[1,2]") else {
                 print("SELFTEST ERROR: pulse block parse"); exit(1)
             }
-            print("  pulse markers OK — \(pm.sources.count) sources, \(pm.inlineImages.count) inline, \(paras.count) paras")
+            print("  pulse markers OK (\(pm.sources.count) sources, \(pm.inlineImages.count) inline, \(paras.count) paras)")
 
             // Presentation block parsing (pure, local).
             let blockReply = "Compare:\n\n```vera:stats\n{\"cards\":[{\"value\":\"33\",\"label\":\"goals\",\"sub\":\"69 games\"}]}\n```\n\nAnd the trend:\n\n```vera:chart\n{\"type\":\"bar\",\"yLabel\":\"goals\",\"series\":[{\"name\":\"Openda\",\"points\":[{\"x\":\"23-24\",\"y\":14},{\"x\":\"24-25\",\"y\":2}]}]}\n```\n\nBottom line."
@@ -183,7 +183,7 @@ enum SelfTest {
                   spec.series.first?.points.count == 2 else {
                 print("SELFTEST ERROR: presentation blocks parse \(proseN)/\(chartN)/\(statN)"); exit(1)
             }
-            print("  presentation blocks OK — \(proseN) prose, \(chartN) chart, \(statN) stats")
+            print("  presentation blocks OK (\(proseN) prose, \(chartN) chart, \(statN) stats)")
 
             // Wyoming framing round-trip (encode → parse) — pure, local, no network.
             var payload = Data(count: 320)
@@ -236,7 +236,7 @@ enum SelfTest {
                   state.jobs[1].envLocked, !state.jobs[1].enabled, state.jobs[1].label == "heartbeat" else {
                 print("SELFTEST ERROR: scheduler state parse"); exit(1)
             }
-            print("  scheduler OK — \(cronCases.count) cron summaries, jobs decode (incl. env-locked)")
+            print("  scheduler OK (\(cronCases.count) cron summaries, jobs decode (incl. env-locked))")
 
             // Config file round-trip on a temp path: write → read preserves strings + unknown keys.
             let tmp = FileManager.default.temporaryDirectory
@@ -250,7 +250,7 @@ enum SelfTest {
                 print("SELFTEST ERROR: config file round-trip"); exit(1)
             }
             try? FileManager.default.removeItem(at: tmp.deletingLastPathComponent())
-            print("  config round-trip OK — strings + unknown keys preserved")
+            print("  config round-trip OK (strings + unknown keys preserved)")
 
             // Tool log round-trip on a temp path: append JSONL lines → load newest-first, capped.
             let logURL = FileManager.default.temporaryDirectory
@@ -268,7 +268,7 @@ enum SelfTest {
                 print("SELFTEST ERROR: tool log round-trip"); exit(1)
             }
             try? FileManager.default.removeItem(at: logURL)
-            print("  tool log OK — 4 appended, newest-first load, tail cap honored")
+            print("  tool log OK (4 appended, newest-first load, tail cap honored)")
 
             // Update semver compare: the decision table behind the update banner.
             let semverCases: [(String, String, Int)] = [
@@ -286,7 +286,7 @@ enum SelfTest {
             guard Semver.minor("0.3.1") == 3, Semver.minor("v1.2.0") == 2 else {
                 print("SELFTEST ERROR: semver minor extraction"); exit(1)
             }
-            print("  update semver OK — \(semverCases.count) compare cases, minor extraction")
+            print("  update semver OK (\(semverCases.count) compare cases, minor extraction)")
 
             // Resource bundle must resolve in THIS layout (packaged .app or .build binary) —
             // the generated Bundle.module accessor varies by toolchain and has shipped builds
@@ -295,7 +295,7 @@ enum SelfTest {
                   VeraResources.url("mermaid.min", ext: "js") != nil else {
                 print("SELFTEST ERROR: resource bundle unresolved (flame/mermaid missing)"); exit(1)
             }
-            print("  resources OK — bundle resolved, flame + mermaid present")
+            print("  resources OK (bundle resolved, flame + mermaid present)")
 
             // Chat history graph: automation-written chats store turns only in
             // history.messages (id-keyed, parent-linked); the thread follows currentId.
@@ -320,7 +320,7 @@ enum SelfTest {
             guard OWUIClient.ChatHistory.orderedMessages(flatChat).count == 1 else {
                 print("SELFTEST ERROR: history flat-list fallback"); exit(1)
             }
-            print("  chat history OK — graph walk follows currentId, flat fallback intact")
+            print("  chat history OK (graph walk follows currentId, flat fallback intact)")
 
             // Reasoning details blocks are stripped at render; tool_calls handling unchanged.
             let reasoned = "<details type=\"reasoning\" done=\"true\"><summary>Thought</summary>thinking…</details>\nThe actual answer."
@@ -328,7 +328,7 @@ enum SelfTest {
             guard cleanR == "The actual answer.", callsR.isEmpty else {
                 print("SELFTEST ERROR: reasoning block strip"); exit(1)
             }
-            print("  reasoning strip OK — details removed, reply intact")
+            print("  reasoning strip OK (details removed, reply intact)")
 
             // OWUI source payloads map to numbered chips in payload order.
             let mapped = OWUISources.parse([
@@ -340,7 +340,7 @@ enum SelfTest {
                   mapped[0].url == "https://bbc.co.uk/a", mapped[1].url == "https://theathletic.com/b" else {
                 print("SELFTEST ERROR: OWUI source mapping"); exit(1)
             }
-            print("  source mapping OK — \(mapped.count) chips, unresolvable dropped")
+            print("  source mapping OK (\(mapped.count) chips, unresolvable dropped)")
         } catch {
             print("SELFTEST ERROR: \(error)")
             exit(1)

@@ -85,7 +85,7 @@ struct OnboardingSheet: View {
             return
         }
         guard filled("model") else {
-            error = "The model id is required — the id your Vera model has in OWUI"
+            error = "The model id is required (the id your Vera model has in OWUI)"
             return
         }
         connecting = true
@@ -107,7 +107,7 @@ struct OnboardingSheet: View {
                 return
             }
             guard let resolved = config.resolved else {
-                self.error = "The OWUI URL doesn't parse — check it and try again"
+                self.error = "The OWUI URL doesn't parse. Check it and try again"
                 return
             }
             store.adopt(resolved)

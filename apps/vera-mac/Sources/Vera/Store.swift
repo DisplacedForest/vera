@@ -616,7 +616,7 @@ final class ChatStore: ObservableObject {
         conversations[idx].updatedAt = Date()
 
         guard let socket else {
-            conversations[idx].messages.append(.init(role: .assistant, text: "(OWUI not configured — set ~/.vera/config.json. Shell echo.)"))
+            conversations[idx].messages.append(.init(role: .assistant, text: "(OWUI not configured. Set ~/.vera/config.json. Shell echo.)"))
             return
         }
 

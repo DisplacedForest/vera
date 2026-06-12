@@ -55,8 +55,8 @@ struct ShotView: View {
 
         With those back you could do a quick `Bolognese`. Want me to add them to the list?
         """))
-        m.append(Message(role: .assistant, text: "Happy to line up the next batch — which direction?", ask: VeraAsk.mock()))
-        m.append(Message(role: .assistant, text: "Sketched the label mark — open it in the Canvas to tweak.", artifacts: [Artifact.mock()]))
+        m.append(Message(role: .assistant, text: "Happy to line up the next batch. Which direction?", ask: VeraAsk.mock()))
+        m.append(Message(role: .assistant, text: "Sketched the label mark. Open it in the Canvas to tweak.", artifacts: [Artifact.mock()]))
         m.append(Message.assistant(from: "The downtown farmers market kicks off its 2026 season today.\n\n**Sources** https://www.springfield-downtown.example/news_detail.php https://www.heraldpress.example/story/news/local/2026/06/03/events/90354139007/ https://www.localtv.example/news/downtown-market-2026-schedule.html\n\nLet me know if you want the full vendor list."))
         // A deep-research style cited reply — exercises chips, Sources-section stripping, and the row.
         m.append(Message.assistant(

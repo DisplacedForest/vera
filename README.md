@@ -78,13 +78,13 @@ A row of status chips above the feed — System, Weather, Signals, Media — eac
 
 When a monitored situation deserves follow-through (a signals event, or simply "keep an eye on lumber prices for me"), Vera writes a commitment into her journal: what she is watching, why it matters, what would resolve it, and when to check next. Each heartbeat she acts on the entries that are due, appends dated findings, surfaces a card only when something materially changed, and retires an entry when its own resolve condition is met. The journal is a plain markdown document she authors and maintains herself — the app renders it read-only, and every touch is logged. It follows the same contract as her self-authored heartbeat instructions: the code parses only entry boundaries and a cadence line; the content is entirely hers. You steer it by talking to her: in chat she reads her own journal (`read_journal`) and takes instructions about it (`journal_commit`) — ask what she's keeping an eye on, hand her a new watch, or have her consolidate or retire an entry, all through the same authoring judgment.
 
-### Scheduler — visible, editable, gated
+### Agentic — the autonomy control room
 
-All recurring work — briefings, weather, signals, grooming, health probes — runs on a built-in scheduler with a visible, editable schedule. A job tied to a vein or integration does not fire until that vein or integration is enabled, and gated jobs report why they are not running.
+The Agentic tab opens on a living canvas: every flow Vera runs on her own — briefings, weather, signals, grooming, health probes, the heartbeat — drawn as a node graph connected to the surfaces it feeds, served by the API as a manifest (`GET /agentic/graph`) so new capabilities appear on the canvas without an app update. Running flows glow, outcomes tint their nodes, recent events travel their edges, and a node that used a tool carries a badge naming it on hover. Clicking a flow opens an inspector with run-now, enable/disable, and plain-English schedule editing; flows with internal stages (the Pulse pipeline, the heartbeat's branches) drill into their own maps with per-stage state from the last run. All of it rides the built-in scheduler: a job tied to a vein or integration does not fire until that vein or integration is enabled, and gated jobs report why they are not running.
 
-Everything Vera does on her own is also auditable in one place: an Activity feed (`GET /agentic/activity`) merges heartbeat outcomes, scheduled job runs, and autonomous actions into a single newest-first list, rendered as the Activity section of the Agentic tab. Autonomy is wanted, and it is always visible.
+Everything Vera does on her own is also auditable in one place: an Activity feed (`GET /agentic/activity`) merges heartbeat outcomes, scheduled job runs, and autonomous actions into a single newest-first list, rendered as the Activity pane of the Agentic tab. Autonomy is wanted, and it is always visible.
 
-<div align="center"><img src="docs/assets/agentic.png" alt="The Agentic tab — every scheduled job, live" width="850"></div>
+<div align="center"><img src="docs/assets/agentic.png" alt="The Agentic canvas — every autonomous flow, live" width="850"></div>
 
 ### Integrations — configured from the app
 

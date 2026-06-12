@@ -238,6 +238,40 @@ enum SelfTest {
             }
             print("  scheduler OK (\(cronCases.count) cron summaries, jobs decode (incl. env-locked))")
 
+            // Canvas graph manifest decode: flows with stages/state, surfaces with stats.
+            let graphJSON = """
+            {"flows": [
+              {"id": "pulse", "label": "Pulse briefing", "title": "Pulse briefing run", "kind": "job",
+               "icon": "newspaper", "tint": "accent", "group": "Ambient", "feeds": ["pulse_feed"],
+               "tools": ["websearch"], "running": false, "stage_layout": "pipeline",
+               "stages": [{"id": "triage", "label": "Triage", "icon": "globe", "tint": "accent"}],
+               "stage_state": {"state": "ok", "rounds": 2, "proposed": 9,
+                               "gates": {"dedup": 3}, "injected": 6,
+                               "warnings": ["starved run: 6/8"], "finished_at": 1750000000}},
+              {"id": "heartbeat", "label": "Heartbeat", "kind": "heartbeat", "icon": "heart",
+               "tint": "accent", "group": "Heartbeat", "feeds": ["memory"], "tools": [],
+               "running": true, "stage_layout": "fan",
+               "stages": [{"id": "learn", "label": "Learn", "icon": "sparkles", "tint": "accent",
+                           "feeds": ["memory"]}],
+               "branch_state": {"learn": {"kind": "learn", "detail": "a topic", "ts": 1750000000}}}
+            ],
+            "surfaces": [{"id": "pulse_feed", "label": "Pulse feed", "icon": "newspaper",
+                          "stat": "6 cards today"},
+                         {"id": "memory", "label": "Memory", "icon": "archivebox", "stat": null}]}
+            """
+            guard let graphObj = try? JSONSerialization.jsonObject(with: Data(graphJSON.utf8)),
+                  let graph = AgenticGraph.parse(graphObj),
+                  graph.flows.count == 2, graph.surfaces.count == 2,
+                  let gp = graph.flow("pulse"), gp.stages.count == 1,
+                  gp.pulseState?.gates["dedup"] == 3, gp.pulseState?.injected == 6,
+                  gp.pulseState?.warnings.count == 1,
+                  let hb = graph.flow("heartbeat"), hb.kind == "heartbeat", hb.running,
+                  hb.branchState["learn"]?.detail == "a topic",
+                  graph.surfaces[0].stat == "6 cards today", graph.surfaces[1].stat == nil else {
+                print("SELFTEST ERROR: agentic graph parse"); exit(1)
+            }
+            print("  agentic graph OK (flows + stages + state, surfaces incl. nil stat)")
+
             // Config file round-trip on a temp path: write → read preserves strings + unknown keys.
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("vera-selftest-\(UUID().uuidString)/config.json")

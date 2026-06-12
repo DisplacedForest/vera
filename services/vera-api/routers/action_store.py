@@ -147,6 +147,14 @@ def dismiss(token):
         )
 
 
+def pending_count() -> int:
+    """Proposals staged and still awaiting a decision."""
+    init()
+    with _conn() as c:
+        return int(c.execute(
+            "SELECT COUNT(*) FROM action_pending WHERE status = 'pending'").fetchone()[0])
+
+
 def recent(hours=24):
     """Audit-log rows within the window, newest first — the /agentic/activity reader."""
     init()

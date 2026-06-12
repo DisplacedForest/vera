@@ -66,14 +66,47 @@ def test_action_events_carry_lane_and_attribution():
     action_store.set_result(token, {"ok": True})
     action_store.log_auto("media.request", {"title": "Dune"}, {"ok": True})
     events = _activity()["events"]
-    assert len(events) == 2
-    by_tool = {e["tool"]: e for e in events}
-    gated = by_tool["ha.service"]
-    assert (gated["source"], gated["kind"], gated["ref"]) == ("action", "gated", token)
+    assert len(events) == 3  # proposed + applied + auto
+    by_kind = {e["kind"]: e for e in events}
+    gated = by_kind["gated"]
+    assert (gated["source"], gated["tool"], gated["ref"]) == ("action", "ha.service", token)
     assert gated["title"] == "ha.service"
     assert gated["detail"].startswith("applied")
-    auto = by_tool["media.request"]
-    assert (auto["kind"], auto["ref"]) == ("auto", None)
+    auto = by_kind["auto"]
+    assert (auto["tool"], auto["ref"]) == ("media.request", None)
+
+
+def test_action_lifecycle_proposals_and_dismissals_visible():
+    # Proposal alone is an event.
+    t1 = action_store.stage("ha.service", {"domain": "light", "service": "turn_off"},
+                            "Turn off the lights", "low", True, source="chat", actor="vera")
+    events = _activity()["events"]
+    assert [e["kind"] for e in events] == ["proposed"]
+    assert events[0]["ref"] == t1
+    assert "by vera" in events[0]["detail"] and "via chat" in events[0]["detail"]
+
+    # Dismissal of a second action is an event.
+    t2 = action_store.stage("media.request", {"title": "Dune"},
+                            "Request Dune", "low", True, source="chat", actor="vera")
+    action_store.dismiss(t2)
+    kinds = {(e["kind"], e["ref"]) for e in _activity()["events"]}
+    assert ("dismissed", t2) in kinds and ("proposed", t2) in kinds
+
+    # Committing the first action adds the applied event; the proposal remains.
+    action_store.set_result(t1, {"ok": True})
+    kinds = {(e["kind"], e["ref"]) for e in _activity()["events"]}
+    assert ("gated", t1) in kinds and ("proposed", t1) in kinds
+    # Attribution survives the full lifecycle.
+    applied = next(e for e in _activity()["events"] if e["kind"] == "gated")
+    assert "by vera" in applied["detail"] and "via chat" in applied["detail"]
+
+
+def test_auto_lane_attribution_from_caller():
+    action_store.log_auto("kitchen.mealie_import", {"url": "https://x.test/r/1"}, {"ok": True},
+                          source="heartbeat", actor="vera")
+    e = _activity()["events"][0]
+    assert e["kind"] == "auto"
+    assert "by vera" in e["detail"] and "via heartbeat" in e["detail"]
 
 
 def test_scheduler_events_use_registry_labels():

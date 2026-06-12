@@ -297,3 +297,84 @@ def test_auditor_falls_back_when_coder_unreachable(monkeypatch):
     monkeypatch.setattr(pulse, "_vera", vera)
     raw, auditor = _run(pulse._auditor([{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]))
     assert auditor == "main model (coder unreachable)" and raw == '{"claims":[]}'
+
+
+# --- cover image prompt inputs --------------------------------------------------------
+
+def _research_with_synthesis(monkeypatch, synthesis):
+    """Drive research_topic with a fixed synthesis; returns (image user msg, call order, card)."""
+    from types import SimpleNamespace
+    seen = {"img_usr": None, "order": []}
+
+    async def none_covered(topic, user_id):
+        return None
+
+    async def fake_search(req):
+        return SimpleNamespace(results=[])
+
+    async def not_stale(topic, newest):
+        return False
+
+    async def on_topic(topic, sources):
+        return (False, None)
+
+    async def no_images(idx, q, tops):
+        return []
+
+    async def audit_passthrough(headline, body, sources, errs, title):
+        return headline, body
+
+    async def vera(messages, temperature=0.4):
+        sys_p = messages[0]["content"]
+        if "Summarize this briefing" in sys_p:
+            seen["order"].append("summary")
+            return "Forest clinched a top-four finish on the final day."
+        if "cover art" in sys_p:
+            seen["order"].append("image")
+            seen["img_usr"] = messages[1]["content"]
+            return "A floodlit football stadium roaring on a spring evening"
+        return synthesis
+
+    async def fake_gen(prompt, style, idx):
+        return "http://img/cover.png", "#223344"
+
+    cards = []
+    monkeypatch.setattr(pulse, "already_covered", none_covered)
+    monkeypatch.setattr(pulse, "web_search", fake_search)
+    monkeypatch.setattr(pulse, "is_stale_news", not_stale)
+    monkeypatch.setattr(pulse, "is_off_topic", on_topic)
+    monkeypatch.setattr(pulse, "_gather_images", no_images)
+    monkeypatch.setattr(pulse, "audit_claims", audit_passthrough)
+    monkeypatch.setattr(pulse, "_vera", vera)
+    monkeypatch.setattr(pulse, "_gen_image", fake_gen)
+    monkeypatch.setattr(pulse.store, "insert_card", cards.append)
+    card = _run(pulse.research_topic({"title": "Nottingham Forest news", "query": "q"},
+                                     who="Z", user_id="u", errors=[]))
+    return seen["img_usr"], seen["order"], card
+
+
+def test_image_prompt_built_from_synthesis_not_triage_title(monkeypatch):
+    img_usr, _, _ = _research_with_synthesis(
+        monkeypatch, "HEADLINE: Forest Seal Top-Four Finish\n\nA decisive final-day win. [1]")
+    assert img_usr.startswith("Headline: Forest Seal Top-Four Finish\n")
+    assert "Summary: Forest clinched a top-four finish on the final day." in img_usr
+    assert "Story: A decisive final-day win. [1]" in img_usr
+    assert "Nottingham Forest news" not in img_usr  # triage working title never reaches the prompt
+
+
+def test_image_prompt_falls_back_to_working_title_without_headline(monkeypatch):
+    img_usr, _, _ = _research_with_synthesis(monkeypatch, "Body with no headline line. [1]")
+    assert img_usr.startswith("Headline: Nottingham Forest news\n")
+
+
+def test_summary_generated_before_cover_art(monkeypatch):
+    _, order, card = _research_with_synthesis(
+        monkeypatch, "HEADLINE: H\n\nBody. [1]")
+    assert order == ["summary", "image"]
+    assert card["summary"] == "Forest clinched a top-four finish on the final day."
+    assert card["image_url"] == "http://img/cover.png" and card["tint"] == "#223344"
+
+
+def test_image_sys_carries_disambiguation_rule():
+    assert "Disambiguate proper nouns" in pulse.IMAGE_SYS
+    assert "No text, words, letters, logos, charts" in pulse.IMAGE_SYS

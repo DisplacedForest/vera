@@ -6,6 +6,9 @@ set -euo pipefail
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$APP_ROOT"
 
+echo "==> Copy gate"
+"$APP_ROOT/../../scripts/check-copy.sh"
+
 "$APP_ROOT/scripts/package.sh"
 
 APP="$APP_ROOT/build/Vera.app"

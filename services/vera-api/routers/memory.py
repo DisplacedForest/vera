@@ -31,7 +31,7 @@ def _headers():
 async def groom(dry_run: bool = False):
     if not OWUI_BASE or not OWUI_KEY:
         raise HTTPException(status_code=503,
-                            detail="memory groom requires Open WebUI — set OWUI_BASE and OWUI_KEY")
+                            detail="memory groom requires Open WebUI. Set OWUI_BASE and OWUI_KEY")
     # ISO date strings compare chronologically, so plain string < works.
     today = datetime.date.today().isoformat()
     out = {

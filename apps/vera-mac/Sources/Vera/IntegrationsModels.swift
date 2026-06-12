@@ -116,7 +116,7 @@ struct PluginEntry: Identifiable, Hashable, Sendable {
                         fields: [field("url", "Base URL", value: "http://192.0.2.10:8123"),
                                  field("token", "Long-lived access token", secret: true, isSet: true)],
                         features: [PluginFeature(id: "home_modeling", label: "Home modeling",
-                                                 ramifications: "Captures every Home Assistant state change house-wide — roughly 5,000–15,000 events per day on a 30-day rolling window — and models the household's rhythm from 10–90 days of accumulation. Experimental: unvalidated at scale.",
+                                                 ramifications: "Captures every Home Assistant state change house-wide (roughly 5,000–15,000 events per day on a 30-day rolling window) and models the household's rhythm from 10–90 days of accumulation. Experimental: unvalidated at scale.",
                                                  enabled: false, acked: false)],
                         pairing: nil, lastTestOK: true, lastTestDetail: "API running."),
             PluginEntry(id: "grocy", displayName: "Grocy", status: "enabled",

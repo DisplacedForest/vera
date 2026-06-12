@@ -81,7 +81,7 @@ final class UpdateChecker: ObservableObject {
 
     func check(manual: Bool) async {
         if AppVersion.isSelfBuilt {
-            if manual { lastResult = "Built from source — update with git pull." }
+            if manual { lastResult = "Built from source. Update with git pull." }
             return
         }
         checking = true
@@ -93,7 +93,7 @@ final class UpdateChecker: ObservableObject {
             let release = try JSONDecoder().decode(ReleaseInfo.self, from: data)
             if Semver.compare(AppVersion.current, release.version) < 0 {
                 available = release
-                if manual { lastResult = "Update available — \(release.tag_name)" }
+                if manual { lastResult = "Update available (\(release.tag_name))" }
             } else {
                 available = nil
                 if manual { lastResult = "Up to date (\(AppVersion.current))" }
@@ -150,7 +150,7 @@ final class UpdateChecker: ObservableObject {
             NSApp.terminate(nil)
         } catch {
             // Permissions/translocation can defeat the in-place swap — hand over the artifact.
-            lastResult = "Install failed: \(error.localizedDescription) — opening the download instead."
+            lastResult = "Install failed: \(error.localizedDescription). Opening the download instead."
             if let url = URL(string: release.appZip?.browser_download_url ?? release.html_url) {
                 NSWorkspace.shared.open(url)
             }
@@ -183,7 +183,7 @@ struct UpdateBanner: View {
                 Image(systemName: "arrow.down.circle.fill")
                     .font(.system(size: 13)).foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Update available — \(release.tag_name)")
+                    Text("Update available (\(release.tag_name))")
                         .font(.system(size: 12, weight: .medium))
                     Button("View release notes") { openExternal(release.html_url) }
                         .buttonStyle(.plain)

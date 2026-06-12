@@ -474,11 +474,11 @@ struct UpdateShotView: View {
             Text("Sidebar banner").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
             UpdateBanner().environmentObject(checker).frame(width: 300)
 
-            Text("Settings — About").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            Text("Settings · About").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
             VStack(alignment: .leading, spacing: 10) {
                 HStack { Text("App").foregroundStyle(Theme.textSecondary); Spacer(); Text("0.1.0") }
                 HStack { Text("vera-api").foregroundStyle(Theme.textSecondary); Spacer(); Text("0.2.0") }
-                Label("App and server minor versions differ — update the older side when convenient.",
+                Label("App and server minor versions differ. Update the older side when convenient.",
                       systemImage: "exclamationmark.triangle")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }

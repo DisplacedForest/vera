@@ -199,16 +199,16 @@ struct PulseCard: Identifiable, Hashable {
         // The feed is research-grade only. Weather/Signal watch live in chips now, not here.
         [
             .init(id: "p1", title: "Ashvale Rovers",
-                  preview: "Rovers secured top-flight safety with a 3-1 win — a striker brace and a late third sealed it. Six points clear of the drop now.",
+                  preview: "Rovers secured top-flight safety with a 3-1 win. A striker brace and a late third sealed it. Six points clear of the drop now.",
                   subtitle: "Pulse", tint: "#3a5a40"),
             .init(id: "p3", title: "Local LLM + AMD GPU",
-                  preview: "MLX hit production maturity — FLUX image gen ~3.8x faster on M5 vs M4, and ROCm 6.x now treats PyTorch as a first-class backend.",
+                  preview: "MLX hit production maturity. FLUX image gen ~3.8x faster on M5 vs M4, and ROCm 6.x now treats PyTorch as a first-class backend.",
                   subtitle: "Pulse", tint: "#5b4636"),
             .init(id: "p5", title: "Winemaking",
-                  preview: "Sur lie aging with weekly bâtonnage builds mid-palate weight without oak — worth trying on the next white batch.",
+                  preview: "Sur lie aging with weekly bâtonnage builds mid-palate weight without oak. Worth trying on the next white batch.",
                   subtitle: "Pulse", tint: "#5a4a6b", provenance: "heartbeat"),
             .init(id: "p6", title: "Around town",
-                  preview: "Two things worth a look this weekend downtown — a maker's market Saturday and live music at the amphitheater Sunday evening.",
+                  preview: "Two things worth a look this weekend downtown. A maker's market Saturday and live music at the amphitheater Sunday evening.",
                   subtitle: "Pulse", tint: "#4a5a6b", provenance: "heartbeat"),
         ]
     }
@@ -263,7 +263,7 @@ struct PulseCard: Identifiable, Hashable {
         return PulseCard(
             id: "st-groom", title: "Last night I tended my knowledge · merged 1; promoted 1; GC'd 1",
             preview: "Overnight I tended my world-model and the home knowledge store.",
-            subtitle: "System", body: "Everything I changed is reversible — restore or reject anything below.",
+            subtitle: "System", body: "Everything I changed is reversible. Restore or reject anything below.",
             kind: "status", severity: nil, category: "vera",
             changeSet: [
                 GroomOp(index: 0, type: "merge", store: "memory", reason: "two notes about the same thing",
@@ -282,7 +282,7 @@ struct PulseCard: Identifiable, Hashable {
             ],
             items: [
                 PulseDigestItem(itemID: "review:promote:service", title: "Codify 'service' type?",
-                                subtitle: "4 entities, 0.83 coverage — stabilizing but not a confident auto-promote.",
+                                subtitle: "4 entities, 0.83 coverage. Stabilizing but not a confident auto-promote.",
                                 mediaType: nil, tmdbID: nil, token: "tok", state: "pending",
                                 group: "Flagged for review"),
             ])
@@ -297,7 +297,7 @@ struct PulseCard: Identifiable, Hashable {
         }
         return PulseCard(
             id: "media-digest", title: "Worth adding this week",
-            preview: "8 picks for the library — add the ones you want.",
+            preview: "8 picks for the library. Add the ones you want.",
             subtitle: "Media", body: "This week I'd add these to the library. Tap add to grab each, or skip to pass.",
             kind: "media",
             items: [

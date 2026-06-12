@@ -88,7 +88,7 @@ VEINS: list[dict] = [
     {
         "kind": "signals", "label": "Signals", "icon": "antenna.radiowaves.left.and.right",
         "order": 2, "nominal_label": "quiet",
-        "blurb": "an external-watch monitor — only what crosses pre-declared thresholds",
+        "blurb": "an external-watch monitor (only what crosses pre-declared thresholds)",
         "producer_jobs": ["signals"],
         "requires": [],
         "providers": [],
@@ -412,7 +412,7 @@ async def test_vein(kind: str):
         results.append({"slot": "sources", "ok": ha or un,
                         "detail": ", ".join(filter(None, ["Home Assistant" if ha else None,
                                                           "Unraid" if un else None])) or
-                                  "no update sources connected — connect Home Assistant or Unraid in Plugins"})
+                                  "no update sources connected. Connect Home Assistant or Unraid in Plugins"})
     elif kind == "signals":
         opts = option_values("signals")
         on = [g.removeprefix("grp_") for g in

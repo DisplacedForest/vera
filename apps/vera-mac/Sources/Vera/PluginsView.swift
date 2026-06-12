@@ -75,7 +75,7 @@ struct PluginsView: View {
                        note: "Couldn't load integrations from \(plugins.baseDescription).", retry: true)
         case .unsupported:
             statusCard(icon: "shippingbox", title: "Integrations not available",
-                       note: "This vera-api doesn't expose the integration registry yet — update vera-api to manage plugins here.",
+                       note: "This vera-api doesn't expose the integration registry yet. Update vera-api to manage plugins here.",
                        retry: true)
         case .ready:
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 380), spacing: 14, alignment: .top)],

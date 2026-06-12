@@ -475,11 +475,11 @@ def _eval_quakes(readings):
         if q["dist_km"] is not None and q["dist_km"] <= NEAR_KM and q["mag"] >= QUAKE_NEAR_MIN:
             trips.append({"sentinel": "earthquake", "tier": "alert",
                           "title": f"M{q['mag']:.1f} earthquake {q['dist_km']} km away",
-                          "detail": f"{q['place']} — within {NEAR_KM:.0f} km of home.",
+                          "detail": f"{q['place']}, within {NEAR_KM:.0f} km of home.",
                           "sources": [_src(q["place"], q["url"])]})
         elif q["mag"] >= QUAKE_GLOBAL_MIN:
             trips.append({"sentinel": "earthquake", "tier": "notice",
-                          "title": f"M{q['mag']:.1f} earthquake — {q['place']}",
+                          "title": f"M{q['mag']:.1f} earthquake · {q['place']}",
                           "detail": "Major global seismic event.",
                           "sources": [_src(q["place"], q["url"])]})
     return trips
@@ -490,7 +490,7 @@ def _eval_gdacs(readings):
     for e in readings.get("events", []):
         tier = "alert" if e["level"] == "red" else "notice"
         trips.append({"sentinel": "disaster", "tier": tier,
-                      "title": f"GDACS {e['level']} — {e['type']}: {e['name']}",
+                      "title": f"GDACS {e['level']} · {e['type']}: {e['name']}",
                       "detail": "Global disaster alert.",
                       "sources": [_src(e["name"], e["url"])]})
     return trips
@@ -521,12 +521,12 @@ def _eval_grid(reading):
     if dev is None or dev < GRID_DEV_NOTICE:
         return []
     tier = "alert" if dev >= GRID_DEV_ALERT else "notice"
-    src = _src(f"EIA grid monitor — {reading['respondent']}",
+    src = _src(f"EIA grid monitor ({reading['respondent']})",
                f"https://www.eia.gov/electricity/gridmonitor/dashboard/electric_overview/balancing_authority/{reading['respondent']}")
     return [{"sentinel": "grid", "tier": tier,
              "title": f"{reading['respondent']} grid load {dev:+.0f}% over forecast",
              "detail": f"Actual demand {reading['demand_mw']:.0f} MW vs {reading['forecast_mw']:.0f} MW "
-                       f"forecast ({reading['period']}) — carrying more load than planned.",
+                       f"forecast ({reading['period']}), carrying more load than planned.",
              "sources": [src]}]
 
 

@@ -53,13 +53,19 @@ def _heartbeat_events(hours: int) -> list[dict]:
 def _action_events(hours: int) -> list[dict]:
     out = []
     for a in action_store.recent(hours):
-        lane = "auto" if a["auto"] else "gated"
+        # Lifecycle statuses become the event kind; executed rows keep their lane
+        # (auto = free lane, gated = confirmed) so the feed shows how each action ran.
+        if a["status"] in ("proposed", "dismissed"):
+            kind = a["status"]
+        else:
+            kind = "auto" if a["auto"] else "gated"
+        who = (f" by {a['actor']}" if a["actor"] else "") + (f" via {a['source']}" if a["source"] else "")
         args = ", ".join(f"{k}={v}" for k, v in (a["args"] or {}).items())
-        detail = a["status"] + (f": {args}" if args else "")
+        detail = a["status"] + who + (f": {args}" if args else "")
         out.append({
             "ts": float(a["ts"]),
             "source": "action",
-            "kind": lane,
+            "kind": kind,
             "title": a["verb"] or "action",
             "detail": detail[:300],
             "tool": a["verb"],

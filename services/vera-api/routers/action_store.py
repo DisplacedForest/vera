@@ -41,11 +41,18 @@ def init():
         if "auto" not in cols:
             # 1 = executed through the free (no-confirm) autonomous lane, 0 = the gated path
             c.execute("ALTER TABLE action_log ADD COLUMN auto INTEGER DEFAULT 0")
+        if "source" not in cols:
+            # who initiated (source: chat/heartbeat/...) and as whom (actor) — the
+            # attribution the activity feed surfaces per lifecycle event
+            c.execute("ALTER TABLE action_log ADD COLUMN source TEXT")
+            c.execute("ALTER TABLE action_log ADD COLUMN actor TEXT")
 
 
 def stage(verb, args, preview, risk, reversible,
           source="chat", actor="vera", chat_id=None, message_id=None):
-    """Stage an action. Token is a content hash of (verb, args) — identical proposals dedupe."""
+    """Stage an action. Token is a content hash of (verb, args) — identical proposals dedupe.
+    Every proposal also lands in the audit log, so the activity feed sees the full
+    lifecycle (proposed → applied/dismissed), not just outcomes."""
     init()
     token = hashlib.sha1(json.dumps({"verb": verb, "args": args}, sort_keys=True).encode()).hexdigest()[:8]
     with _conn() as c:
@@ -53,6 +60,11 @@ def stage(verb, args, preview, risk, reversible,
             "INSERT OR REPLACE INTO action_pending VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (token, int(time.time()), verb, json.dumps(args), preview, risk, 1 if reversible else 0,
              source, actor, chat_id, message_id, "pending", None),
+        )
+        c.execute(
+            "INSERT INTO action_log(ts, token, verb, args, result, status, auto, source, actor) "
+            "VALUES(?,?,?,?,?,?,0,?,?)",
+            (int(time.time()), token, verb, json.dumps(args), None, "proposed", source, actor),
         )
     return token
 
@@ -78,24 +90,29 @@ def set_result(token, result: dict, status="applied"):
     """Record an action's outcome and append an audit-log row."""
     init()
     with _conn() as c:
-        row = c.execute("SELECT verb, args FROM action_pending WHERE token=?", (token,)).fetchone()
+        row = c.execute("SELECT verb, args, source, actor FROM action_pending WHERE token=?",
+                        (token,)).fetchone()
         c.execute("UPDATE action_pending SET status=?, result=? WHERE token=?",
                   (status, json.dumps(result), token))
         c.execute(
-            "INSERT INTO action_log(ts, token, verb, args, result, status, auto) VALUES(?,?,?,?,?,?,0)",
+            "INSERT INTO action_log(ts, token, verb, args, result, status, auto, source, actor) "
+            "VALUES(?,?,?,?,?,?,0,?,?)",
             (int(time.time()), token, row["verb"] if row else None,
-             row["args"] if row else "{}", json.dumps(result), status),
+             row["args"] if row else "{}", json.dumps(result), status,
+             row["source"] if row else None, row["actor"] if row else None),
         )
 
 
-def log_auto(verb, args: dict, result: dict, status="applied"):
+def log_auto(verb, args: dict, result: dict, status="applied", source="heartbeat", actor="vera"):
     """Audit a free-lane execution. No token, no pending row — the autonomous path skips
     staging entirely; the log row IS its whole record."""
     init()
     with _conn() as c:
         c.execute(
-            "INSERT INTO action_log(ts, token, verb, args, result, status, auto) VALUES(?,?,?,?,?,?,1)",
-            (int(time.time()), None, verb, json.dumps(args), json.dumps(result), status),
+            "INSERT INTO action_log(ts, token, verb, args, result, status, auto, source, actor) "
+            "VALUES(?,?,?,?,?,?,1,?,?)",
+            (int(time.time()), None, verb, json.dumps(args), json.dumps(result), status,
+             source, actor),
         )
 
 
@@ -114,9 +131,20 @@ def auto_recent(verb, since_ts):
 
 
 def dismiss(token):
+    """Dismiss a pending action and append the audit row — dismissals are lifecycle
+    events the activity feed surfaces, same as proposals and commits."""
     init()
     with _conn() as c:
+        row = c.execute("SELECT verb, args, source, actor FROM action_pending WHERE token=?",
+                        (token,)).fetchone()
         c.execute("UPDATE action_pending SET status='dismissed' WHERE token=?", (token,))
+        c.execute(
+            "INSERT INTO action_log(ts, token, verb, args, result, status, auto, source, actor) "
+            "VALUES(?,?,?,?,?,?,0,?,?)",
+            (int(time.time()), token, row["verb"] if row else None,
+             row["args"] if row else "{}", None, "dismissed",
+             row["source"] if row else None, row["actor"] if row else None),
+        )
 
 
 def recent(hours=24):
@@ -125,7 +153,7 @@ def recent(hours=24):
     cutoff = int(time.time()) - hours * 3600
     with _conn() as c:
         rows = c.execute(
-            "SELECT ts, token, verb, args, result, status, auto FROM action_log "
+            "SELECT ts, token, verb, args, result, status, auto, source, actor FROM action_log "
             "WHERE ts > ? ORDER BY id DESC",
             (cutoff,),
         ).fetchall()
@@ -133,7 +161,7 @@ def recent(hours=24):
         {"ts": r["ts"], "token": r["token"], "verb": r["verb"],
          "args": json.loads(r["args"] or "{}"),
          "result": json.loads(r["result"]) if r["result"] else None, "status": r["status"],
-         "auto": bool(r["auto"])}
+         "auto": bool(r["auto"]), "source": r["source"], "actor": r["actor"]}
         for r in rows
     ]
 
@@ -142,13 +170,14 @@ def recent_log(limit=50):
     init()
     with _conn() as c:
         rows = c.execute(
-            "SELECT ts, token, verb, args, result, status, auto FROM action_log ORDER BY id DESC LIMIT ?",
+            "SELECT ts, token, verb, args, result, status, auto, source, actor "
+            "FROM action_log ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
     return [
         {"ts": r["ts"], "token": r["token"], "verb": r["verb"],
          "args": json.loads(r["args"] or "{}"),
          "result": json.loads(r["result"]) if r["result"] else None, "status": r["status"],
-         "auto": bool(r["auto"])}
+         "auto": bool(r["auto"]), "source": r["source"], "actor": r["actor"]}
         for r in rows
     ]

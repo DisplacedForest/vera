@@ -1,15 +1,22 @@
-"""Agentic activity feed — one normalized, newest-first list of everything Vera does
-on her own, merged from the heartbeat outcome log, the action audit log, the
-scheduler run log, and OWUI automation runs.
+"""Agentic activity feed and canvas graph — what Vera does on her own, as data.
 
-Event shape: {ts, source: scheduler|heartbeat|action|owui, kind, title, detail,
-tool?, ref?}. `tool` carries attribution when known (action verb, producer job id).
-Each source contributes independently: a missing store or an unreachable OWUI yields
-an empty contribution, never an error.
+The activity feed is one normalized, newest-first list of autonomous events, merged
+from the heartbeat outcome log, the action audit log, the scheduler run log, and OWUI
+automation runs. Event shape: {ts, source: scheduler|heartbeat|action|owui, kind,
+title, detail, tool?, ref?}. `tool` carries attribution when known (action verb,
+producer job id). Each source contributes independently: a missing store or an
+unreachable OWUI yields an empty contribution, never an error.
+
+The graph is the canvas manifest: every flow (scheduler job + the heartbeat), the
+surface each one feeds, and per-flow presentation/topology metadata. Declarative in
+the vein-catalog spirit — the app renders whatever this says; a new capability is a
+new entry here, never an app release. This is also the reserved editor lane: a
+server-declared graph can later accept mutations.
 """
 import logging
 import os
 import time
+from datetime import datetime
 
 import aiohttp
 from fastapi import APIRouter, Query
@@ -126,6 +133,180 @@ async def _owui_events(hours: int, cutoff: float) -> list[dict]:
                     "ref": run.get("chat_id"),
                 })
     return out
+
+
+# ---- the canvas graph ------------------------------------------------------------------
+
+# The surfaces autonomous work lands on. `stat` is filled live per request.
+SURFACES: list[dict] = [
+    {"id": "pulse_feed", "label": "Pulse feed", "icon": "newspaper"},
+    {"id": "veins", "label": "Veins", "icon": "drop"},
+    {"id": "memory", "label": "Memory", "icon": "archivebox"},
+    {"id": "actions", "label": "Actions", "icon": "bolt"},
+]
+
+_PULSE_STAGES = [
+    {"id": "triage", "label": "Triage", "icon": "globe", "tint": "accent"},
+    {"id": "gates", "label": "Gates", "icon": "line.3.horizontal.decrease.circle", "tint": "orange"},
+    {"id": "synthesis", "label": "Synthesis", "icon": "sparkles", "tint": "purple"},
+    {"id": "claim_audit", "label": "Claim audit", "icon": "checkmark.shield", "tint": "cyan"},
+    {"id": "cover_art", "label": "Cover art", "icon": "photo", "tint": "purple"},
+    {"id": "inject", "label": "Inject", "icon": "arrow.down.to.line", "tint": "green"},
+]
+
+# Branch ids double as the heartbeat outcome kinds they report on (see _BRANCH_OF).
+_HEARTBEAT_BRANCHES = [
+    {"id": "learn", "label": "Learn", "icon": "sparkles", "tint": "accent", "feeds": ["memory"]},
+    {"id": "refine", "label": "Refine", "icon": "doc.text", "tint": "purple", "feeds": []},
+    {"id": "propose", "label": "Propose", "icon": "bolt", "tint": "orange", "feeds": ["actions"]},
+    {"id": "watch", "label": "Watches", "icon": "waveform.path.ecg", "tint": "cyan", "feeds": ["veins"]},
+    {"id": "foryou", "label": "For you", "icon": "heart", "tint": "red", "feeds": ["pulse_feed"]},
+]
+
+_BRANCH_OF = {
+    "learn": "learn", "refine": "refine",
+    "propose": "propose", "confirmed": "propose", "dismissed": "propose",
+    "watch": "watch",
+    "foryou": "foryou", "foryou_skip": "foryou",
+}
+
+# Per-flow canvas face: presentation label (the registry label stays the formal name),
+# icon/tint (SF Symbol + the app's chart-palette tint names), thematic group, the
+# surfaces the flow feeds, and the tools it is known to use (static attribution; the
+# activity feed adds per-event attribution on top). Flows with `stages` drill in;
+# `stage_layout` is "pipeline" (linear) or "fan" (branches).
+FLOW_FACE: dict[str, dict] = {
+    "pulse":          {"label": "Pulse briefing", "icon": "newspaper", "tint": "accent",
+                       "group": "Ambient", "feeds": ["pulse_feed"],
+                       "tools": ["websearch", "vera-image"],
+                       "stage_layout": "pipeline", "stages": _PULSE_STAGES},
+    "weather":        {"label": "Weather check", "icon": "cloud.sun", "tint": "cyan",
+                       "group": "Ambient", "feeds": ["veins"], "tools": []},
+    "signals":        {"label": "Signals check", "icon": "antenna.radiowaves.left.and.right",
+                       "tint": "orange", "group": "Ambient", "feeds": ["veins"],
+                       "tools": ["websearch"]},
+    "memory_groom":   {"label": "Memory groom", "icon": "archivebox", "tint": "purple",
+                       "group": "Memory", "feeds": ["memory"], "tools": []},
+    "home_model":     {"label": "Home model", "icon": "house", "tint": "cyan",
+                       "group": "Home", "feeds": ["actions"], "tools": []},
+    "home_reconcile": {"label": "Map reconcile", "icon": "checklist", "tint": "cyan",
+                       "group": "Home", "feeds": ["veins"], "tools": []},
+    "home_digest":    {"label": "Rhythm digest", "icon": "doc.text", "tint": "cyan",
+                       "group": "Home", "feeds": ["veins"], "tools": []},
+    "heartbeat":      {"label": "Heartbeat", "icon": "heart", "tint": "accent",
+                       "group": "Heartbeat", "feeds": ["pulse_feed", "veins", "memory", "actions"],
+                       "tools": ["websearch"],
+                       "stage_layout": "fan", "stages": _HEARTBEAT_BRANCHES},
+    "healthcheck":    {"label": "Health probe", "icon": "waveform.path.ecg", "tint": "green",
+                       "group": "System", "feeds": ["veins"], "tools": []},
+    "updates":        {"label": "Update check", "icon": "arrow.down.circle", "tint": "gray",
+                       "group": "System", "feeds": ["veins"], "tools": []},
+    "media_curate":   {"label": "Media curate", "icon": "film", "tint": "red",
+                       "group": "Media", "feeds": ["veins"], "tools": ["overseerr"]},
+}
+
+# A job with no authored face still renders (and the test suite flags the omission).
+_DEFAULT_FACE = {"icon": "clock", "tint": "gray", "group": "Other", "feeds": [], "tools": []}
+
+
+def _pulse_stage_state() -> dict | None:
+    """Distilled last-run record for the pulse pipeline, from the structured run status."""
+    from . import pulse_store
+    st = pulse_store.get_run_status()
+    if st.get("state") in (None, "idle"):
+        return None
+    rounds = st.get("rounds") or []
+    errors = st.get("errors") or []
+    return {
+        "state": st.get("state"),
+        "rounds": len(rounds),
+        "proposed": sum(len(r.get("proposed") or []) for r in rounds),
+        "gates": st.get("gates") or {},
+        "injected": len(st.get("injected") or []),
+        "warnings": [e for e in errors if str(e).startswith(("starved run", "under floor"))],
+        "finished_at": st.get("finished_at"),
+    }
+
+
+def _heartbeat_branch_state() -> dict:
+    """Latest outcome per heartbeat branch (a week back; branches fire sparsely)."""
+    latest: dict[str, dict] = {}
+    for o in heartbeat_store.recent(168):
+        branch = _BRANCH_OF.get(o["kind"])
+        if branch and branch not in latest:
+            latest[branch] = {"kind": o["kind"], "detail": (o.get("detail") or "")[:120],
+                              "ts": float(o["ts"])}
+    return latest
+
+
+def _surface_stat(surface_id: str) -> str | None:
+    """One live phrase per surface. None when the backing store can't answer."""
+    if surface_id == "pulse_feed":
+        from . import pulse_store
+        from .scheduler import TZ
+        today = datetime.now(TZ).date().isoformat()
+        n = sum(1 for c in pulse_store.list_cards() if c.get("day") == today)
+        return f"{n} card{'s' if n != 1 else ''} today"
+    if surface_id == "veins":
+        from . import pulse_store
+        n = sum(1 for c in pulse_store.list_cards() if (c.get("kind") or "research") != "research")
+        return f"{n} active card{'s' if n != 1 else ''}"
+    if surface_id == "memory":
+        from . import vera_memory_store
+        n = len(vera_memory_store.core())
+        return f"{n} core fact{'s' if n != 1 else ''}"
+    if surface_id == "actions":
+        n = action_store.pending_count()
+        return f"{n} pending proposal{'s' if n != 1 else ''}"
+    return None
+
+
+@router.get("/agentic/graph", tags=["agentic"])
+async def graph():
+    from .scheduler import REGISTRY, running_jobs
+    running = running_jobs()
+    flows = []
+    for job_id, (label, _cron, _handler) in REGISTRY.items():
+        face = FLOW_FACE.get(job_id, _DEFAULT_FACE)
+        flow = {
+            "id": job_id,
+            "label": face.get("label", label),
+            "title": label,
+            "kind": "heartbeat" if job_id == "heartbeat" else "job",
+            "icon": face["icon"],
+            "tint": face["tint"],
+            "group": face["group"],
+            "feeds": face["feeds"],
+            "tools": face["tools"],
+            "running": job_id in running,
+        }
+        if face.get("stages"):
+            flow["stage_layout"] = face.get("stage_layout", "pipeline")
+            flow["stages"] = face["stages"]
+        if job_id == "pulse":
+            try:
+                flow["stage_state"] = _pulse_stage_state()
+                if (flow["stage_state"] or {}).get("state") == "running":
+                    flow["running"] = True
+            except Exception as e:  # noqa: BLE001 — state is garnish, topology must survive
+                log.warning("graph: pulse stage state failed: %s", e)
+                flow["stage_state"] = None
+        if job_id == "heartbeat":
+            try:
+                flow["branch_state"] = _heartbeat_branch_state()
+            except Exception as e:  # noqa: BLE001
+                log.warning("graph: heartbeat branch state failed: %s", e)
+                flow["branch_state"] = {}
+        flows.append(flow)
+    surfaces = []
+    for s in SURFACES:
+        stat = None
+        try:
+            stat = _surface_stat(s["id"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("graph: surface stat %s failed: %s", s["id"], e)
+        surfaces.append({**s, "stat": stat})
+    return {"flows": flows, "surfaces": surfaces}
 
 
 @router.get("/agentic/activity", tags=["agentic"])

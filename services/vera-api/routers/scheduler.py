@@ -220,6 +220,11 @@ _task: asyncio.Task | None = None
 _running: set[str] = set()
 
 
+def running_jobs() -> set[str]:
+    """Job ids with a run in flight right now (scheduled or manual)."""
+    return set(_running)
+
+
 async def _fire(job_id: str, manual: bool = False):
     if job_id in _running:
         store.record_outcome(job_id, False, "skipped: previous run still in progress")

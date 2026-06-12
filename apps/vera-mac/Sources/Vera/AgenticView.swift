@@ -104,23 +104,62 @@ final class ActivityStore: ObservableObject {
     }
 }
 
-/// The Agentic surface. Default Schedules: every autonomous job with its cadence, last outcome,
-/// next fire, an on/off toggle, and a run-now affordance. Activity: the reverse-chronological
-/// feed of everything Vera did on her own in the last day.
+/// The Agentic surface. Canvas: the organism map of every autonomous flow, with
+/// drill-ins and the node inspector. Activity: the reverse-chronological feed of
+/// everything Vera did on her own in the last day.
 struct AgenticView: View {
+    @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
     @StateObject private var sched = SchedulerStore()
     @StateObject private var activity = ActivityStore()
+    @StateObject private var graphStore = GraphStore()
     @State private var editing: SchedulerJob?
 
     var body: some View {
+        Group {
+            switch store.agenticPane {
+            case .canvas:
+                AgenticCanvasView(graphStore: graphStore, sched: sched, activity: activity,
+                                  onEditSchedule: { editing = $0 })
+            case .activity:
+                AgenticActivityView(activity: activity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+        .task {
+            sched.configure(base: config.resolved?.veraAPIBase)
+            activity.configure(base: config.resolved?.veraAPIBase)
+            graphStore.configure(base: config.resolved?.veraAPIBase)
+            async let s: Void = sched.refresh()
+            async let a: Void = activity.refresh()
+            async let g: Void = graphStore.refresh()
+            _ = await (s, a, g)
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                async let s2: Void = sched.refresh()
+                async let a2: Void = activity.refresh()
+                async let g2: Void = graphStore.refresh()
+                _ = await (s2, a2, g2)
+            }
+        }
+        .sheet(item: $editing) { job in
+            CronEditor(job: job) { cron in await sched.saveCron(job, cron: cron) }
+        }
+    }
+}
+
+/// The Activity pane: the plain reverse-chronological list of autonomous events.
+struct AgenticActivityView: View {
+    @ObservedObject var activity: ActivityStore
+
+    var body: some View {
         VStack(spacing: 0) {
-            // Header rides the same centered column as the cards so wide windows keep them aligned.
             HStack {
-                Text("Agentic").font(.system(size: 22, weight: .bold))
-                InfoTip(text: "What Vera runs on her own: every autonomous schedule, editable to taste.", size: 13)
-                if case .ready = sched.phase {
-                    Text("\(sched.jobs.count)").font(.system(size: 13, weight: .semibold))
+                Text("Activity").font(.system(size: 22, weight: .bold))
+                InfoTip(text: "Everything Vera did on her own in the last day: heartbeat ticks, scheduled runs, autonomous actions.", size: 13)
+                if case .ready = activity.phase {
+                    Text("\(activity.events.count)").font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(Theme.surface).clipShape(Capsule())
@@ -133,37 +172,7 @@ struct AgenticView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    SectionBox(title: "Default Schedules") {
-                        switch sched.phase {
-                        case .loading:
-                            RowCard {
-                                ProgressView().controlSize(.small)
-                                Text("Loading schedules…").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                            }
-                        case .unconfigured:
-                            statusCard(icon: "gearshape", title: "vera-api isn't configured",
-                                       note: "Set the vera-api URL in Settings to manage Vera's autonomous schedules.")
-                        case .unreachable:
-                            statusCard(icon: "exclamationmark.triangle", title: "vera-api unreachable",
-                                       note: "Couldn't load schedules from \(sched.baseDescription). Last and next runs are N/A.",
-                                       retry: true)
-                        case .unsupported:
-                            statusCard(icon: "clock.badge.exclamationmark", title: "Scheduler not available",
-                                       note: "This vera-api doesn't expose the built-in scheduler yet. Update vera-api to manage schedules here.",
-                                       retry: true)
-                        case .ready:
-                            if !sched.masterEnabled { masterBanner }
-                            if sched.jobs.isEmpty {
-                                statusCard(icon: "clock.badge.questionmark", title: "No schedules reported",
-                                           note: "The scheduler answered but listed no jobs.", retry: true)
-                            }
-                            ForEach(sched.jobs) { job in
-                                ScheduleRow(job: job, sched: sched, onEdit: { editing = job })
-                            }
-                        }
-                    }
-
-                    SectionBox(title: "Activity") {
+                    SectionBox(title: "Last 24 hours") {
                         activitySection
                     }
                 }
@@ -174,22 +183,6 @@ struct AgenticView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
-        .task {
-            sched.configure(base: config.resolved?.veraAPIBase)
-            activity.configure(base: config.resolved?.veraAPIBase)
-            async let s: Void = sched.refresh()
-            async let a: Void = activity.refresh()
-            _ = await (s, a)
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
-                async let s2: Void = sched.refresh()
-                async let a2: Void = activity.refresh()
-                _ = await (s2, a2)
-            }
-        }
-        .sheet(item: $editing) { job in
-            CronEditor(job: job) { cron in await sched.saveCron(job, cron: cron) }
-        }
     }
 
     @ViewBuilder
@@ -205,17 +198,16 @@ struct AgenticView: View {
                        note: "Set the vera-api URL in Settings to see what Vera does on her own.")
         case .unreachable:
             statusCard(icon: "exclamationmark.triangle", title: "vera-api unreachable",
-                       note: "Couldn't load activity from \(activity.baseDescription).",
-                       retry: true, retryAction: { await activity.refresh() })
+                       note: "Couldn't load activity from \(activity.baseDescription).", retry: true)
         case .unsupported:
             statusCard(icon: "sparkles.rectangle.stack", title: "Activity feed not available",
                        note: "This vera-api doesn't expose the activity feed yet. Update vera-api to see autonomous activity here.",
-                       retry: true, retryAction: { await activity.refresh() })
+                       retry: true)
         case .ready:
             if activity.events.isEmpty {
                 statusCard(icon: "moon.zzz", title: "No autonomous activity",
                            note: "Nothing in the last 24 hours. Heartbeat ticks, scheduled runs, and autonomous actions will appear here.",
-                           retry: true, retryAction: { await activity.refresh() })
+                           retry: true)
             } else {
                 ForEach(activity.events.prefix(100)) { event in
                     ActivityRow(event: event)
@@ -224,20 +216,7 @@ struct AgenticView: View {
         }
     }
 
-    private var masterBanner: some View {
-        RowCard {
-            Image(systemName: "pause.circle").font(.system(size: 16)).foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Scheduler paused").font(.system(size: 13, weight: .semibold))
-                Text("The server's master switch is off (SCHEDULER_ENABLED). No jobs will fire.")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func statusCard(icon: String, title: String, note: String, retry: Bool = false,
-                            retryAction: (() async -> Void)? = nil) -> some View {
+    private func statusCard(icon: String, title: String, note: String, retry: Bool = false) -> some View {
         RowCard {
             Image(systemName: icon).font(.system(size: 16)).foregroundStyle(Theme.textSecondary)
             VStack(alignment: .leading, spacing: 2) {
@@ -246,7 +225,7 @@ struct AgenticView: View {
             }
             Spacer(minLength: 0)
             if retry {
-                Button("Retry") { Task { await (retryAction ?? { await sched.refresh() })() } }
+                Button("Retry") { Task { await activity.refresh() } }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.accent)
             }
@@ -288,88 +267,6 @@ func relativeTime(_ d: Date) -> String {
     let f = RelativeDateTimeFormatter()
     f.unitsStyle = .abbreviated
     return f.localizedString(for: d, relativeTo: Date())
-}
-
-/// One scheduled job: status dot, label, cadence + last/next runs, run-now, edit, toggle.
-/// Click the row to expand the last run's detail. Env-locked jobs render locked.
-private struct ScheduleRow: View {
-    let job: SchedulerJob
-    @ObservedObject var sched: SchedulerStore
-    var onEdit: () -> Void
-    @State private var expanded = false
-
-    private var statusColor: Color {
-        guard let ok = job.lastRunOK else { return Theme.textSecondary.opacity(0.5) }
-        return ok ? Color(red: 0.36, green: 0.78, blue: 0.5) : Color(red: 0.92, green: 0.42, blue: 0.38)
-    }
-
-    private var subline: String {
-        var parts = [cronSummary(job.cron)]
-        if let last = job.lastRunAt {
-            parts.append("last \(relativeTime(last)) · \(job.lastRunOK == false ? "failed" : "ok")")
-        } else {
-            parts.append("never run")
-        }
-        if job.enabled, let next = job.nextRun { parts.append("next \(relativeTime(next))") }
-        return parts.joined(separator: "  ·  ")
-    }
-
-    var body: some View {
-        RowCard {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .center, spacing: 10) {
-                    Circle().fill(statusColor).frame(width: 7, height: 7)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(job.label).font(.system(size: 14, weight: .semibold))
-                            if job.envLocked {
-                                InfoTip(text: "Fixed by the server's environment. Edit its env vars to change.", size: 10)
-                            }
-                            if let note = sched.rowNote[job.id] {
-                                Text(note).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.accent)
-                            }
-                        }
-                        Text(subline).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                            .help(job.lastRunDetail.isEmpty ? "No last-run detail" : job.lastRunDetail)
-                    }
-                    Spacer(minLength: 12)
-                    if sched.busy.contains(job.id) {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button { sched.runNow(job) } label: {
-                            Image(systemName: "play.circle").font(.system(size: 15))
-                                .foregroundStyle(Theme.textSecondary)
-                        }
-                        .buttonStyle(.plain).help("Run now")
-                        Button(action: onEdit) {
-                            Image(systemName: "pencil").font(.system(size: 13))
-                                .foregroundStyle(Theme.textSecondary)
-                        }
-                        .buttonStyle(.plain).help("Edit schedule")
-                    }
-                    Toggle("", isOn: Binding(get: { job.enabled }, set: { sched.setEnabled(job, $0) }))
-                        .toggleStyle(.switch).controlSize(.small).labelsHidden()
-                        .tint(Theme.accent)
-                        .disabled(sched.busy.contains(job.id))
-                }
-                if expanded {
-                    Text(detailLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                        .padding(.leading, 17)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() } }
-    }
-
-    private var detailLine: String {
-        guard let last = job.lastRunAt else { return "no runs recorded" }
-        let outcome = job.lastRunOK == false ? "failed" : "ok"
-        let detail = job.lastRunDetail.isEmpty ? "" : ": \(job.lastRunDetail)"
-        return "last run \(relativeTime(last)) \(outcome)\(detail)"
-    }
 }
 
 /// Schedule editor: a simple time/interval picker with raw cron as the advanced escape hatch.

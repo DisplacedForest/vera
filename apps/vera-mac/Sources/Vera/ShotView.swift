@@ -32,7 +32,7 @@ struct ShotView: View {
     }
 
     /// Render-safe stand-in for a Toggle (ImageRenderer can't draw the live switch).
-    private struct StatePill: View {
+    fileprivate struct StatePill: View {
         let on: Bool
         var body: some View {
             Text(on ? "On" : "Off").font(.system(size: 11, weight: .semibold))
@@ -150,14 +150,38 @@ struct ShotView: View {
                     Spacer()
                 }
                 HStack(spacing: 3) {
-                    shotTab("Chat", "message", active: true)
-                    shotTab("Agentic", "slider.horizontal.3", active: false)
+                    shotTab("Chat", "message", active: section != .agentic)
+                    shotTab("Agentic", "slider.horizontal.3", active: section == .agentic)
                 }
                 .padding(3).background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 9))
                 .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
             }
             .padding(.horizontal, 12).padding(.top, 16).padding(.bottom, 10)
 
+            if section == .agentic {
+                VStack(spacing: 1) {
+                    shotNav("Canvas", "point.3.connected.trianglepath.dotted", active: true)
+                    shotNav("Activity", "bolt", active: false)
+                }
+                .padding(.horizontal, 8)
+            } else {
+                chatSidebarBody
+            }
+            Spacer()
+            HStack(spacing: 8) {
+                Circle().fill(Theme.accent).frame(width: 22, height: 22)
+                    .overlay(Text("J").font(.system(size: 11, weight: .bold)).foregroundStyle(.white))
+                Text("Jordan").font(.system(size: 13, weight: .medium))
+                Spacer()
+                Image(systemName: "gearshape").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .overlay(Rectangle().fill(Theme.hairline).frame(height: 1), alignment: .top)
+        }
+    }
+
+    @ViewBuilder
+    private var chatSidebarBody: some View {
             VStack(spacing: 1) {
                 shotNav("New chat", "square.and.pencil", active: false)
                 shotNav("Pulse", "newspaper", active: false)
@@ -189,17 +213,6 @@ struct ShotView: View {
                 shotChatRow("Server rebuild plan", selected: false, pinned: false)
             }
             .padding(.horizontal, 8).padding(.top, 2)
-            Spacer()
-            HStack(spacing: 8) {
-                Circle().fill(Theme.accent).frame(width: 22, height: 22)
-                    .overlay(Text("J").font(.system(size: 11, weight: .bold)).foregroundStyle(.white))
-                Text("Jordan").font(.system(size: 13, weight: .medium))
-                Spacer()
-                Image(systemName: "gearshape").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-            }
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .overlay(Rectangle().fill(Theme.hairline).frame(height: 1), alignment: .top)
-        }
     }
 
     private func shotTab(_ title: String, _ icon: String, active: Bool) -> some View {
@@ -332,70 +345,40 @@ struct ShotView: View {
         .background(Theme.bg)
     }
 
-    // Static Agentic board for screenshots — the Default Schedules section over mock jobs
-    // (render-safe: StatePill instead of a live Toggle).
+    // Static Agentic board for screenshots — the organism map over the mock graph
+    // (render-safe: no live controls, animations off, pulses frozen mid-edge).
     private var agenticBoard: some View {
-        let jobs = SchedulerJob.mock()
+        let graph = AgenticGraph.mock()
+        let jobs = Dictionary(uniqueKeysWithValues: SchedulerJob.mock().map { ($0.id, $0) })
+        let pulses = [
+            CanvasPulse(id: "shot-weather", flowID: "weather", surfaceID: "veins",
+                        startedAt: Date().addingTimeInterval(-CanvasPulse.duration / 2)),
+            CanvasPulse(id: "shot-heartbeat", flowID: "heartbeat", surfaceID: "memory",
+                        startedAt: Date().addingTimeInterval(-CanvasPulse.duration / 2)),
+        ]
         return VStack(spacing: 0) {
             HStack {
                 Text("Agentic").font(.system(size: 22, weight: .bold))
-                InfoTip(text: "What Vera runs on her own: every autonomous schedule, editable to taste.", size: 13)
-                Text("\(jobs.count)").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surface).clipShape(Capsule())
+                InfoTip(text: "Everything Vera runs on her own, as one living system.", size: 13)
+                Text("\(graph.flows.count) flows").font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 9).padding(.vertical, 3)
+                    .background(Theme.surface).clipShape(Capsule())
                 Spacer()
             }
-            .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
-            .frame(maxWidth: 860, alignment: .leading)
-            .frame(maxWidth: .infinity)
-            VStack(alignment: .leading, spacing: 22) {
-                SectionBox(title: "Default Schedules") {
-                    ForEach(jobs) { job in
-                        RowCard {
-                            Circle()
-                                .fill(job.lastRunOK == nil ? Theme.textSecondary.opacity(0.5)
-                                      : (job.lastRunOK == true ? Color(red: 0.36, green: 0.78, blue: 0.5)
-                                                               : Color(red: 0.92, green: 0.42, blue: 0.38)))
-                                .frame(width: 7, height: 7)
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(spacing: 6) {
-                                    Text(job.label).font(.system(size: 14, weight: .semibold))
-                                    if job.envLocked {
-                                        InfoTip(text: "Fixed by the server's environment. Edit its env vars to change.", size: 10)
-                                    }
-                                }
-                                Text(shotSubline(job)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                            }
-                            Spacer(minLength: 12)
-                            Image(systemName: "play.circle").font(.system(size: 15)).foregroundStyle(Theme.textSecondary)
-                            Image(systemName: "pencil").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-                            StatePill(on: job.enabled)
-                        }
-                    }
-                }
-                SectionBox(title: "Activity") {
-                    ForEach(ActivityEvent.mock()) { event in
-                        ActivityRow(event: event)
-                    }
-                }
-            }
-            .padding(.horizontal, 28).padding(.vertical, 18)
-            .frame(maxWidth: 860, alignment: .leading)
-            .frame(maxWidth: .infinity)
-            Spacer()
+            .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 14)
+            // The live canvas scrolls; the shot scales the whole organism to fit its frame.
+            let viewport = CGSize(width: 911, height: 666)
+            let laid = OrganismLayout(graph: graph, viewport: viewport).size
+            let scale = min(1, viewport.width / laid.width, viewport.height / laid.height)
+            OrganismMap(graph: graph, jobs: jobs, size: viewport, pulses: pulses, animated: false)
+                .scaleEffect(scale, anchor: .topLeading)
+                .frame(width: viewport.width, height: viewport.height, alignment: .topLeading)
+                .clipped()
+                .overlay(Rectangle().fill(Theme.hairline).frame(height: 1), alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
-    }
-
-    private func shotSubline(_ job: SchedulerJob) -> String {
-        var parts = [cronSummary(job.cron)]
-        if let last = job.lastRunAt {
-            parts.append("last \(relativeTime(last)) · \(job.lastRunOK == false ? "failed" : "ok")")
-        } else {
-            parts.append("never run")
-        }
-        if job.enabled, let next = job.nextRun { parts.append("next \(relativeTime(next))") }
-        return parts.joined(separator: "  ·  ")
     }
 
     // Static Veins board for screenshots — the vein catalog over mock entries
@@ -643,5 +626,106 @@ struct ShotView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
+    }
+}
+
+/// Render-safe Agentic detail boards for screenshots: the pulse pipeline, the
+/// heartbeat branch fan, and the organism map with the inspector open.
+struct AgenticDetailShot: View {
+    let variant: String
+
+    var body: some View {
+        let graph = AgenticGraph.mock()
+        let jobs = Dictionary(uniqueKeysWithValues: SchedulerJob.mock().map { ($0.id, $0) })
+        return HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                header(graph)
+                Group {
+                    switch variant {
+                    case "agentic-pulse":
+                        if let flow = graph.flow("pulse") {
+                            PulseDrill(flow: flow, graph: graph,
+                                       viewport: CGSize(width: 1180, height: 640))
+                        }
+                    case "agentic-heartbeat":
+                        if let flow = graph.flow("heartbeat") {
+                            HeartbeatDrill(flow: flow, graph: graph,
+                                           viewport: CGSize(width: 848, height: 640))
+                        }
+                    default:
+                        let viewport = CGSize(width: 848, height: 666)
+                        let laid = OrganismLayout(graph: graph, viewport: viewport).size
+                        let scale = min(1, viewport.width / laid.width, viewport.height / laid.height)
+                        OrganismMap(graph: graph, jobs: jobs, size: viewport,
+                                    selected: "pulse", animated: false)
+                            .scaleEffect(scale, anchor: .topLeading)
+                            .frame(width: viewport.width, height: viewport.height, alignment: .topLeading)
+                            .clipped()
+                    }
+                }
+                .overlay(Rectangle().fill(Theme.hairline).frame(height: 1), alignment: .top)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if variant == "agentic-inspector", let flow = graph.flow("pulse") {
+                InspectorContent(flow: flow, job: jobs["pulse"], sched: SchedulerStore(),
+                                 events: Array(ActivityEvent.mock().prefix(4)),
+                                 onEditSchedule: { _ in }, onDrill: {}, onClose: {},
+                                 liveControls: false)
+                    .frame(width: 332, alignment: .top)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .background(Color(red: 0.118, green: 0.122, blue: 0.129))
+                    .overlay(Rectangle().fill(Theme.hairline).frame(width: 1), alignment: .leading)
+            }
+        }
+        .frame(width: 1180, height: 760)
+        .background(Theme.bg)
+        .foregroundStyle(Theme.textPrimary)
+        .environment(\.colorScheme, .dark)
+    }
+
+    @ViewBuilder
+    private func header(_ graph: AgenticGraph) -> some View {
+        if variant == "agentic-inspector" {
+            HStack(spacing: 10) {
+                Text("Agentic").font(.system(size: 22, weight: .bold))
+                Text("\(graph.flows.count) flows").font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 9).padding(.vertical, 3)
+                    .background(Theme.surface).clipShape(Capsule())
+                Spacer()
+            }
+            .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 14)
+        } else {
+            let isPulse = variant == "agentic-pulse"
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left").font(.system(size: 10, weight: .bold))
+                        Text("All flows").font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 11).padding(.vertical, 5)
+                    .background(Theme.surface).clipShape(Capsule())
+                    .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+                    Text(isPulse ? "Pulse briefing" : "Heartbeat").font(.system(size: 22, weight: .bold))
+                    Text(isPulse ? "Daily 5:00 AM" : "Every 20 min")
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 9).padding(.vertical, 3)
+                        .background(Theme.surface).clipShape(Capsule())
+                    Spacer()
+                }
+                HStack(spacing: 7) {
+                    Image(systemName: isPulse ? "exclamationmark.triangle" : "clock")
+                        .font(.system(size: 11))
+                        .foregroundStyle(isPulse ? Color(red: 0.90, green: 0.62, blue: 0.30) : Theme.textSecondary)
+                    Text(isPulse
+                         ? "Last run injected 6 cards 7 hr ago. starved run: 6/8 cards after 3 triage round(s)."
+                         : "Each tick reads HEARTBEAT.md and decides which branches to take.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }

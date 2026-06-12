@@ -63,7 +63,7 @@ AUDIT_RELEASE_URL = os.environ.get("AUDIT_RELEASE_URL", "").strip()
 # (env-seeded by VERA_IMAGE_BASE / IMAGE_PROTOCOL, editable in the plugin store) — the
 # same pattern as the coder's tool protocol. Protocol: the standard OpenAI Images API
 # unless 'vera' selects the bespoke reference contract (style/steps/seed determinism +
-# co-located vision arbitration).
+# the vision pause/resume extension).
 def _image_registry() -> dict:
     try:
         from . import integrations
@@ -364,10 +364,10 @@ async def _gen_image(prompt, style, idx):
 
 
 async def _vision(pause: bool):
-    """Co-located-service memory arbitration — part of the bespoke vera image protocol
-    only: ask the image service to evict (pause) / restore (resume) its resident vision model
-    so the much larger image model has headroom. The standard Images API has no such
-    concept, so this is a no-op in openai mode. Best-effort — never blocks the run."""
+    """The vera image protocol's vision pause/resume extension: ask the image service to
+    pause / resume its resident vision model around a generation batch, per that contract.
+    The standard Images API has no such concept, so this is a no-op in openai mode.
+    Best-effort — never blocks the run."""
     if image_protocol() != "vera":
         return
     try:

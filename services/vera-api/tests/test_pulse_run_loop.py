@@ -338,6 +338,31 @@ def test_audit_phase_without_hooks_calls_none(monkeypatch):
     assert journal["audited"] == ["A"]  # today's behavior exactly, just batched
 
 
+def test_audit_hook_rejects_non_2xx():
+    """A failed wake must read as failed: an HTTP error reply carries a JSON body too
+    (FastAPI errors do), so the hook must raise on status, not just parse."""
+    import aiohttp
+    from aiohttp import web
+
+    async def main():
+        app = web.Application()
+        app.router.add_post("/ok", lambda req: web.json_response({"ok": True, "already_up": False}))
+        app.router.add_post("/busted", lambda req: web.json_response({"detail": "script not present"}, status=503))
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        host, port = runner.addresses[0][:2]
+        try:
+            assert await pulse._audit_hook(f"http://{host}:{port}/ok") == {"ok": True, "already_up": False}
+            with pytest.raises(aiohttp.ClientResponseError):
+                await pulse._audit_hook(f"http://{host}:{port}/busted")
+        finally:
+            await runner.cleanup()
+
+    run(main())
+
+
 def test_audit_phase_with_nothing_injected_never_wakes(monkeypatch):
     journal = _phase_harness(monkeypatch)
     run(_audit_phase([], []))

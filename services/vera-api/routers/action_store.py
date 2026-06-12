@@ -119,6 +119,25 @@ def dismiss(token):
         c.execute("UPDATE action_pending SET status='dismissed' WHERE token=?", (token,))
 
 
+def recent(hours=24):
+    """Audit-log rows within the window, newest first — the /agentic/activity reader."""
+    init()
+    cutoff = int(time.time()) - hours * 3600
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT ts, token, verb, args, result, status, auto FROM action_log "
+            "WHERE ts > ? ORDER BY id DESC",
+            (cutoff,),
+        ).fetchall()
+    return [
+        {"ts": r["ts"], "token": r["token"], "verb": r["verb"],
+         "args": json.loads(r["args"] or "{}"),
+         "result": json.loads(r["result"]) if r["result"] else None, "status": r["status"],
+         "auto": bool(r["auto"])}
+        for r in rows
+    ]
+
+
 def recent_log(limit=50):
     init()
     with _conn() as c:

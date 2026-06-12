@@ -35,7 +35,7 @@ def _load_op(b: RestoreBody):
         raise HTTPException(404, "no such op")
     op = ops[b.op_index]
     if op.get("store") != "knowledge":
-        raise HTTPException(400, "not a knowledge-store op — use /memory/restore")
+        raise HTTPException(400, "not a knowledge-store op. Use /memory/restore")
     return op
 
 
@@ -67,7 +67,7 @@ async def restore(b: RestoreBody):
     op = _load_op(b)
     if gcm.stale_snapshot(op):
         return {"ok": False, "stale": True,
-                "note": "this was changed again since — review before restoring"}
+                "note": "this was changed again since, review before restoring"}
     return {"ok": True, **_undo(op)}
 
 
@@ -77,7 +77,7 @@ async def reject(b: RestoreBody):
     op = _load_op(b)
     if gcm.stale_snapshot(op):
         return {"ok": False, "stale": True,
-                "note": "this was changed again since — review before rejecting"}
+                "note": "this was changed again since, review before rejecting"}
     res = _undo(op)
     key = gcm.suppress("knowledge", op["type"], gcm.op_identity(op),
                        reason=op.get("reason") or "rejected by the owner")

@@ -168,7 +168,7 @@ def _forecast_sources(lat, lon):
         return [{"n": 1, "title": "Full forecast",
                  "url": FORECAST_URL_TMPL.format(lat=lat, lon=lon)}]
     if home_region_is_us():
-        return [{"n": 1, "title": "Full forecast — National Weather Service",
+        return [{"n": 1, "title": "Full forecast (National Weather Service)",
                  "url": f"https://forecast.weather.gov/MapClick.php?lat={lat}&lon={lon}"}]
     return []
 
@@ -183,7 +183,7 @@ async def check(req: WeatherRequest):
     lon = req.longitude if req.longitude is not None else LON
     if lat is None or lon is None:
         return {"ok": False, "configured": False,
-                "error": "weather unconfigured — set WEATHER_LAT and WEATHER_LON"}
+                "error": "weather unconfigured. Set WEATHER_LAT and WEATHER_LON"}
     folder = req.pulse_folder_id or DEFAULT_FOLDER
     u, lbl = _vein_unit()
     # explicit request values win; else the vein's stored thresholds; else unit-appropriate defaults

@@ -179,23 +179,60 @@ struct RowCard<Content: View>: View {
     }
 }
 
-/// Live tool-invocation chips.
+/// Tool-invocation activity: live chips at the head, persisted history below,
+/// one continuous newest-first list.
 struct ActivitySection: View {
     let invocations: [Invocation]
+    @State private var shown = 25
+    private static let pageSize = 25
+    private static let liveWindow: TimeInterval = 300
+
+    private var live: [Invocation] {
+        invocations.prefix(6).filter { Date().timeIntervalSince($0.at) < Self.liveWindow }
+    }
+
     var body: some View {
         SectionBox(title: "Activity") {
             if invocations.isEmpty {
                 Text("Vera isn't using any tools right now.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             } else {
-                HStack(spacing: 8) {
-                    ForEach(invocations.prefix(6)) { inv in
-                        Text(inv.label).font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Theme.accent)
-                            .padding(.horizontal, 9).padding(.vertical, 4)
-                            .background(Theme.accent.opacity(0.14)).clipShape(Capsule())
+                if !live.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(live) { inv in
+                            Text(inv.label).font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Theme.accent)
+                                .padding(.horizontal, 9).padding(.vertical, 4)
+                                .background(Theme.accent.opacity(0.14)).clipShape(Capsule())
+                        }
+                        Spacer(minLength: 0)
                     }
-                    Spacer(minLength: 0)
+                }
+                VStack(spacing: 0) {
+                    let page = Array(invocations.prefix(shown))
+                    ForEach(page) { inv in
+                        HStack(spacing: 10) {
+                            Image(systemName: "bolt.fill").font(.system(size: 9))
+                                .foregroundStyle(Theme.accent)
+                            Text(inv.label).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                            Spacer(minLength: 12)
+                            Text(inv.at, format: .dateTime.month(.abbreviated).day().hour().minute())
+                                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        if inv.id != page.last?.id {
+                            Divider().overlay(Theme.hairline).padding(.leading, 14)
+                        }
+                    }
+                }
+                .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
+                if invocations.count > shown {
+                    Button { shown += Self.pageSize } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.down"); Text("Show more")
+                        }.font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
+                    }.buttonStyle(.plain).padding(.top, 2)
                 }
             }
         }

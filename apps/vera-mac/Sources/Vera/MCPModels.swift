@@ -26,11 +26,14 @@ struct ToolServer: Identifiable, Hashable {
     var enabled: Bool
 }
 
-/// A single live tool/status event from Vera's pipeline.
-struct Invocation: Identifiable, Hashable {
+/// A single tool/status event from Vera's pipeline — live off the socket or replayed
+/// from the persisted tool log. The id only drives list identity, so it is fresh per decode.
+struct Invocation: Identifiable, Hashable, Codable {
     let id = UUID()
     let label: String
     let at: Date
+
+    private enum CodingKeys: String, CodingKey { case label, at }
 }
 
 enum ValveType { case string, int, number, bool, unknown }

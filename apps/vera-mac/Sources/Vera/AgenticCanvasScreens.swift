@@ -523,6 +523,8 @@ struct InspectorPanel: View {
         ScrollView {
             InspectorContent(flow: flow, job: job, sched: sched, events: events,
                              onEditSchedule: onEditSchedule, onDrill: onDrill, onClose: onClose)
+                // 20 + the content's own 16 clears the hidden title bar, like every header.
+                .padding(.top, 20)
         }
         .frame(width: 332)
         .background(Color(red: 0.118, green: 0.122, blue: 0.129))

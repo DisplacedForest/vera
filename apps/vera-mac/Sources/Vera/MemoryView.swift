@@ -19,8 +19,8 @@ struct MemoryView: View {
             .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
             ScrollView {
                 if store.memories.isEmpty {
-                    Text(store.isLive ? "No memories yet — what Vera learns about you appears here."
-                                      : "Not connected — memories appear here once Vera is online.")
+                    Text(store.isLive ? "No memories yet. What Vera learns about you appears here."
+                                      : "Not connected. Memories appear here once Vera is online.")
                         .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity).padding(.top, 48)
                 } else {

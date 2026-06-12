@@ -188,7 +188,7 @@ enum VoiceError: Error, LocalizedError {
         switch self {
         case .http(let what, let code): return "\(what) failed (HTTP \(code))"
         case .mic(let m): return m
-        case .notConfigured: return "Voice service not configured — set its URL in Settings"
+        case .notConfigured: return "Voice service not configured. Set its URL in Settings"
         }
     }
 }

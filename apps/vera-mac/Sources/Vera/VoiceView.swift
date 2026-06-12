@@ -27,7 +27,7 @@ struct VoiceView: View {
                 // Diagnostics (Phase-1 tuning): live input level + frames seen.
                 Text(String(format: "in: %.0f  floor: %.0f dBFS  %@  frames: %d",
                              voice.debugDB, voice.debugFloor,
-                             voice.debugSpeech ? "SPEECH" : "—", voice.debugFrames))
+                             voice.debugSpeech ? "SPEECH" : "N/A", voice.debugFrames))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Theme.textSecondary.opacity(0.7))
                     .padding(.top, 8)

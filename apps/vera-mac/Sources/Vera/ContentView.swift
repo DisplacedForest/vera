@@ -374,7 +374,7 @@ private struct EmptyChatView: View {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
                 } else {
                     Button { config.showOnboarding = true } label: {
-                        Label("Vera isn't connected — set up the connection", systemImage: "bolt.horizontal")
+                        Label("Vera isn't connected. Set up the connection", systemImage: "bolt.horizontal")
                             .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
                             .padding(.horizontal, 12).padding(.vertical, 7)
                             .background(Theme.surface).clipShape(Capsule())

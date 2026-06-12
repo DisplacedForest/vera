@@ -110,17 +110,17 @@ private struct AboutTab: View {
         Form {
             Section("Versions") {
                 LabeledContent("App", value: AppVersion.current)
-                LabeledContent("vera-api", value: serverVersion ?? "—")
+                LabeledContent("vera-api", value: serverVersion ?? "N/A")
                 if let server = serverVersion,
                    Semver.minor(server) != Semver.minor(AppVersion.current) {
-                    Label("App and server minor versions differ — update the older side when convenient.",
+                    Label("App and server minor versions differ. Update the older side when convenient.",
                           systemImage: "exclamationmark.triangle")
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
             }
             Section("Updates") {
                 if AppVersion.isSelfBuilt {
-                    Text("Built from source — update with git pull.")
+                    Text("Built from source. Update with git pull.")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 } else {
                     HStack(spacing: 10) {
@@ -254,19 +254,19 @@ private struct SaveSection: View {
             return
         }
         guard let resolved = config.resolved else {
-            status = "Saved — add the OWUI URL and API key to connect"
+            status = "Saved. Add the OWUI URL and API key to connect"
             return
         }
         guard let live = store.currentConfig else {
             store.adopt(resolved)
-            status = "Saved — connecting…"
+            status = "Saved. Connecting…"
             return
         }
         let sessionChanged = live.baseURL != resolved.baseURL || live.apiKey != resolved.apiKey
             || live.email != resolved.email || live.password != resolved.password
         if sessionChanged {
             pendingReconnect = resolved
-            status = "Saved — reconnect to apply the connection change"
+            status = "Saved. Reconnect to apply the connection change"
         } else {
             store.applyLight(resolved)
             status = "Saved"

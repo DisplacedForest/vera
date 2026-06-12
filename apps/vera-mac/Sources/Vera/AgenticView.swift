@@ -114,11 +114,11 @@ struct AgenticView: View {
                                        note: "Set the vera-api URL in Settings to manage Vera's autonomous schedules.")
                         case .unreachable:
                             statusCard(icon: "exclamationmark.triangle", title: "vera-api unreachable",
-                                       note: "Couldn't load schedules from \(sched.baseDescription) — last/next runs are N/A.",
+                                       note: "Couldn't load schedules from \(sched.baseDescription). Last and next runs are N/A.",
                                        retry: true)
                         case .unsupported:
                             statusCard(icon: "clock.badge.exclamationmark", title: "Scheduler not available",
-                                       note: "This vera-api doesn't expose the built-in scheduler yet — update vera-api to manage schedules here.",
+                                       note: "This vera-api doesn't expose the built-in scheduler yet. Update vera-api to manage schedules here.",
                                        retry: true)
                         case .ready:
                             if !sched.masterEnabled { masterBanner }
@@ -157,7 +157,7 @@ struct AgenticView: View {
             Image(systemName: "pause.circle").font(.system(size: 16)).foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Scheduler paused").font(.system(size: 13, weight: .semibold))
-                Text("The server's master switch is off (SCHEDULER_ENABLED) — no jobs will fire.")
+                Text("The server's master switch is off (SCHEDULER_ENABLED). No jobs will fire.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             }
             Spacer(minLength: 0)
@@ -290,7 +290,7 @@ private struct CronEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Schedule — \(job.label)").font(.system(size: 15, weight: .semibold))
+            Text("Schedule for \(job.label)").font(.system(size: 15, weight: .semibold))
             Picker("", selection: $mode) {
                 ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
             }

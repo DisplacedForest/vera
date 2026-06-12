@@ -346,7 +346,7 @@ struct GroomChangeSetView: View {
             case "running":
                 Image(systemName: "clock").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             case "stale":
-                Text("changed since — review").font(.system(size: 10, weight: .medium)).foregroundStyle(.orange)
+                Text("changed since, review").font(.system(size: 10, weight: .medium)).foregroundStyle(.orange)
             default:
                 HStack(spacing: 6) {
                     if state == "failed" {

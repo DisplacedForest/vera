@@ -379,7 +379,7 @@ async def update_integration(iid: str, req: IntegrationUpdate):
             if env_compat.is_set(known[fid]["env"]):
                 raise HTTPException(
                     status_code=409,
-                    detail=f"'{fid}' is pinned by env ({known[fid]['env']}) — change it there")
+                    detail=f"'{fid}' is pinned by env ({known[fid]['env']}). Change it there")
         store.update(iid, fields={k: v.strip() for k, v in req.fields.items()})
 
     if req.enabled is not None:
@@ -405,7 +405,7 @@ async def update_integration(iid: str, req: IntegrationUpdate):
                     ram = next(ft["ramifications"] for ft in spec["features"] if ft["id"] == fid)
                     raise HTTPException(
                         status_code=400,
-                        detail=f"'{fid}' is experimental and requires ack: true — {ram}")
+                        detail=f"'{fid}' is experimental and requires ack: true. {ram}")
                 store.update_feature(iid, fid, enabled=True,
                                      acked_at=None if already_acked else time.time())
             else:

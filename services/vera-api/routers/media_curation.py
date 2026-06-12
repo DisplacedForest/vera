@@ -158,7 +158,7 @@ async def curate(force: bool = False):
     if not force and not integrations.feature_enabled("overseerr", "media_curation"):
         raise HTTPException(
             status_code=503,
-            detail="media curation is off — enable the overseerr integration's media_curation feature")
+            detail="media curation is off. Enable the overseerr integration's media_curation feature")
 
     pool = _dedupe_and_filter(await _discover_pool() + await _zeitgeist_pool())
     if not pool:

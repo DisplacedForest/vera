@@ -55,8 +55,8 @@ struct PulseView: View {
 
                 ScrollView {
                     if store.feedCards.isEmpty {
-                        Text(store.isLive ? "No briefings yet — Pulse runs each morning."
-                                          : "Not connected — Pulse briefings appear here.")
+                        Text(store.isLive ? "No briefings yet. Pulse runs each morning."
+                                          : "Not connected. Pulse briefings appear here.")
                             .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                             .frame(maxWidth: .infinity).padding(.top, 48)
                     } else {

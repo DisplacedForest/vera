@@ -302,9 +302,9 @@ async def update_job(job_id: str, req: JobUpdate):
         if not croniter.is_valid(req.cron):
             raise HTTPException(status_code=422, detail=f"invalid cron expression '{req.cron}'")
         if _env_cron(job_id):
-            raise HTTPException(status_code=409, detail="schedule is pinned by env (SCHEDULE_*) — change it there")
+            raise HTTPException(status_code=409, detail="schedule is pinned by env (SCHEDULE_*). Change it there")
     if req.enabled is not None and _env_enabled(job_id) is not None:
-        raise HTTPException(status_code=409, detail="enabled is pinned by env (SCHEDULE_*_ENABLED) — change it there")
+        raise HTTPException(status_code=409, detail="enabled is pinned by env (SCHEDULE_*_ENABLED). Change it there")
     store.set_override(job_id, cron=req.cron, enabled=req.enabled)
     return _effective(job_id, store.overrides().get(job_id)) | {
         "next_run": None if not ENABLED else _next_fire(

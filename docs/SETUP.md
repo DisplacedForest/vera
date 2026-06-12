@@ -136,6 +136,8 @@ A gated job never fires while its gate is closed — on a fresh install, nothing
 
 The heartbeat tick also services Vera's **journal** — the self-authored document of standing commitments she checks, updates, and retires on her own (stored at `VERA_JOURNAL_PATH`, default `/data/journal/JOURNAL.md`; rendered read-only in the app's Journal view and at `GET /journal`). With no journal file and nothing to commit to, the step is a no-op. Chat steers the journal through the `self_author.py` tool's `read_journal` / `journal_commit` functions, so install that tool if you want "keep an eye on X" and "what are you watching" to work in conversation.
 
+With the Mealie integration enabled, the heartbeat can also **curate recipes autonomously**: when Vera finds a recipe genuinely worth keeping she imports it herself through `POST /actions/auto` — no confirmation card. This free lane accepts only verbs explicitly enrolled as `autonomous` in the action registry (today: `kitchen.mealie_import`, which the registry permits because it is low-risk and reversible by deleting the recipe). Imports are capped at 2 per tick and 3 per rolling day, duplicate URLs are skipped, every execution lands in the action audit log with `auto=true`, and each import posts a System card with the recipe link. Without Mealie configured the lane simply never produces anything; `HEARTBEAT_ENABLED=false` stops it along with the rest of the tick.
+
 ## 8. Verifying the install
 
 1. `curl localhost:8089/health` — vera-api is up.

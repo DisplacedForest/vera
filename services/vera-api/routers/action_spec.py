@@ -146,35 +146,68 @@ def _p_overseerr(args):
 # Each verb's `summary` and `args` shape ship to clients via GET /actions/registry — the
 # discovery surface tools use instead of hardcoding this catalog. Declared beside the
 # validators so the advertised shape and the enforced shape can't drift apart.
+# `autonomous` is the trust-graduated free lane: True lets the verb execute via
+# POST /actions/auto with NO confirm gate. It is an explicit per-verb enrollment — a
+# deliberate one-line act, never derived from risk/reversible — and every entry carries
+# it so flipping a verb free is always a visible diff.
 SPEC = {
     "ha.service": {"validate": _v_ha, "preview": _p_ha, "risk": "medium", "reversible": True,
+                   "autonomous": False,
                    "summary": "call a Home Assistant service (the server enforces a configurable allowlist)",
                    "args": '{"domain": "...", "service": "...", "data": {"entity_id": "...", ...}}'},
     "knowledge.set": {"validate": _v_kset, "preview": _p_kset, "risk": "low", "reversible": True,
+                      "autonomous": False,
                       "summary": "record or update a durable home fact",
                       "args": '{"type": "...", "name": "...", "attrs": {...}}'},
     "knowledge.delete": {"validate": _v_kdel, "preview": _p_kdel, "risk": "medium", "reversible": False,
+                         "autonomous": False,
                          "summary": "remove a durable home fact",
                          "args": '{"entity_id": "..."} or {"type": "...", "name": "..."}'},
     "knowledge.reverify": {"validate": _v_kreverify, "preview": _p_kreverify, "risk": "none", "reversible": True,
+                           "autonomous": False,
                            "summary": "re-stamp a fact's last_verified to now",
                            "args": '{"entity_id": "..."}'},
     "knowledge.promote": {"validate": _v_kpromote, "preview": _p_kpromote, "risk": "low", "reversible": True,
+                          "autonomous": False,
                           "summary": "codify a knowledge type's schema",
                           "args": '{"type": "...", "schema": {...}}'},
     "kitchen.grocy_adjust": {"validate": _v_grocy, "preview": _p_grocy, "risk": "low", "reversible": True,
+                             "autonomous": False,
                              "summary": "adjust kitchen stock (op is add or consume)",
                              "args": '{"product_id": N, "op": "add|consume", "amount": N}'},
     "kitchen.mealie_import": {"validate": _v_mealie_import, "preview": _p_mealie_import, "risk": "low", "reversible": True,
+                              "autonomous": True,  # the sole free-lane verb: cheap, undoable curation
                               "summary": "import a recipe by URL",
                               "args": '{"url": "..."}'},
     "health.check": {"validate": _v_health, "preview": _p_health, "risk": "none", "reversible": True,
+                     "autonomous": False,
                      "summary": "run a service health check now",
                      "args": "{}"},
     "overseerr_request": {"validate": _v_overseerr, "preview": _p_overseerr, "risk": "low", "reversible": True,
+                          "autonomous": False,
                           "summary": "request a title for the media library",
                           "args": '{"media_type": "movie|tv", "media_id": N, "title": "..."}'},
     "docker.update": {"validate": _v_docker_update, "preview": _p_docker_update, "risk": "high", "reversible": False,
+                      "autonomous": False,
                       "summary": "update one container image (bounces the container)",
                       "args": '{"name": "...", "image": "..."}'},
 }
+
+
+def is_autonomous(verb: str) -> bool:
+    """True only for verbs explicitly enrolled in the free (no-confirm) lane."""
+    return bool((SPEC.get(verb) or {}).get("autonomous"))
+
+
+def check_autonomy_invariant(spec: dict) -> None:
+    """A verb may be autonomous only if it is genuinely cheap to be wrong about:
+    risk in {none, low} AND reversible. Raises so a dangerous verb can never be
+    flagged free, even by mistake."""
+    for verb, s in spec.items():
+        if s.get("autonomous") and not (s["risk"] in ("none", "low") and s["reversible"]):
+            raise AssertionError(
+                f"{verb} cannot be autonomous: requires risk in {{none,low}} and reversible "
+                f"(got risk={s['risk']!r}, reversible={s['reversible']!r})")
+
+
+check_autonomy_invariant(SPEC)

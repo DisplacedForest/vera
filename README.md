@@ -92,7 +92,7 @@ Each integration is a card: enter a URL and key, test, enable. Enabling an integ
 
 ### Memory, voice, and home control
 
-Vera maintains an inspectable, editable memory store and grooms it nightly — every change reversible and surfaced as an audit card. A local voice service provides STT/TTS. With Home Assistant connected, Vera answers from live home state and acts through a typed, confirmation-gated action system; nothing actuates without an explicit confirmation.
+Vera maintains an inspectable, editable memory store and grooms it nightly — every change reversible and surfaced as an audit card. A local voice service provides STT/TTS. With Home Assistant connected, Vera answers from live home state and acts through a typed, confirmation-gated action system; nothing in the home actuates without an explicit confirmation. Trust is graduated per verb: an action explicitly enrolled as autonomous — which the registry permits only for low-risk, trivially reversible verbs — executes without a confirmation and surfaces afterward as a System card. Exactly one verb is enrolled: recipe import, so Vera can save a recipe she finds worth keeping into the household cookbook on her own, capped, deduplicated, and announced after the fact.
 
 <div align="center"><img src="docs/assets/voice.png" alt="Voice mode" width="850"></div>
 

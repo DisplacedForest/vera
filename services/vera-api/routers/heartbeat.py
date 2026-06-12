@@ -334,7 +334,7 @@ async def _for_you(now_str, recent):
 
     # 4) full research — the SAME pipeline as the morning briefing (one creation path)
     rt_errs = []  # capture the dedup-gate skip reason for observability
-    await _vision(pause=True)  # free the image host's memory for cover-gen of this one card
+    await _vision(pause=True)  # ask the image service to make room for this one cover
     try:
         card = await research_topic(
             {"title": topic, "angle": rel.get("link", ""), "query": query},

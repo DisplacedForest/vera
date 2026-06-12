@@ -82,6 +82,8 @@ When a monitored situation deserves follow-through (a signals event, or simply "
 
 All recurring work — briefings, weather, signals, grooming, health probes — runs on a built-in scheduler with a visible, editable schedule. A job tied to a vein or integration does not fire until that vein or integration is enabled, and gated jobs report why they are not running.
 
+Everything Vera does on her own is also auditable in one place: an Activity feed (`GET /agentic/activity`) merges heartbeat outcomes, scheduled job runs, and autonomous actions into a single newest-first list, rendered as the Activity section of the Agentic tab. Autonomy is wanted, and it is always visible.
+
 <div align="center"><img src="docs/assets/agentic.png" alt="The Agentic tab — every scheduled job, live" width="850"></div>
 
 ### Integrations — configured from the app

@@ -74,12 +74,43 @@ final class SchedulerStore: ObservableObject {
     }
 }
 
-/// The Agentic surface. First section: vera-api's default schedules — every autonomous job with
-/// its cadence, last outcome, next fire, an on/off toggle, and a run-now affordance. Built as the
-/// first of several sections (custom recurring tasks come later).
+/// Live state for the Agentic tab's Activity section — vera-api's autonomous activity feed.
+/// Unreachable/unconfigured states render honestly (clean status cards, never fake data).
+@MainActor
+final class ActivityStore: ObservableObject {
+    enum Phase { case loading, unconfigured, unreachable, unsupported, ready }
+    @Published var phase: Phase = .loading
+    @Published var events: [ActivityEvent] = []
+
+    private var client: ActivityClient?
+    var baseDescription: String { client?.base.absoluteString ?? "vera-api" }
+
+    func configure(base: URL?) {
+        client = base.map { ActivityClient(base: $0) }
+        if client == nil { phase = .unconfigured }
+    }
+
+    func refresh() async {
+        guard let client else { phase = .unconfigured; return }
+        switch await client.fetch() {
+        case .unreachable:
+            phase = .unreachable
+        case .unsupported:
+            phase = .unsupported
+        case .ok(let events):
+            self.events = events
+            phase = .ready
+        }
+    }
+}
+
+/// The Agentic surface. Default Schedules: every autonomous job with its cadence, last outcome,
+/// next fire, an on/off toggle, and a run-now affordance. Activity: the reverse-chronological
+/// feed of everything Vera did on her own in the last day.
 struct AgenticView: View {
     @EnvironmentObject var config: ConfigStore
     @StateObject private var sched = SchedulerStore()
+    @StateObject private var activity = ActivityStore()
     @State private var editing: SchedulerJob?
 
     var body: some View {
@@ -131,6 +162,10 @@ struct AgenticView: View {
                             }
                         }
                     }
+
+                    SectionBox(title: "Activity") {
+                        activitySection
+                    }
                 }
                 .padding(.horizontal, 28).padding(.vertical, 18)
                 .frame(maxWidth: 860, alignment: .leading)
@@ -141,14 +176,51 @@ struct AgenticView: View {
         .background(Theme.bg)
         .task {
             sched.configure(base: config.resolved?.veraAPIBase)
-            await sched.refresh()
+            activity.configure(base: config.resolved?.veraAPIBase)
+            async let s: Void = sched.refresh()
+            async let a: Void = activity.refresh()
+            _ = await (s, a)
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
-                await sched.refresh()
+                async let s2: Void = sched.refresh()
+                async let a2: Void = activity.refresh()
+                _ = await (s2, a2)
             }
         }
         .sheet(item: $editing) { job in
             CronEditor(job: job) { cron in await sched.saveCron(job, cron: cron) }
+        }
+    }
+
+    @ViewBuilder
+    private var activitySection: some View {
+        switch activity.phase {
+        case .loading:
+            RowCard {
+                ProgressView().controlSize(.small)
+                Text("Loading activity…").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+            }
+        case .unconfigured:
+            statusCard(icon: "gearshape", title: "vera-api isn't configured",
+                       note: "Set the vera-api URL in Settings to see what Vera does on her own.")
+        case .unreachable:
+            statusCard(icon: "exclamationmark.triangle", title: "vera-api unreachable",
+                       note: "Couldn't load activity from \(activity.baseDescription).",
+                       retry: true, retryAction: { await activity.refresh() })
+        case .unsupported:
+            statusCard(icon: "sparkles.rectangle.stack", title: "Activity feed not available",
+                       note: "This vera-api doesn't expose the activity feed yet. Update vera-api to see autonomous activity here.",
+                       retry: true, retryAction: { await activity.refresh() })
+        case .ready:
+            if activity.events.isEmpty {
+                statusCard(icon: "moon.zzz", title: "No autonomous activity",
+                           note: "Nothing in the last 24 hours. Heartbeat ticks, scheduled runs, and autonomous actions will appear here.",
+                           retry: true, retryAction: { await activity.refresh() })
+            } else {
+                ForEach(activity.events.prefix(100)) { event in
+                    ActivityRow(event: event)
+                }
+            }
         }
     }
 
@@ -164,7 +236,8 @@ struct AgenticView: View {
         }
     }
 
-    private func statusCard(icon: String, title: String, note: String, retry: Bool = false) -> some View {
+    private func statusCard(icon: String, title: String, note: String, retry: Bool = false,
+                            retryAction: (() async -> Void)? = nil) -> some View {
         RowCard {
             Image(systemName: icon).font(.system(size: 16)).foregroundStyle(Theme.textSecondary)
             VStack(alignment: .leading, spacing: 2) {
@@ -173,10 +246,39 @@ struct AgenticView: View {
             }
             Spacer(minLength: 0)
             if retry {
-                Button("Retry") { Task { await sched.refresh() } }
+                Button("Retry") { Task { await (retryAction ?? { await sched.refresh() })() } }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.accent)
             }
+        }
+    }
+}
+
+/// One autonomous-activity event: source icon, title, detail line, relative time.
+struct ActivityRow: View {
+    let event: ActivityEvent
+
+    var body: some View {
+        RowCard {
+            Image(systemName: event.icon)
+                .font(.system(size: 14))
+                .foregroundStyle(event.failed ? Color(red: 0.92, green: 0.42, blue: 0.38) : Theme.textSecondary)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(event.title).font(.system(size: 13, weight: .semibold))
+                    if event.failed {
+                        Text("failed").font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color(red: 0.92, green: 0.42, blue: 0.38))
+                    }
+                }
+                if !event.detail.isEmpty {
+                    Text(event.detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 12)
+            Text(relativeTime(event.ts)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
         }
     }
 }

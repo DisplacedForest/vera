@@ -365,7 +365,7 @@ async def _gen_image(prompt, style, idx):
 
 async def _vision(pause: bool):
     """Co-located-service memory arbitration — part of the bespoke vera image protocol
-    only: ask the image host to evict (pause) / restore (resume) its resident vision model
+    only: ask the image service to evict (pause) / restore (resume) its resident vision model
     so the much larger image model has headroom. The standard Images API has no such
     concept, so this is a no-op in openai mode. Best-effort — never blocks the run."""
     if image_protocol() != "vera":
@@ -982,10 +982,12 @@ async def _triage(who, persona, interests, memories, exclusions, want, rnd):
 
 async def _audit_hook(url):
     """POST one of the configured audit warm-up/release hooks. The timeout is generous because
-    a wake may cold-load a model. Returns the response JSON when there is any ({} otherwise) —
-    a wake reply may carry {"already_up": true}."""
+    a wake may cold-load a model. A non-2xx reply raises — an error body is JSON too, and a
+    failed wake must read as failed, never as success. Returns the response JSON when there is
+    any ({} otherwise) — a wake reply may carry {"already_up": true}."""
     async with aiohttp.ClientSession() as s:
         async with s.post(url, timeout=aiohttp.ClientTimeout(total=600)) as r:
+            r.raise_for_status()
             try:
                 return await r.json()
             except Exception:
@@ -1079,7 +1081,7 @@ async def _do_run(req: PulseRequest):
     shipped_per_interest = {}  # lowercased interest -> cards shipped this run
     pending_audit = []  # (card, full sources) — audited in one batch after the cover loop
 
-    await _vision(pause=True)  # free the image host's memory so cover-gen fits (restored below)
+    await _vision(pause=True)  # ask the image service to make room for cover-gen (restored below)
     try:
         for rnd in range(PULSE_TRIAGE_ROUNDS):
             want = target - len(out["injected"])

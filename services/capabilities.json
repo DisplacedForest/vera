@@ -51,9 +51,9 @@
     },
     {
       "tool": "home_assistant", "node": "api->HA",
-      "summary": "Control and query Home Assistant devices and entity states.",
-      "use_when": "The user asks to control a device or about home state (lights, climate, sensors).",
-      "avoid_when": "Currently offline - the HA token needs renewal."
+      "summary": "Control and query Home Assistant devices and entity states, including media playback (play/pause/skip/volume/route) on speakers, TVs, Plex, and Spotify.",
+      "use_when": "The user asks to control a device, control media playback ('pause the living room', 'next track', 'set volume to 30%'), or about home state (lights, climate, sensors).",
+      "avoid_when": "Requesting NEW movies/shows for the library (that is media_request, not playback control)."
     },
     {
       "tool": "see_image", "node": "vision-worker",

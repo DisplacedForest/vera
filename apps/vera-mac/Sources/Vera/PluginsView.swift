@@ -92,6 +92,10 @@ struct PluginsView: View {
     }
 
     private func featureToggle(_ entry: PluginEntry, _ feature: PluginFeature, _ on: Bool) {
+        guard entry.enabled else {
+            plugins.error = "Turn on \(entry.displayName) first."
+            return
+        }
         if on && !feature.acked {
             consent = ConsentContext(entry: entry, feature: feature)   // first enable: consent sheet
         } else {
@@ -305,7 +309,7 @@ private struct FeatureRow: View {
             Spacer(minLength: 8)
             Toggle("", isOn: Binding(get: { feature.enabled && !locked }, set: { onToggle($0) }))
                 .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-                .tint(.orange).disabled(busy || locked)
+                .tint(.orange).disabled(busy)
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(Theme.bg.opacity(0.5))
@@ -391,19 +395,19 @@ struct PluginSheet: View {
             if f.secret {
                 SecureField(f.isSet ? "•••• (set, leave blank to keep)" : "",
                             text: binding(f.id))
-                    .textFieldStyle(.roundedBorder).disabled(f.envLocked)
+                    .textFieldStyle(.roundedBorder)
             } else if !f.choices.isEmpty {
                 Picker("", selection: binding(f.id)) {
                     ForEach(f.choices, id: \.self) { Text($0).tag($0) }
                 }
-                .pickerStyle(.segmented).labelsHidden().disabled(f.envLocked)
+                .pickerStyle(.segmented).labelsHidden()
                 .onAppear {
                     // an empty stored value means the server default — the first choice
                     if values[f.id] == nil { values[f.id] = f.value.isEmpty ? (f.choices.first ?? "") : f.value }
                 }
             } else {
                 TextField(f.value.isEmpty ? "" : f.value, text: binding(f.id))
-                    .textFieldStyle(.roundedBorder).disabled(f.envLocked)
+                    .textFieldStyle(.roundedBorder)
                     .onAppear { if values[f.id] == nil { values[f.id] = f.value } }
             }
         }

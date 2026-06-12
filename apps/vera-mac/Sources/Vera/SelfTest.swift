@@ -210,13 +210,14 @@ enum SelfTest {
             guard payloadBytes == payload else {
                 print("SELFTEST ERROR: wyoming payload bytes corrupted"); exit(1)
             }
-            print("  wyoming framing OK — type=audio-chunk, data={rate,width,channels}, payload 320B intact")
+            print("  wyoming framing OK (type=audio-chunk, data={rate,width,channels}, payload 320B intact)")
 
             // Scheduler plumbing: cron summaries + tolerant GET /scheduler/jobs decode (pure, local).
             let cronCases = [
                 ("0 5 * * *", "Daily 5:00 AM"), ("*/20 * * * *", "Every 20 min"),
                 ("0 */6 * * *", "Every 6 hours"), ("0 6,18 * * *", "Daily 6:00 AM & 6:00 PM"),
-                ("0 9 * * 0", "Sundays 9:00 AM"), ("oddball", "oddball"),
+                ("0 9 * * 0", "Sundays 9:00 AM"), ("oddball", "Custom schedule"),
+                ("0 6 * * 1-5", "Custom schedule"), ("15 3 1 * *", "Custom schedule"),
             ]
             for (cron, want) in cronCases where cronSummary(cron) != want {
                 print("SELFTEST ERROR: cronSummary(\(cron)) = \(cronSummary(cron)), want \(want)"); exit(1)

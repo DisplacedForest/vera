@@ -87,12 +87,14 @@ func schedulerDate(_ v: Any?) -> Date? {
 }
 
 /// Render a 5-field cron expression as a short human phrase ("Daily 5:00 AM", "Every 20 min").
-/// Anything it can't summarize falls back to the raw expression — never a wrong guess.
+/// Anything it can't summarize reads "Custom schedule" — plain English everywhere, never a
+/// wrong guess; the raw expression renders only inside the schedule editors.
 func cronSummary(_ cron: String) -> String {
+    let fallback = "Custom schedule"
     let f = cron.split(separator: " ").map(String.init)
-    guard f.count == 5 else { return cron }
+    guard f.count == 5 else { return fallback }
     let (m, h, dom, mon, dow) = (f[0], f[1], f[2], f[3], f[4])
-    guard dom == "*", mon == "*" else { return cron }
+    guard dom == "*", mon == "*" else { return fallback }
     func clock(_ hour: Int, _ minute: Int) -> String {
         let ampm = hour < 12 ? "AM" : "PM"
         var h12 = hour % 12
@@ -102,20 +104,20 @@ func cronSummary(_ cron: String) -> String {
     if h == "*", m.hasPrefix("*/"), let n = Int(m.dropFirst(2)), dow == "*" {
         return "Every \(n) min"
     }
-    guard let minute = Int(m) else { return cron }
+    guard let minute = Int(m) else { return fallback }
     if h.hasPrefix("*/"), let n = Int(h.dropFirst(2)), dow == "*" {
         return n == 1 ? "Hourly" : "Every \(n) hours"
     }
     let hourParts = h.split(separator: ",")
     let hours = hourParts.compactMap { Int($0) }
-    guard !hours.isEmpty, hours.count == hourParts.count else { return cron }
+    guard !hours.isEmpty, hours.count == hourParts.count else { return fallback }
     let times = hours.map { clock($0, minute) }.joined(separator: " & ")
     if dow == "*" { return "Daily \(times)" }
     if let d = Int(dow), (0...7).contains(d) {
         let days = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"]
         return "\(days[d % 7]) \(times)"
     }
-    return cron
+    return fallback
 }
 
 /// Thin client for vera-api's scheduler endpoints.

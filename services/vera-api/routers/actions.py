@@ -305,7 +305,8 @@ async def auto(a: Auto):
                         "result": row.get("result")}
     result = await EXECUTORS[a.verb](a.args)
     ok = bool((result or {}).get("ok", True))
-    store.log_auto(a.verb, a.args, result, status="applied" if ok else "failed")
+    store.log_auto(a.verb, a.args, result, status="applied" if ok else "failed",
+                   source=a.source, actor=a.actor)
     return {"ok": ok, "verb": a.verb, "result": result}
 
 

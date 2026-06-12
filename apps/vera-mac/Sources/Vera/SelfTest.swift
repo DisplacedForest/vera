@@ -251,6 +251,24 @@ enum SelfTest {
             try? FileManager.default.removeItem(at: tmp.deletingLastPathComponent())
             print("  config round-trip OK — strings + unknown keys preserved")
 
+            // Tool log round-trip on a temp path: append JSONL lines → load newest-first, capped.
+            let logURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("vera-selftest-\(UUID().uuidString).jsonl")
+            let t0 = Date(timeIntervalSince1970: 1750000000)
+            for i in 0..<4 {
+                ToolLog.append(Invocation(label: "tool_\(i)", at: t0.addingTimeInterval(Double(i) * 60)),
+                               to: logURL)
+            }
+            let logBack = ToolLog.load(from: logURL)
+            let capped = ToolLog.load(limit: 2, from: logURL)
+            guard logBack.count == 4, logBack.first?.label == "tool_3", logBack.last?.label == "tool_0",
+                  abs(logBack.first!.at.timeIntervalSince(t0.addingTimeInterval(180))) < 1,
+                  capped.count == 2, capped.first?.label == "tool_3", capped.last?.label == "tool_2" else {
+                print("SELFTEST ERROR: tool log round-trip"); exit(1)
+            }
+            try? FileManager.default.removeItem(at: logURL)
+            print("  tool log OK — 4 appended, newest-first load, tail cap honored")
+
             // Update semver compare: the decision table behind the update banner.
             let semverCases: [(String, String, Int)] = [
                 ("0.1.0", "0.1.0", 0),       // equal -> no banner

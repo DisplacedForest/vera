@@ -45,11 +45,16 @@ final class ToolsStore: ObservableObject {
     }
 
     /// Consume the socket's status broadcast → activity feed + per-tool "last used".
+    /// The feed is seeded from the persisted tool log so history survives restarts,
+    /// and every live event is appended to it.
     func start() async {
+        invocations = ToolLog.load()
         guard let socket else { return }
         for await label in socket.statusStream {
-            invocations.insert(Invocation(label: label, at: Date()), at: 0)
-            if invocations.count > 20 { invocations.removeLast(invocations.count - 20) }
+            let inv = Invocation(label: label, at: Date())
+            invocations.insert(inv, at: 0)
+            if invocations.count > ToolLog.loadLimit { invocations.removeLast(invocations.count - ToolLog.loadLimit) }
+            ToolLog.append(inv)
             stampLastUsed(label)
         }
     }

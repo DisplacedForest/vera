@@ -207,7 +207,7 @@ private struct ShotPluginSheetView: View {
             Divider().overlay(Theme.hairline)
             VStack(alignment: .leading, spacing: 14) {
                 fieldBox("Base URL", value: "http://192.0.2.10:9283", secret: false)
-                fieldBox("API key", value: "•••• (set — leave blank to keep)", secret: true)
+                fieldBox("API key", value: "•••• (set, leave blank to keep)", secret: true)
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Color(red: 0.36, green: 0.78, blue: 0.5))

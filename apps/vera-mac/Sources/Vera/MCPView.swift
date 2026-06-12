@@ -46,19 +46,19 @@ struct MCPView: View {
     private var header: some View {
         HStack {
             Text("MCP").font(.system(size: 22, weight: .bold))
+            InfoTip(text: "What Vera can use: the tools, functions, and servers available to her.", size: 13)
             Text("\(tools.tools.count + tools.functions.count + tools.servers.count)")
                 .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surface).clipShape(Capsule())
             Spacer()
-            Text("what Vera can use").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
         }
         .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
     }
 
     private var banner: some View {
         HStack(spacing: 8) {
-            Image(systemName: "lock.fill").font(.system(size: 12))
-            Text("Read-only — sign in as an admin to make changes.").font(.system(size: 12))
+            Image(systemName: "eye").font(.system(size: 12))
+            Text("Read-only. Sign in as an admin to make changes.").font(.system(size: 12))
             Spacer()
         }
         .foregroundStyle(Theme.textSecondary)
@@ -154,6 +154,20 @@ struct MCPView: View {
 // MARK: - Reusable bits
 
 struct ValvesContext: Identifiable { let id: String; let title: String; let isFunction: Bool }
+
+/// A small info glyph whose explanation lives in the hover tooltip. The standard home
+/// for ambient helper prose on settings surfaces; inline text stays reserved for
+/// transient or load-bearing messages (errors, statuses, test results).
+struct InfoTip: View {
+    let text: String
+    var size: CGFloat = 11
+    var body: some View {
+        Image(systemName: "info.circle")
+            .font(.system(size: size))
+            .foregroundStyle(Theme.textSecondary.opacity(0.7))
+            .help(text)
+    }
+}
 
 /// A titled group of rows.
 struct SectionBox<Content: View>: View {

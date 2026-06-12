@@ -98,6 +98,7 @@ struct VeinsView: View {
     private var header: some View {
         HStack {
             Text("Veins").font(.system(size: 22, weight: .bold))
+            InfoTip(text: "The ambient watches pinned above the Pulse feed.", size: 13)
             if case .ready = veins.phase {
                 Text("\(veins.active)/\(veins.cap)")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
@@ -105,8 +106,6 @@ struct VeinsView: View {
                     .background(Theme.surface).clipShape(Capsule())
             }
             Spacer()
-            Text("the ambient watches pinned above the Pulse feed")
-                .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
         }
         .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
         .frame(maxWidth: 860, alignment: .leading)
@@ -188,7 +187,10 @@ private struct VeinCard: View {
                         .font(.system(size: 17)).foregroundStyle(Theme.textPrimary))
                     .frame(width: 40, height: 40)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(entry.label).font(.system(size: 15, weight: .semibold))
+                    HStack(spacing: 6) {
+                        Text(entry.label).font(.system(size: 15, weight: .semibold))
+                        InfoTip(text: entry.blurb)
+                    }
                     HStack(spacing: 5) {
                         Circle().fill(entry.enabled
                                       ? Color(red: 0.36, green: 0.78, blue: 0.5)
@@ -209,15 +211,13 @@ private struct VeinCard: View {
                 }
             }
 
-            Text(entry.blurb)
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
             ForEach(entry.requires.filter { !$0.met }, id: \.label) { req in
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 10))
-                    Text("Requires \(req.label) — \(req.detail)")
+                    Text("Requires \(req.label): \(req.detail)")
                         .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1).truncationMode(.tail)
+                        .help("Requires \(req.label): \(req.detail)")
                     if req.integration != nil {
                         Button("Open Plugins") { openPlugins() }
                             .buttonStyle(.plain).font(.system(size: 11, weight: .semibold))
@@ -229,6 +229,8 @@ private struct VeinCard: View {
                 .background(Color.orange.opacity(0.12)).clipShape(Capsule())
             }
 
+            Spacer(minLength: 0)
+
             HStack(spacing: 10) {
                 Button("Configure") { onConfigure() }
                     .buttonStyle(.plain)
@@ -238,16 +240,16 @@ private struct VeinCard: View {
                     .background(Theme.surfaceHover)
                     .clipShape(Capsule())
                 if let job = entry.jobs.first, entry.enabled {
-                    Text(job.cron).font(.system(size: 11, design: .monospaced))
+                    Text(cronSummary(job.cron)).font(.system(size: 11))
                         .foregroundStyle(Theme.textSecondary)
                         .help(job.label)
                 }
                 Spacer()
             }
-            .padding(.top, 2)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 148)
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
@@ -292,7 +294,7 @@ struct VeinSheet: View {
                     ForEach(entry.requires.filter { !$0.met }, id: \.label) { req in
                         HStack(spacing: 6) {
                             Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
-                            Text("Requires \(req.label) — \(req.detail)").font(.system(size: 12))
+                            Text("Requires \(req.label): \(req.detail)").font(.system(size: 12))
                             if req.integration != nil {
                                 Button("Open Plugins") { dismiss(); openPlugins() }
                                     .buttonStyle(.plain).font(.system(size: 12, weight: .semibold))
@@ -347,9 +349,9 @@ struct VeinSheet: View {
 
     private func providerEditor(_ p: VeinProvider) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(p.label).font(.system(size: 13, weight: .medium))
-            if !p.hint.isEmpty {
-                Text(p.hint).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            HStack(spacing: 6) {
+                Text(p.label).font(.system(size: 13, weight: .medium))
+                if !p.hint.isEmpty { InfoTip(text: p.hint) }
             }
             TextField(p.defaultValue, text: Binding(
                 get: { providerValues[p.id] ?? p.value },
@@ -370,11 +372,9 @@ struct VeinSheet: View {
         switch f.type {
         case "bool":
             HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
                     Text(f.label).font(.system(size: 12, weight: .medium))
-                    if !f.hint.isEmpty {
-                        Text(f.hint).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
-                    }
+                    if !f.hint.isEmpty { InfoTip(text: f.hint, size: 10) }
                 }
                 Spacer(minLength: 8)
                 Toggle("", isOn: Binding(get: { boolValues[f.id] ?? f.isOn },
@@ -385,9 +385,9 @@ struct VeinSheet: View {
             .background(Theme.bg.opacity(0.5)).clipShape(RoundedRectangle(cornerRadius: 8))
         case "choice":
             VStack(alignment: .leading, spacing: 4) {
-                Text(f.label).font(.system(size: 12, weight: .medium))
-                if !f.hint.isEmpty {
-                    Text(f.hint).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 6) {
+                    Text(f.label).font(.system(size: 12, weight: .medium))
+                    if !f.hint.isEmpty { InfoTip(text: f.hint, size: 10) }
                 }
                 Picker("", selection: Binding(
                     get: { textValues[f.id] ?? (f.value.isEmpty ? (f.choices.first ?? "") : f.value) },
@@ -398,9 +398,9 @@ struct VeinSheet: View {
             }
         default:  // text / number — a text field; the server coerces by declared type
             VStack(alignment: .leading, spacing: 4) {
-                Text(f.label).font(.system(size: 12, weight: .medium))
-                if !f.hint.isEmpty {
-                    Text(f.hint).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 6) {
+                    Text(f.label).font(.system(size: 12, weight: .medium))
+                    if !f.hint.isEmpty { InfoTip(text: f.hint, size: 10) }
                 }
                 TextField("", text: Binding(get: { textValues[f.id] ?? f.value },
                                             set: { textValues[f.id] = $0 }))

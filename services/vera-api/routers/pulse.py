@@ -675,7 +675,9 @@ async def _auditor(messages):
     base, model = coder._endpoint()
     if base:
         try:
-            msg = await coder._llm(messages, 0.0)
+            # Explicit generation budget: a full claims enumeration overruns the small
+            # default cap some servers apply, truncating the verdict JSON mid-object.
+            msg = await coder._llm(messages, 0.0, max_tokens=3000)
             return (msg.get("content") or ""), "coder", f"cross-model ({model or 'coder'})"
         except Exception:
             return await _vera(messages, temperature=0.0), "main model (coder unreachable)", "self (fallback)"

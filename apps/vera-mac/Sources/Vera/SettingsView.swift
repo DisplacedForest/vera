@@ -51,13 +51,11 @@ private struct ModelTab: View {
             Section {
                 DisclosureGroup("Advanced", isExpanded: $advanced) {
                     ConfigField(label: "Completions URL", key: "completions_url",
-                                placeholder: "pre-filled from the OWUI base when empty")
-                    Text("The raw OpenAI-style endpoint used as a fallback path. Leave empty to go through Open WebUI.")
-                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                placeholder: "pre-filled from the OWUI base when empty",
+                                tip: "The raw OpenAI-style endpoint used as a fallback path. Leave empty to go through Open WebUI.")
                     ConfigField(label: "Chat template kwargs", key: "chat_template_kwargs",
-                                placeholder: "{\"enable_thinking\": false}")
-                    Text("Server-specific chat-template options as JSON (e.g. the Qwen3 thinking toggle on llama.cpp/vLLM). Leave empty for strict OpenAI endpoints.")
-                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                placeholder: "{\"enable_thinking\": false}",
+                                tip: "Server-specific chat-template options as JSON (e.g. the Qwen3 thinking toggle on llama.cpp/vLLM). Leave empty for strict OpenAI endpoints.")
                 }
             }
             SaveSection()
@@ -94,9 +92,8 @@ private struct IdentityTab: View {
     var body: some View {
         Form {
             Section("Identity") {
-                ConfigField(label: "Your name", key: "owner_name", placeholder: "how Vera greets you")
-                Text("Drives the greeting and the sidebar chip. Leave empty for a nameless greeting.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                ConfigField(label: "Your name", key: "owner_name", placeholder: "how Vera greets you",
+                            tip: "Drives the greeting and the sidebar chip. Leave empty for a nameless greeting.")
             }
             SaveSection()
         }
@@ -165,16 +162,18 @@ private struct AboutTab: View {
 
 // MARK: - Building blocks
 
-/// One editable config.json field. Env-overridden keys render read-only with the env var named.
+/// One editable config.json field. Env-overridden keys refuse edits and explain why in
+/// an InfoTip rather than rendering padlocked.
 private struct ConfigField: View {
     @EnvironmentObject var config: ConfigStore
     let label: String
     let key: String
     var secure = false
     var placeholder = ""
+    var tip = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        HStack(spacing: 6) {
             if secure {
                 SecureField(label, text: config.binding(key), prompt: Text(placeholder))
                     .disabled(config.envOverride(key) != nil)
@@ -184,8 +183,9 @@ private struct ConfigField: View {
                     .disabled(config.envOverride(key) != nil)
             }
             if let env = config.envOverride(key) {
-                Label("Set by \(env) — the environment value wins", systemImage: "lock.fill")
-                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                InfoTip(text: "Set by \(env) in the environment. The environment value wins; change it there.")
+            } else if !tip.isEmpty {
+                InfoTip(text: tip)
             }
         }
     }

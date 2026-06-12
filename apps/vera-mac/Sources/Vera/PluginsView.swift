@@ -46,6 +46,7 @@ struct PluginsView: View {
     private var header: some View {
         HStack {
             Text("Plugins").font(.system(size: 22, weight: .bold))
+            InfoTip(text: "What Vera is connected to: each integration unlocks capabilities across the app.", size: 13)
             if case .ready = plugins.phase {
                 Text("\(plugins.entries.filter(\.enabled).count)/\(plugins.entries.count)")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
@@ -53,7 +54,6 @@ struct PluginsView: View {
                     .background(Theme.surface).clipShape(Capsule())
             }
             Spacer()
-            Text("what Vera is connected to").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
         }
         .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
         .frame(maxWidth: 860, alignment: .leading)
@@ -186,7 +186,10 @@ private struct PluginCard: View {
             HStack(alignment: .top, spacing: 12) {
                 PluginLogo(id: entry.id)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(entry.displayName).font(.system(size: 15, weight: .semibold))
+                    HStack(spacing: 6) {
+                        Text(entry.displayName).font(.system(size: 15, weight: .semibold))
+                        InfoTip(text: entry.unlocksLine)
+                    }
                     StatusChip(entry: entry, pendingNote: pendingNote)
                 }
                 Spacer(minLength: 8)
@@ -200,14 +203,12 @@ private struct PluginCard: View {
                 }
             }
 
-            Text(entry.unlocksLine)
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
             if let pairing = entry.pairing, pairing.active {
                 HStack(spacing: 6) {
                     Image(systemName: "link").font(.system(size: 10))
-                    Text("Paired — \(pairing.label)").font(.system(size: 11, weight: .medium))
+                    Text("Paired: \(pairing.label)").font(.system(size: 11, weight: .medium))
+                        .lineLimit(1).truncationMode(.tail)
+                        .help("Paired: \(pairing.label)")
                 }
                 .foregroundStyle(Theme.accent)
                 .padding(.horizontal, 9).padding(.vertical, 4)
@@ -220,6 +221,8 @@ private struct PluginCard: View {
                            busy: plugins.busy.contains(entry.id),
                            onToggle: { onFeatureToggle(feature, $0) })
             }
+
+            Spacer(minLength: 0)
 
             HStack(spacing: 10) {
                 Button(entry.configured ? "Configure" : "Add") { onConfigure() }
@@ -236,10 +239,10 @@ private struct PluginCard: View {
                 }
                 Spacer()
             }
-            .padding(.top, 2)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 188)
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
@@ -289,27 +292,20 @@ private struct FeatureRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(feature.label).font(.system(size: 12, weight: .medium))
-                    Text("EXPERIMENTAL").font(.system(size: 8, weight: .bold)).tracking(0.5)
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.15)).clipShape(Capsule())
-                }
+            HStack(spacing: 6) {
+                Text(feature.label).font(.system(size: 12, weight: .medium))
+                Text("EXPERIMENTAL").font(.system(size: 8, weight: .bold)).tracking(0.5)
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 5).padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.15)).clipShape(Capsule())
                 if locked {
-                    Text("Enable \(entry.displayName) first")
-                        .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                    InfoTip(text: "Turn on \(entry.displayName) first.", size: 10)
                 }
             }
             Spacer(minLength: 8)
-            if locked {
-                Image(systemName: "lock.fill").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
-            } else {
-                Toggle("", isOn: Binding(get: { feature.enabled }, set: { onToggle($0) }))
-                    .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-                    .tint(.orange).disabled(busy)
-            }
+            Toggle("", isOn: Binding(get: { feature.enabled && !locked }, set: { onToggle($0) }))
+                .toggleStyle(.switch).controlSize(.mini).labelsHidden()
+                .tint(.orange).disabled(busy || locked)
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(Theme.bg.opacity(0.5))
@@ -387,15 +383,13 @@ struct PluginSheet: View {
             HStack(spacing: 6) {
                 Text(f.label).font(.system(size: 13, weight: .medium))
                 if f.envLocked {
-                    Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
-                        .help("Pinned by the server's environment — change it there.")
+                    InfoTip(text: "Pinned by the server's environment. Change it there.", size: 9)
+                } else if !f.hint.isEmpty {
+                    InfoTip(text: f.hint)
                 }
             }
-            if !f.hint.isEmpty {
-                Text(f.hint).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-            }
             if f.secret {
-                SecureField(f.isSet ? "•••• (set — leave blank to keep)" : "",
+                SecureField(f.isSet ? "•••• (set, leave blank to keep)" : "",
                             text: binding(f.id))
                     .textFieldStyle(.roundedBorder).disabled(f.envLocked)
             } else if !f.choices.isEmpty {

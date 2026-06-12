@@ -146,7 +146,7 @@ struct VeinEntry: Identifiable, Hashable, Sendable {
                       jobs: [VeinJob(id: "weather", label: "Weather check",
                                      cron: "0 */6 * * *", enabled: true, gated: nil)]),
             VeinEntry(kind: "signals", label: "Signals", icon: "antenna.radiowaves.left.and.right",
-                      blurb: "an external-watch monitor — only what crosses pre-declared thresholds",
+                      blurb: "an external-watch monitor, surfacing only what crosses pre-declared thresholds",
                       nominalLabel: "quiet", enabled: false, canEnable: true, requires: [],
                       providers: [],
                       options: [VeinOptionGroup(group: "Source groups", fields: [

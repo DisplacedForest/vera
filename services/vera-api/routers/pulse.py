@@ -1138,7 +1138,7 @@ async def _do_run(req: PulseRequest):
     out["gates"] = gates
     if len(out["injected"]) < target and any(gates.values()):
         msg = (f"starved run: {len(out['injected'])}/{target} cards after "
-               f"{len(out['rounds'])} triage round(s); gate kills — "
+               f"{len(out['rounds'])} triage round(s); gate kills: "
                + ", ".join(f"{k}={v}" for k, v in gates.items()))
         out["errors"].append(msg)
         log.warning("%s", msg)

@@ -98,13 +98,17 @@ def parse_search_call(text):
 
 # ------------------------------------------------------------------ shared plumbing
 
-async def _llm(messages, temperature, tools=None):
+async def _llm(messages, temperature, tools=None, max_tokens=None):
     """One chat-completions call; returns the full response message object (content and, when
-    the server supports the openai protocol, any tool_calls)."""
+    the server supports the openai protocol, any tool_calls). `max_tokens` is sent only when
+    given — some servers default to a small generation cap, so callers expecting a long
+    structured reply must set their own budget."""
     base, model = _endpoint()
     body = {"model": model, "stream": False, "temperature": temperature, "messages": messages}
     if tools:
         body["tools"] = tools
+    if max_tokens:
+        body["max_tokens"] = max_tokens
     async with aiohttp.ClientSession() as s:
         async with s.post(
             f"{base}/chat/completions",

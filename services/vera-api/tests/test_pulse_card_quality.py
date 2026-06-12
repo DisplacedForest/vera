@@ -294,7 +294,7 @@ def test_card_sys_carries_current_state_rule():
 def test_auditor_falls_back_when_coder_unreachable(monkeypatch):
     from routers import coder
     monkeypatch.setattr(coder, "_endpoint", lambda: ("http://coder.example:8084", "m"))
-    async def coder_down(messages, temperature, tools=None):
+    async def coder_down(messages, temperature, tools=None, max_tokens=None):
         raise RuntimeError("connect call failed")
     monkeypatch.setattr(coder, "_llm", coder_down)
     async def vera(messages, temperature=0.4):
@@ -308,11 +308,16 @@ def test_auditor_falls_back_when_coder_unreachable(monkeypatch):
 def test_auditor_stamps_cross_model_with_the_model_name(monkeypatch):
     from routers import coder
     monkeypatch.setattr(coder, "_endpoint", lambda: ("http://coder.example:8084", "audit-model"))
-    async def coder_up(messages, temperature, tools=None):
+    seen = {}
+    async def coder_up(messages, temperature, tools=None, max_tokens=None):
+        seen["max_tokens"] = max_tokens
         return {"content": '{"claims":[]}'}
     monkeypatch.setattr(coder, "_llm", coder_up)
     _, auditor, stamp = _run(pulse._auditor([{"role": "user", "content": "u"}]))
     assert auditor == "coder" and stamp == "cross-model (audit-model)"
+    # a full claims enumeration must carry its own generation budget — server defaults
+    # can cap small and truncate the verdict JSON mid-object
+    assert seen["max_tokens"] and seen["max_tokens"] >= 1500
 
 
 # --- cover image prompt inputs --------------------------------------------------------

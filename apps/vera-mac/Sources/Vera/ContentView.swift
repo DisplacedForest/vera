@@ -140,7 +140,10 @@ private struct Sidebar: View {
     private var agenticNav: some View {
         VStack(spacing: 0) {
             VStack(spacing: 1) {
-                navRow("Default Schedules", "clock.arrow.2.circlepath", active: true, action: {})
+                navRow("Canvas", "point.3.connected.trianglepath.dotted",
+                       active: store.agenticPane == .canvas) { store.agenticPane = .canvas }
+                navRow("Activity", "bolt",
+                       active: store.agenticPane == .activity) { store.agenticPane = .activity }
             }
             .padding(.horizontal, 8)
             Spacer()

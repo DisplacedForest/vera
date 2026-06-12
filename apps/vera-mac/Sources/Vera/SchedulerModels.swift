@@ -7,6 +7,7 @@ struct SchedulerJob: Identifiable, Sendable, Hashable {
     var cron: String
     var enabled: Bool
     var envLocked: Bool          // forced off/on by the server's environment — not editable here
+    var gated: String?           // off because an integration/feature gate is closed (the reason)
     var lastRunAt: Date?
     var lastRunOK: Bool?
     var lastRunDetail: String
@@ -18,20 +19,29 @@ struct SchedulerJob: Identifiable, Sendable, Hashable {
                  detail: String = "completed", enabled: Bool = true, locked: Bool = false,
                  lastAgo: TimeInterval = 3600, nextIn: TimeInterval = 7200) -> SchedulerJob {
             SchedulerJob(id: id, label: label, cron: cron, enabled: enabled, envLocked: locked,
+                         gated: nil,
                          lastRunAt: ok == nil ? nil : now.addingTimeInterval(-lastAgo), lastRunOK: ok,
                          lastRunDetail: ok == nil ? "" : detail,
                          nextRun: enabled ? now.addingTimeInterval(nextIn) : nil)
         }
         return [
-            job("pulse", "Pulse briefing", "0 5 * * *", detail: "6 cards", lastAgo: 5 * 3600, nextIn: 14 * 3600),
-            job("heartbeat", "Heartbeat tick", "*/20 * * * *", detail: "nominal", lastAgo: 600, nextIn: 600),
-            job("weather", "Weather check", "0 */6 * * *", detail: "no change", lastAgo: 2 * 3600, nextIn: 4 * 3600),
+            job("pulse", "Pulse briefing", "0 5 * * *", detail: "6 cards", lastAgo: 7 * 3600, nextIn: 17 * 3600),
+            job("heartbeat", "Heartbeat tick", "*/20 * * * *", detail: "nominal", lastAgo: 600, nextIn: 900),
+            job("weather", "Weather check", "0 */6 * * *", detail: "no change", lastAgo: 300, nextIn: 6 * 3600),
             job("signals", "Signals check", "0 6,18 * * *", ok: false,
                 detail: "feed timeout after 30s", lastAgo: 3 * 3600, nextIn: 9 * 3600),
             job("memory_groom", "Memory groom", "0 4 * * *", detail: "merged 2, promoted 1",
-                lastAgo: 6 * 3600, nextIn: 13 * 3600),
+                lastAgo: 8 * 3600, nextIn: 16 * 3600),
+            job("home_model", "Home model refresh", "30 3 * * *", detail: "295 patterns",
+                lastAgo: 9 * 3600, nextIn: 15 * 3600),
+            job("home_reconcile", "Home map reconcile", "0 3 * * *", detail: "7 of 7 ok",
+                lastAgo: 9 * 3600, nextIn: 14 * 3600),
+            job("home_digest", "Home rhythm digest", "0 2 * * *", detail: "quiet day",
+                lastAgo: 10 * 3600, nextIn: 14 * 3600),
             job("healthcheck", "Health probe", "*/15 * * * *", detail: "all services up",
                 lastAgo: 300, nextIn: 600),
+            job("updates", "Stack updates check", "30 7 * * *", detail: "nothing pending",
+                lastAgo: 5 * 3600, nextIn: 19 * 3600),
             job("media_curate", "Media curation", "0 9 * * 0", ok: nil, enabled: false, locked: true),
         ]
     }
@@ -57,6 +67,7 @@ struct SchedulerState: Sendable {
                 cron: (j["cron"] as? String) ?? (j["schedule"] as? String) ?? "",
                 enabled: (j["enabled"] as? Bool) ?? true,
                 envLocked: (j["env_locked"] as? Bool) ?? (j["locked"] as? Bool) ?? false,
+                gated: j["gated"] as? String,
                 lastRunAt: schedulerDate(last?["ts"]),
                 lastRunOK: last?["ok"] as? Bool,
                 lastRunDetail: (last?["detail"] as? String) ?? "",

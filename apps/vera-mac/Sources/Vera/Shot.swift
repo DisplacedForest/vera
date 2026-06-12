@@ -151,6 +151,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "agentic-pulse" || view == "agentic-heartbeat" || view == "agentic-inspector" {
+            content = AnyView(
+                AgenticDetailShot(variant: view)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else {
             let section: AppSection
             switch view {

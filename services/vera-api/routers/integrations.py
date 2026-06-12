@@ -61,7 +61,7 @@ REGISTRY: dict[str, dict] = {
             {"id": "protocol", "env": "IMAGE_PROTOCOL", "label": "Protocol",
              "secret": False, "optional": True, "choices": ["openai", "vera"],
              "hint": "openai = standard Images API (default); vera = the bespoke reference "
-                     "contract (deterministic seeds + co-located vision memory arbitration)"},
+                     "contract (deterministic seeds + the vision pause/resume extension)"},
         ],
         "unlocks": ["cover art on Pulse briefing cards"],
     },

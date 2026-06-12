@@ -75,8 +75,9 @@ VIX_REGIME = _envf("SIGNALS_VIX_REGIME", "30.0")              # VIX >= this coun
 HY_SPREAD_PCT = _envf("SIGNALS_HY_SPREAD_PCT", "8.0")         # high-yield OAS (pct) >= this counts as a credit-blowout factor (FRED-gated)
 ECON_CRITICAL_FACTORS = int(_envf("SIGNALS_ECON_CRITICAL_FACTORS", "2"))  # >= this many economic factors true -> critical
 EIA_RESPONDENT = os.environ.get("EIA_RESPONDENT", "").strip()  # the home grid's balancing authority (e.g. MISO)
-GRID_DEV_NOTICE = _envf("SIGNALS_GRID_DEV_NOTICE", "5.0")  # actual demand this % over day-ahead forecast -> notice (baseline noise ~1.5% stdev)
+GRID_DEV_NOTICE = _envf("SIGNALS_GRID_DEV_NOTICE", "5.0")  # actual demand this % over day-ahead forecast -> notice (finalized hours run mean ~-2%, stdev ~2.5%, weekly max ~+2.4% — the forecast biases high)
 GRID_DEV_ALERT = _envf("SIGNALS_GRID_DEV_ALERT", "8.0")    # ...this % over -> alert (grid carrying materially more load than planned)
+NEWS_MIN_SEVERITY = int(_envf("SIGNALS_NEWS_MIN_SEVERITY", "4"))  # judged candidates below this never trip (4 -> notice, 5 -> alert; a normal week's candidates sit at <= 3)
 
 TIER_RANK = {"notice": 1, "alert": 2, "critical": 3}
 SIGNALS_LOG = os.environ.get("SIGNALS_LOG_PATH", "/data/signals_log.jsonl")  # threshold-calibration dataset
@@ -343,11 +344,33 @@ async def _collect_fred_hy(session):
     return {"hy_oas_pct": float(obs[0]["value"]), "date": obs[0].get("date")}
 
 
+def _grid_hour(by_period, window=6):
+    """Pick the hour the grid reading reports. The newest published hour is often provisional —
+    actual demand mirrors the day-ahead forecast exactly until the real value lands — so leading
+    exact mirrors are skipped (capped at 3: a longer flat run is data, not publication lag).
+    Among the next `window` finalized hours, return the max-positive-deviation hour, so a real
+    load excursion is never masked by a provisional 0%. None when no complete hour exists."""
+    hours = []
+    for period in sorted(by_period, reverse=True):
+        v = by_period[period]
+        if v.get("D") and v.get("DF"):
+            hours.append((period, v["D"], v["DF"]))
+    skip = 0
+    while skip < min(3, len(hours) - 1) and hours[skip][1] == hours[skip][2]:
+        skip += 1
+    hours = hours[skip:skip + window]
+    if not hours:
+        return None
+    period, d, df = max(hours, key=lambda h: h[1] / h[2])
+    return {"period": period, "demand_mw": d, "forecast_mw": df,
+            "dev_pct": round((d / df - 1) * 100, 1)}
+
+
 async def _collect_eia_grid(session):
     """EIA hourly grid data for our balancing authority — actual demand vs day-ahead forecast.
     Gated on EIA_API_KEY; skipped if absent. EIA has no 'emergency declared' flag, so this is a
     load-stress proxy: actual demand running materially above what was forecast = thinner reserves
-    than planned. Actual demand lags ~6h, so we use the latest hour that has both D and DF."""
+    than planned. The reported hour is _grid_hour's pick over the recent finalized window."""
     if not EIA_API_KEY:
         raise ValueError("EIA_API_KEY not set")
     if not EIA_RESPONDENT:
@@ -363,13 +386,10 @@ async def _collect_eia_grid(session):
         if r.get("value") is None:
             continue
         by_period.setdefault(r["period"], {})[r["type"]] = float(r["value"])
-    for period in sorted(by_period, reverse=True):
-        v = by_period[period]
-        if v.get("D") and v.get("DF"):
-            return {"respondent": EIA_RESPONDENT, "period": period,
-                    "demand_mw": v["D"], "forecast_mw": v["DF"],
-                    "dev_pct": round((v["D"] / v["DF"] - 1) * 100, 1)}
-    raise ValueError("no hour with both demand and forecast")
+    hour = _grid_hour(by_period)
+    if hour is None:
+        raise ValueError("no hour with both demand and forecast")
+    return {"respondent": EIA_RESPONDENT, **hour}
 
 
 async def _collect_news(session):
@@ -539,7 +559,7 @@ def _eval_news_candidates(cands):
     everything else caps at alert; supply/severe/geopolitical never reach critical."""
     trips = []
     for c in cands:
-        if not c.get("corroborated") or (c.get("severity") or 0) < 4:
+        if not c.get("corroborated") or (c.get("severity") or 0) < NEWS_MIN_SEVERITY:
             continue
         cat, sev = c.get("category"), c.get("severity") or 0
         srcs = [_src(s.get("title", "source"), s.get("url", "")) for s in (c.get("sources") or []) if s.get("url")]

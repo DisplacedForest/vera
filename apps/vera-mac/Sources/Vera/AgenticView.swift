@@ -87,6 +87,7 @@ struct AgenticView: View {
             // Header rides the same centered column as the cards so wide windows keep them aligned.
             HStack {
                 Text("Agentic").font(.system(size: 22, weight: .bold))
+                InfoTip(text: "What Vera runs on her own: every autonomous schedule, editable to taste.", size: 13)
                 if case .ready = sched.phase {
                     Text("\(sched.jobs.count)").font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
@@ -94,7 +95,6 @@ struct AgenticView: View {
                         .background(Theme.surface).clipShape(Capsule())
                 }
                 Spacer()
-                Text("what Vera runs on her own").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
             .frame(maxWidth: 860, alignment: .leading)
@@ -221,9 +221,7 @@ private struct ScheduleRow: View {
                         HStack(spacing: 6) {
                             Text(job.label).font(.system(size: 14, weight: .semibold))
                             if job.envLocked {
-                                Image(systemName: "lock.fill").font(.system(size: 10))
-                                    .foregroundStyle(Theme.textSecondary)
-                                    .help("Fixed by the server's environment — edit its env vars to change.")
+                                InfoTip(text: "Fixed by the server's environment. Edit its env vars to change.", size: 10)
                             }
                             if let note = sched.rowNote[job.id] {
                                 Text(note).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.accent)
@@ -265,15 +263,10 @@ private struct ScheduleRow: View {
     }
 
     private var detailLine: String {
-        var parts: [String] = ["cron \(job.cron)"]
-        if let last = job.lastRunAt {
-            let outcome = job.lastRunOK == false ? "failed" : "ok"
-            let detail = job.lastRunDetail.isEmpty ? "" : " — \(job.lastRunDetail)"
-            parts.append("last run \(relativeTime(last)) \(outcome)\(detail)")
-        } else {
-            parts.append("no runs recorded")
-        }
-        return parts.joined(separator: "  ·  ")
+        guard let last = job.lastRunAt else { return "no runs recorded" }
+        let outcome = job.lastRunOK == false ? "failed" : "ok"
+        let detail = job.lastRunDetail.isEmpty ? "" : ": \(job.lastRunDetail)"
+        return "last run \(relativeTime(last)) \(outcome)\(detail)"
     }
 }
 

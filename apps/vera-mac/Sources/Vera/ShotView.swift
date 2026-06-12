@@ -339,10 +339,10 @@ struct ShotView: View {
         return VStack(spacing: 0) {
             HStack {
                 Text("Agentic").font(.system(size: 22, weight: .bold))
+                InfoTip(text: "What Vera runs on her own: every autonomous schedule, editable to taste.", size: 13)
                 Text("\(jobs.count)").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surface).clipShape(Capsule())
                 Spacer()
-                Text("what Vera runs on her own").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
             .frame(maxWidth: 860, alignment: .leading)
@@ -360,8 +360,7 @@ struct ShotView: View {
                                 HStack(spacing: 6) {
                                     Text(job.label).font(.system(size: 14, weight: .semibold))
                                     if job.envLocked {
-                                        Image(systemName: "lock.fill").font(.system(size: 10))
-                                            .foregroundStyle(Theme.textSecondary)
+                                        InfoTip(text: "Fixed by the server's environment. Edit its env vars to change.", size: 10)
                                     }
                                 }
                                 Text(shotSubline(job)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -401,12 +400,11 @@ struct ShotView: View {
         return VStack(spacing: 0) {
             HStack {
                 Text("Veins").font(.system(size: 22, weight: .bold))
+                InfoTip(text: "The ambient watches pinned above the Pulse feed.", size: 13)
                 Text("\(entries.filter(\.enabled).count)/6")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surface).clipShape(Capsule())
                 Spacer()
-                Text("the ambient watches pinned above the Pulse feed")
-                    .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
             .frame(maxWidth: 860, alignment: .leading)
@@ -432,7 +430,10 @@ struct ShotView: View {
                         .font(.system(size: 17)).foregroundStyle(Theme.textPrimary))
                     .frame(width: 40, height: 40)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(e.label).font(.system(size: 15, weight: .semibold))
+                    HStack(spacing: 6) {
+                        Text(e.label).font(.system(size: 15, weight: .semibold))
+                        InfoTip(text: e.blurb)
+                    }
                     HStack(spacing: 5) {
                         Circle().fill(e.enabled ? Color(red: 0.36, green: 0.78, blue: 0.5)
                                                 : Theme.textSecondary.opacity(0.5))
@@ -444,32 +445,32 @@ struct ShotView: View {
                 Spacer(minLength: 8)
                 if e.canEnable || e.enabled { StatePill(on: e.enabled) }
             }
-            Text(e.blurb).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
             ForEach(e.requires.filter { !$0.met }, id: \.label) { req in
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 10))
-                    Text("Requires \(req.label) — \(req.detail)").font(.system(size: 11, weight: .medium))
+                    Text("Requires \(req.label): \(req.detail)").font(.system(size: 11, weight: .medium))
+                        .lineLimit(1).truncationMode(.tail)
                 }
                 .foregroundStyle(.orange)
                 .padding(.horizontal, 9).padding(.vertical, 4)
                 .background(Color.orange.opacity(0.12)).clipShape(Capsule())
             }
+            Spacer(minLength: 0)
             HStack(spacing: 10) {
                 Text("Configure").font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .padding(.horizontal, 14).padding(.vertical, 6)
                     .background(Theme.surfaceHover).clipShape(Capsule())
                 if let job = e.jobs.first, e.enabled {
-                    Text(job.cron).font(.system(size: 11, design: .monospaced))
+                    Text(cronSummary(job.cron)).font(.system(size: 11))
                         .foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()
             }
-            .padding(.top, 2)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 148)
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
@@ -482,11 +483,11 @@ struct ShotView: View {
         return VStack(spacing: 0) {
             HStack {
                 Text("Plugins").font(.system(size: 22, weight: .bold))
+                InfoTip(text: "What Vera is connected to: each integration unlocks capabilities across the app.", size: 13)
                 Text("\(entries.filter(\.enabled).count)/\(entries.count)")
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surface).clipShape(Capsule())
                 Spacer()
-                Text("what Vera is connected to").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
             .frame(maxWidth: 860, alignment: .leading)
@@ -509,7 +510,10 @@ struct ShotView: View {
             HStack(alignment: .top, spacing: 12) {
                 PluginLogo(id: e.id)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(e.displayName).font(.system(size: 15, weight: .semibold))
+                    HStack(spacing: 6) {
+                        Text(e.displayName).font(.system(size: 15, weight: .semibold))
+                        InfoTip(text: e.unlocksLine)
+                    }
                     HStack(spacing: 5) {
                         Circle().fill(shotStatusColor(e)).frame(width: 6, height: 6)
                         Text(shotStatusText(e)).font(.system(size: 11, weight: .medium))
@@ -519,12 +523,11 @@ struct ShotView: View {
                 Spacer(minLength: 8)
                 if e.configured { StatePill(on: e.enabled) }
             }
-            Text(e.unlocksLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
             if let pairing = e.pairing, pairing.active {
                 HStack(spacing: 6) {
                     Image(systemName: "link").font(.system(size: 10))
-                    Text("Paired — \(pairing.label)").font(.system(size: 11, weight: .medium))
+                    Text("Paired: \(pairing.label)").font(.system(size: 11, weight: .medium))
+                        .lineLimit(1).truncationMode(.tail)
                 }
                 .foregroundStyle(Theme.accent)
                 .padding(.horizontal, 9).padding(.vertical, 4)
@@ -543,16 +546,20 @@ struct ShotView: View {
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(Theme.bg.opacity(0.5)).clipShape(RoundedRectangle(cornerRadius: 8))
             }
-            Text(e.configured ? "Configure" : "Add")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(e.configured ? Theme.textPrimary : .white)
-                .padding(.horizontal, 14).padding(.vertical, 6)
-                .background(e.configured ? Theme.surfaceHover : Theme.accent)
-                .clipShape(Capsule())
-                .padding(.top, 2)
+            Spacer(minLength: 0)
+            HStack {
+                Text(e.configured ? "Configure" : "Add")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(e.configured ? Theme.textPrimary : .white)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(e.configured ? Theme.surfaceHover : Theme.accent)
+                    .clipShape(Capsule())
+                Spacer()
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 188)
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
@@ -569,7 +576,7 @@ struct ShotView: View {
     private func shotStatusText(_ e: PluginEntry) -> String {
         switch e.status {
         case "enabled": "Connected"
-        case "error": e.lastTestDetail.isEmpty ? "Error" : "Error — \(e.lastTestDetail)"
+        case "error": e.lastTestDetail.isEmpty ? "Error" : "Error: \(e.lastTestDetail)"
         case "configured": "Off"
         default: "Not connected"
         }
@@ -586,10 +593,10 @@ struct ShotView: View {
         return VStack(spacing: 0) {
             HStack {
                 Text("MCP").font(.system(size: 22, weight: .bold))
+                InfoTip(text: "What Vera can use: the tools, functions, and servers available to her.", size: 13)
                 Text("3").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surface).clipShape(Capsule())
                 Spacer()
-                Text("what Vera can use").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 8)
             VStack(alignment: .leading, spacing: 22) {

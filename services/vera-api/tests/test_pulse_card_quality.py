@@ -222,11 +222,12 @@ def _srcs():
 
 def test_audit_clean_body_unchanged(monkeypatch):
     async def auditor(messages):
-        return '{"claims":[{"claim":"ok","source":1}]}', "coder"
+        return '{"claims":[{"claim":"ok","source":1}]}', "coder", "cross-model (m)"
     monkeypatch.setattr(pulse, "_auditor", auditor)
     errs = []
-    h, b = _run(pulse.audit_claims("Head", "Body text.", _srcs(), errs, "T"))
+    h, b, stamp = _run(pulse.audit_claims("Head", "Body text.", _srcs(), errs, "T"))
     assert (h, b) == ("Head", "Body text.")
+    assert stamp == "cross-model (m)"
     assert errs == ["claim audit: T — clean (coder)"]
 
 
@@ -235,16 +236,17 @@ def test_audit_unsupported_revises(monkeypatch):
     async def auditor(messages):
         calls["n"] += 1
         if calls["n"] == 1:
-            return '{"claims":[{"claim":"Forest under Sean Dyche","source":"UNSUPPORTED"}]}', "coder"
-        return '{"claims":[]}', "coder"  # re-audit of the revision, for the record
+            return '{"claims":[{"claim":"Forest under Sean Dyche","source":"UNSUPPORTED"}]}', "coder", "cross-model (m)"
+        return '{"claims":[]}', "coder", "cross-model (m)"  # re-audit of the revision, for the record
     async def vera(messages, temperature=0.4):
         assert "Forest under Sean Dyche" in messages[1]["content"]
         return "HEADLINE: Fixed Head\n\nRevised body without the claim."
     monkeypatch.setattr(pulse, "_auditor", auditor)
     monkeypatch.setattr(pulse, "_vera", vera)
     errs = []
-    h, b = _run(pulse.audit_claims("Head", "Body under Sean Dyche.", _srcs(), errs, "T"))
+    h, b, stamp = _run(pulse.audit_claims("Head", "Body under Sean Dyche.", _srcs(), errs, "T"))
     assert h == "Fixed Head" and b == "Revised body without the claim."
+    assert stamp == "cross-model (m)"
     assert errs == ["claim audit: T — 1 unsupported, revised (coder)"]
 
 
@@ -253,31 +255,34 @@ def test_audit_machinery_failure_ships_original(monkeypatch):
         raise RuntimeError("studio offline")
     monkeypatch.setattr(pulse, "_auditor", auditor)
     errs = []
-    h, b = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
+    h, b, stamp = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
     assert (h, b) == ("Head", "Body.")
+    assert stamp == "none"  # no effective audit happened
     assert "audit unavailable" in errs[0]
 
 
 def test_audit_unparseable_ships_original(monkeypatch):
     async def auditor(messages):
-        return "I cannot really say", "coder"
+        return "I cannot really say", "coder", "cross-model (m)"
     monkeypatch.setattr(pulse, "_auditor", auditor)
     errs = []
-    h, b = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
+    h, b, stamp = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
     assert (h, b) == ("Head", "Body.")
+    assert stamp == "none"  # a verdict nobody could parse is not an audit
     assert "unparseable" in errs[0]
 
 
 def test_audit_empty_revision_ships_original(monkeypatch):
     async def auditor(messages):
-        return '{"claims":[{"claim":"X","source":"UNSUPPORTED"}]}', "coder"
+        return '{"claims":[{"claim":"X","source":"UNSUPPORTED"}]}', "coder", "cross-model (m)"
     async def vera(messages, temperature=0.4):
         return ""
     monkeypatch.setattr(pulse, "_auditor", auditor)
     monkeypatch.setattr(pulse, "_vera", vera)
     errs = []
-    h, b = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
+    h, b, stamp = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
     assert (h, b) == ("Head", "Body.")
+    assert stamp == "cross-model (m)"  # the audit DID run; only the revision failed
     assert "revision empty" in errs[0]
 
 
@@ -295,13 +300,24 @@ def test_auditor_falls_back_when_coder_unreachable(monkeypatch):
     async def vera(messages, temperature=0.4):
         return '{"claims":[]}'
     monkeypatch.setattr(pulse, "_vera", vera)
-    raw, auditor = _run(pulse._auditor([{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]))
+    raw, auditor, stamp = _run(pulse._auditor([{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]))
     assert auditor == "main model (coder unreachable)" and raw == '{"claims":[]}'
+    assert stamp == "self (fallback)"
+
+
+def test_auditor_stamps_cross_model_with_the_model_name(monkeypatch):
+    from routers import coder
+    monkeypatch.setattr(coder, "_endpoint", lambda: ("http://coder.example:8084", "audit-model"))
+    async def coder_up(messages, temperature, tools=None):
+        return {"content": '{"claims":[]}'}
+    monkeypatch.setattr(coder, "_llm", coder_up)
+    _, auditor, stamp = _run(pulse._auditor([{"role": "user", "content": "u"}]))
+    assert auditor == "coder" and stamp == "cross-model (audit-model)"
 
 
 # --- cover image prompt inputs --------------------------------------------------------
 
-def _research_with_synthesis(monkeypatch, synthesis):
+def _research_with_synthesis(monkeypatch, synthesis, defer_audit=False):
     """Drive research_topic with a fixed synthesis; returns (image user msg, call order, card)."""
     from types import SimpleNamespace
     seen = {"img_usr": None, "order": []}
@@ -322,7 +338,8 @@ def _research_with_synthesis(monkeypatch, synthesis):
         return []
 
     async def audit_passthrough(headline, body, sources, errs, title):
-        return headline, body
+        seen["order"].append("audit")
+        return headline, body, "cross-model (m)"
 
     async def vera(messages, temperature=0.4):
         sys_p = messages[0]["content"]
@@ -349,7 +366,7 @@ def _research_with_synthesis(monkeypatch, synthesis):
     monkeypatch.setattr(pulse, "_gen_image", fake_gen)
     monkeypatch.setattr(pulse.store, "insert_card", cards.append)
     card = _run(pulse.research_topic({"title": "Nottingham Forest news", "query": "q"},
-                                     who="Z", user_id="u", errors=[]))
+                                     who="Z", user_id="u", errors=[], defer_audit=defer_audit))
     return seen["img_usr"], seen["order"], card
 
 
@@ -370,9 +387,24 @@ def test_image_prompt_falls_back_to_working_title_without_headline(monkeypatch):
 def test_summary_generated_before_cover_art(monkeypatch):
     _, order, card = _research_with_synthesis(
         monkeypatch, "HEADLINE: H\n\nBody. [1]")
-    assert order == ["summary", "image"]
+    assert order == ["audit", "summary", "image"]
     assert card["summary"] == "Forest clinched a top-four finish on the final day."
     assert card["image_url"] == "http://img/cover.png" and card["tint"] == "#223344"
+
+
+def test_inline_audit_stamps_the_card(monkeypatch):
+    _, order, card = _research_with_synthesis(monkeypatch, "HEADLINE: H\n\nBody. [1]")
+    assert "audit" in order
+    assert card["audit"] == "cross-model (m)"
+    assert "_corpus" not in card
+
+
+def test_deferred_audit_skips_inline_and_hands_back_the_corpus(monkeypatch):
+    _, order, card = _research_with_synthesis(monkeypatch, "HEADLINE: H\n\nBody. [1]",
+                                              defer_audit=True)
+    assert "audit" not in order  # the run loop's end-of-run phase owns it
+    assert card["audit"] == "none"  # honest until the phase stamps the real mode
+    assert "_corpus" in card  # full sources for the batched audit
 
 
 def test_image_sys_carries_disambiguation_rule():

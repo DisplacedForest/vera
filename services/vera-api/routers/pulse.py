@@ -51,6 +51,14 @@ PULSE_TRIAGE_ROUNDS = int(os.environ.get("PULSE_TRIAGE_ROUNDS", "3"))
 # Variety guarantee within one run: at most this many research cards per standing interest.
 PULSE_MAX_PER_INTEREST = int(os.environ.get("PULSE_MAX_PER_INTEREST", "1"))
 
+# Optional warm-up/release hooks bracketing the end-of-run claim-audit phase. When set,
+# the run POSTs the wake URL before auditing (so an on-demand audit model can load once
+# for the whole batch) and the release URL after — unless the wake reply said the model
+# was already up, in which case it is not this run's to release. Unset = no hook calls;
+# an always-resident audit endpoint needs neither.
+AUDIT_WAKE_URL = os.environ.get("AUDIT_WAKE_URL", "").strip()
+AUDIT_RELEASE_URL = os.environ.get("AUDIT_RELEASE_URL", "").strip()
+
 # Image generation resolves through the integrations registry's 'image_gen' entry
 # (env-seeded by VERA_IMAGE_BASE / IMAGE_PROTOCOL, editable in the plugin store) — the
 # same pattern as the coder's tool protocol. Protocol: the standard OpenAI Images API
@@ -662,16 +670,16 @@ async def _auditor(messages):
     than the writer, so the writer's priors can't validate their own fabrication. The coder is
     typically an on-demand server, so unreachable is a normal state, not an error: fall back to
     a main-model self-audit (weaker, still better than none) and name the fallback. Returns
-    (reply_text, auditor_name)."""
+    (reply_text, auditor_name, provenance_stamp) — the stamp is what the card records."""
     from . import coder  # lazy: avoids a circular load at import time
-    base, _model = coder._endpoint()
+    base, model = coder._endpoint()
     if base:
         try:
             msg = await coder._llm(messages, 0.0)
-            return (msg.get("content") or ""), "coder"
+            return (msg.get("content") or ""), "coder", f"cross-model ({model or 'coder'})"
         except Exception:
-            return await _vera(messages, temperature=0.0), "main model (coder unreachable)"
-    return await _vera(messages, temperature=0.0), "main model (coder unconfigured)"
+            return await _vera(messages, temperature=0.0), "main model (coder unreachable)", "self (fallback)"
+    return await _vera(messages, temperature=0.0), "main model (coder unconfigured)", "self (fallback)"
 
 
 def _parse_audit(raw):
@@ -691,24 +699,25 @@ def _parse_audit(raw):
 async def audit_claims(headline, body, sources, errs, title):
     """Cross-model claim validation: the auditor checks the body against its own corpus;
     unsupported claims go back to the main model for ONE surgical revision (re-audited for the
-    record only — the revision ships regardless). Returns (headline, body), possibly revised.
-    Machinery failure ships the original: the feed never starves on audit plumbing."""
+    record only — the revision ships regardless). Returns (headline, body, audit_stamp), the
+    text possibly revised; the stamp is 'none' when no effective audit happened. Machinery
+    failure ships the original: the feed never starves on audit plumbing."""
     corpus = _numbered_corpus(sources)
 
     async def verdict():
-        raw, auditor = await _auditor(
+        raw, auditor, stamp = await _auditor(
             [{"role": "system", "content": AUDIT_SYS},
              {"role": "user", "content": f"Numbered sources:\n{corpus}\n\nBriefing:\n{body}"}])
-        return _parse_audit(raw), auditor
+        return _parse_audit(raw), auditor, stamp
 
     try:
-        unsupported, auditor = await verdict()
+        unsupported, auditor, stamp = await verdict()
         if unsupported is None:
             errs.append(f"claim audit: {title} — audit unavailable (unparseable verdict from {auditor})")
-            return headline, body
+            return headline, body, "none"
         if not unsupported:
             errs.append(f"claim audit: {title} — clean ({auditor})")
-            return headline, body
+            return headline, body, stamp
         revised = (await _vera(
             [{"role": "system", "content": REVISE_SYS},
              {"role": "user", "content": ("Unsupported claims:\n- " + "\n- ".join(unsupported)
@@ -718,30 +727,36 @@ async def audit_claims(headline, body, sources, errs, title):
         new_headline, new_body = _split_headline(revised)
         if not new_body:
             errs.append(f"claim audit: {title} — {len(unsupported)} unsupported, revision empty; shipped original")
-            return headline, body
+            return headline, body, stamp
         record = f"claim audit: {title} — {len(unsupported)} unsupported, revised ({auditor})"
         try:
             body = new_body  # re-audit the revision for the record only
-            still, _ = await verdict()
+            still, _, _ = await verdict()
             if still:
                 record += f"; {len(still)} still flagged"
         except Exception:
             pass
         errs.append(record)
-        return (new_headline or headline), new_body
+        return (new_headline or headline), new_body, stamp
     except Exception as e:
         errs.append(f"claim audit: {title} — audit unavailable ({e})")
-        return headline, body
+        return headline, body, "none"
 
 
-async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", errors=None):
+async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", errors=None,
+                         defer_audit=False):
     """The per-topic deep-research pipeline: broad search -> thread extraction ->
     follow-up searches -> real imagery -> first-person synthesis -> summary -> cover art -> inject.
 
     Extracted from the /pulse/run loop so the scheduled morning briefing AND the heartbeat's
     for-you discovery create cards through ONE path (one feed, one bar). Returns the injected
     card dict, or None if synthesis produced nothing. `errors`, if given, collects the same
-    non-fatal step-failure strings the run loop logs."""
+    non-fatal step-failure strings the run loop logs.
+
+    `defer_audit=True` skips the inline claim audit and hands the full source corpus back on
+    the returned card's ephemeral `_corpus` key (never persisted), so the run loop can audit
+    the whole batch at end-of-run against one model wake. The card lands stamped
+    `audit: none` until that phase overwrites it."""
     errs = errors if errors is not None else []
 
     # Dedup gate — if she's already produced a card for this, skip before spending any
@@ -845,7 +860,11 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
 
     # Cross-model claim validation — the coder audits the body against its own corpus and
     # Vera revises once, BEFORE cover art (so the art prompt sees the corrected body).
-    headline, body = await audit_claims(headline, body, sources, errs, topic.get("title"))
+    # Deferred mode leaves the audit to the run's batched end-of-run phase, which amortizes
+    # one audit-model wake across every card in the run.
+    audit_stamp = "none"
+    if not defer_audit:
+        headline, body, audit_stamp = await audit_claims(headline, body, sources, errs, topic.get("title"))
 
     # Short, complete preview blurb (so the card face never truncates mid-word). Generated
     # before cover art so the image prompt can be built from the synthesis.
@@ -899,8 +918,11 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
         "kind": "research",
         "provenance": provenance,
         "user_id": user_id,
+        "audit": audit_stamp,
     }
     store.insert_card(card)
+    if defer_audit:
+        card["_corpus"] = sources  # full texts for the end-of-run audit; never persisted
     return card
 
 
@@ -956,6 +978,50 @@ async def _triage(who, persona, interests, memories, exclusions, want, rnd):
     return _parse_topics(raw)[:want]
 
 
+async def _audit_hook(url):
+    """POST one of the configured audit warm-up/release hooks. The timeout is generous because
+    a wake may cold-load a model. Returns the response JSON when there is any ({} otherwise) —
+    a wake reply may carry {"already_up": true}."""
+    async with aiohttp.ClientSession() as s:
+        async with s.post(url, timeout=aiohttp.ClientTimeout(total=600)) as r:
+            try:
+                return await r.json()
+            except Exception:
+                return {}
+
+
+async def _audit_phase(pending, errs):
+    """The batched end-of-run claim audit: one optional model wake amortized across every card
+    injected this run. `pending` is [(card, full_sources)]. Each card is audited with the same
+    audit_claims machinery as the inline path; revisions and the provenance stamp are applied
+    to the stored card. The release hook fires only if this run's wake actually started the
+    model — a model that was already up belongs to whoever started it."""
+    if not pending:
+        return
+    woke = False
+    if AUDIT_WAKE_URL:
+        try:
+            reply = await _audit_hook(AUDIT_WAKE_URL)
+            woke = not reply.get("already_up")
+            errs.append("audit wake: ok" + ("" if woke else " (already up — not ours to release)"))
+        except Exception as e:
+            errs.append(f"audit wake failed: {e} — auditing via fallback")
+    try:
+        for card, sources in pending:
+            try:
+                headline, body, stamp = await audit_claims(
+                    card["title"], card["body"], sources, errs, card["title"])
+                store.apply_audit(card["id"], headline or card["title"], body, stamp)
+            except Exception as e:
+                errs.append(f"claim audit: {card.get('title')} — audit phase error ({e})")
+    finally:
+        if AUDIT_RELEASE_URL and woke:
+            try:
+                await _audit_hook(AUDIT_RELEASE_URL)
+            except Exception as e:
+                errs.append(f"audit release failed: {e}")
+
+
 async def _do_run(req: PulseRequest):
     """The full synchronous Pulse pipeline (sweep -> triage -> per-topic research/inject). Returns the
     result dict. The HTTP endpoint runs this in the background so no caller holds a long request open."""
@@ -1009,6 +1075,7 @@ async def _do_run(req: PulseRequest):
     attempt = 0  # running per-topic index across rounds (rotates cover-art styles)
     gates = {"dedup": 0, "freshness": 0, "coherence": 0, "empty": 0, "interest_cap": 0}
     shipped_per_interest = {}  # lowercased interest -> cards shipped this run
+    pending_audit = []  # (card, full sources) — audited in one batch after the cover loop
 
     await _vision(pause=True)  # free the image host's memory so cover-gen fits (restored below)
     try:
@@ -1040,8 +1107,10 @@ async def _do_run(req: PulseRequest):
                 before = len(out["errors"])
                 try:
                     card = await research_topic(t, who=who, user_id=user_id, idx=attempt,
-                                                provenance="scheduled", errors=out["errors"])
+                                                provenance="scheduled", errors=out["errors"],
+                                                defer_audit=True)
                     if card:
+                        pending_audit.append((card, card.pop("_corpus", [])))
                         out["injected"].append(card["title"])
                         record["injected"].append(card["title"])
                         if interest:
@@ -1056,6 +1125,9 @@ async def _do_run(req: PulseRequest):
                     out["errors"].append(f"{t.get('title')}: {e}")
                 attempt += 1
             out["rounds"].append(record)
+        # Batched claim audit, strictly after the cover loop and before vision resumes: the
+        # image model is done, so the (possibly woken) audit model never runs alongside it.
+        await _audit_phase(pending_audit, out["errors"])
     finally:
         await _vision(pause=False)  # bring the vision model back up after the image batch
 

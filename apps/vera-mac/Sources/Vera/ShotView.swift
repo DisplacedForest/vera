@@ -372,6 +372,11 @@ struct ShotView: View {
                         }
                     }
                 }
+                SectionBox(title: "Activity") {
+                    ForEach(ActivityEvent.mock()) { event in
+                        ActivityRow(event: event)
+                    }
+                }
             }
             .padding(.horizontal, 28).padding(.vertical, 18)
             .frame(maxWidth: 860, alignment: .leading)

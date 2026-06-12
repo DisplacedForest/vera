@@ -26,7 +26,7 @@ _TIMEOUT = aiohttp.ClientTimeout(total=30)
 def _require_owui():
     """The write path lives in OWUI skills; fail upfront with a clear 503, not mid-call."""
     if not OWUI_BASE or not OWUI_KEY:
-        raise HTTPException(503, "authoring requires Open WebUI — set OWUI_BASE and OWUI_KEY")
+        raise HTTPException(503, "authoring requires Open WebUI. Set OWUI_BASE and OWUI_KEY")
 
 
 def _slug(s):

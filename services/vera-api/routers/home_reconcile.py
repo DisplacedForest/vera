@@ -178,7 +178,7 @@ async def run_reconcile(dry_run: bool = False) -> dict:
                 title="Home map: a live-source pointer no longer resolves",
                 body=(f"**{entry['question']}** points at `{m.get('by')}={m.get('value')}` "
                       f"(integration `{a.get('integration')}`), which matches no live HA entity. "
-                      "The source may have been renamed or removed — update the map pointer."),
+                      "The source may have been renamed or removed. Update the map pointer."),
                 severity="alert", category="infra")
         elif status == "degraded":
             stats["index_failed"] += 1
@@ -205,8 +205,8 @@ async def run_reconcile(dry_run: bool = False) -> dict:
             f"new {e['domain']}: {e['friendly_name']}",
             title="New device not in the Home map",
             body=(f"A new `{e['domain']}` entity appeared in Home Assistant: "
-                  f"**{e['friendly_name']}** (`{e['entity_id']}`). It isn't in the map yet — "
-                  "add it if it's something worth tracking, or dismiss."),
+                  f"**{e['friendly_name']}** (`{e['entity_id']}`). It isn't in the map yet. "
+                  "Add it if it's something worth tracking, or dismiss."),
             severity="notice", category="infra")
     for e in removed_entities:
         await card_once(
@@ -215,7 +215,7 @@ async def run_reconcile(dry_run: bool = False) -> dict:
             title="A mapped entity has vanished from Home Assistant",
             body=(f"**{e['friendly_name']}** (`{e['entity_id']}`) is referenced by the Home map but "
                   f"has been absent from HA for {store.REMOVAL_THRESHOLD} consecutive checks. It may "
-                  "have been removed or renamed — update the map."),
+                  "have been removed or renamed. Update the map."),
             severity="alert", category="infra")
 
     # --- pass 3: stale durable facts ------------------------------------------------------------

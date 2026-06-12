@@ -132,7 +132,7 @@ async def check(req: HealthCheck):
             out["cleared"] += 1
 
     if down and not any(c["title"] == title for c in existing):  # zero-floor + dedup
-        body = "**Service health alert**\n\n" + "\n".join(f"- `{d['name']}` is DOWN — {d['detail']}" for d in down)
+        body = "**Service health alert**\n\n" + "\n".join(f"- `{d['name']}` is DOWN ({d['detail']})" for d in down)
         await _inject(title, body, summary="A service Vera depends on is down.",
                       kind="status", category="health", severity="alert")
         out["alerted"] = True

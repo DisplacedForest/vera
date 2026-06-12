@@ -126,7 +126,7 @@ def _v_docker_update(args):
 def _p_docker_update(args):
     who = args.get("name") or args.get("image")
     detail = f" ({args['image']})" if args.get("name") and args.get("image") else ""
-    return f"Update container {who}{detail} — pull the new image and recreate it"
+    return f"Update container {who}{detail}. Pull the new image and recreate it"
 
 
 def _v_overseerr(args):

@@ -289,7 +289,7 @@ async def reverify(b: ReverifyBody, x_agent_token: str = Header(default="")):
     if not AGENT_TOKEN or x_agent_token != AGENT_TOKEN:
         raise HTTPException(403, "reverify requires X-Agent-Token")
     if not DREAM_BASE or not DREAM_MODEL:
-        raise HTTPException(503, "reverify requires the dream/coder LLM — set DREAM_BASE and DREAM_MODEL")
+        raise HTTPException(503, "reverify requires the dream/coder LLM. Set DREAM_BASE and DREAM_MODEL")
     cands = _reverify_candidates()[: b.limit]
     today = datetime.now(TZ).strftime("%A, %B %d, %Y")
     flagged = []

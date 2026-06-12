@@ -69,7 +69,7 @@ async def run_pass(dry_run, run_id):
     beliefs = vm.live_beliefs()
     by_id = {e["id"]: e for e in beliefs}
     if not beliefs:
-        return {**out, "note": "memory empty — nothing to tend"}
+        return {**out, "note": "memory empty, nothing to tend"}
 
     def block(tier):
         items = [e for e in beliefs if e["tier"] == tier]

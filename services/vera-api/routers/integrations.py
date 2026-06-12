@@ -42,7 +42,7 @@ REGISTRY: dict[str, dict] = {
         "display_name": "Coder / Dream model",
         "fields": [
             {"id": "url", "env": "DREAM_BASE", "label": "OpenAI-compatible base URL", "secret": False,
-             "hint": "any /v1 endpoint — llama.cpp, vLLM, llama-swap, mlx_lm.server, or a hosted API"},
+             "hint": "any /v1 endpoint (llama.cpp, vLLM, llama-swap, mlx_lm.server, or a hosted API)"},
             {"id": "model", "env": "DREAM_MODEL", "label": "Model id", "secret": False},
             {"id": "tool_protocol", "env": "DREAM_TOOL_PROTOCOL", "label": "Tool-call protocol",
              "secret": False, "optional": True, "choices": ["openai", "mlx"],
@@ -56,7 +56,7 @@ REGISTRY: dict[str, dict] = {
         "display_name": "Image generation",
         "fields": [
             {"id": "url", "env": "VERA_IMAGE_BASE", "label": "Base URL", "secret": False,
-             "hint": "any endpoint serving the OpenAI Images API (POST /v1/images/generations) — "
+             "hint": "any endpoint serving the OpenAI Images API (POST /v1/images/generations). "
                      "services/vera-image works out of the box"},
             {"id": "protocol", "env": "IMAGE_PROTOCOL", "label": "Protocol",
              "secret": False, "optional": True, "choices": ["openai", "vera"],
@@ -69,7 +69,7 @@ REGISTRY: dict[str, dict] = {
         "display_name": "Home Assistant",
         "fields": [
             {"id": "url", "env": "HOME_ASSISTANT_BASE", "label": "Base URL", "secret": False,
-             "hint": "use an IP, not .local — containers on a bridge network can't resolve mDNS"},
+             "hint": "use an IP, not .local. Containers on a bridge network can't resolve mDNS"},
             {"id": "token", "env": "HOME_ASSISTANT_KEY", "label": "Long-lived access token", "secret": True},
         ],
         "unlocks": ["live home state in chat, heartbeat, and cards",
@@ -78,8 +78,8 @@ REGISTRY: dict[str, dict] = {
         "features": [
             {"id": "home_modeling", "label": "Home modeling",
              "ramifications": (
-                 "Captures every Home Assistant state change house-wide — roughly 5,000–15,000 "
-                 "events per day on a 30-day rolling window — and models the household's rhythm "
+                 "Captures every Home Assistant state change house-wide (roughly 5,000–15,000 "
+                 "events per day on a 30-day rolling window) and models the household's rhythm "
                  "from 10–90 days of accumulation. Adds nightly model, reconcile, and digest jobs. "
                  "Experimental: the miners are unvalidated at scale.")},
         ],
@@ -114,7 +114,7 @@ REGISTRY: dict[str, dict] = {
              "ramifications": (
                  "Adds a weekly job that sweeps discovery sources through Overseerr, runs an LLM "
                  "taste pass over the pool, and posts a worth-adding digest card. Experimental: "
-                 "it has run exactly once at scale — expect rough edges in selection quality.")},
+                 "it has run exactly once at scale. Expect rough edges in selection quality.")},
         ],
     },
     "unraid": {
@@ -216,8 +216,8 @@ def disabled_detail(iid: str) -> str:
     """One-line 503 detail for endpoints whose integration is off."""
     spec = REGISTRY.get(iid, {})
     env_names = "/".join(f["env"] for f in spec.get("fields", []))
-    return (f"{spec.get('display_name', iid)} is not enabled — "
-            f"enable it in the plugin store or set {env_names}")
+    return (f"{spec.get('display_name', iid)} is not enabled. "
+            f"Enable it in the plugin store or set {env_names}")
 
 
 # ---- views ------------------------------------------------------------------------------
@@ -291,7 +291,7 @@ async def _probe(iid: str, v: dict) -> dict:
                         return {"ok": False, "detail": f"HTTP {r.status}"}
                     want = (v.get("model") or "").strip()
                     if want and ids and want not in ids:
-                        return {"ok": True, "detail": f"endpoint up — but '{want}' is not in its model list"}
+                        return {"ok": True, "detail": f"endpoint up, but '{want}' is not in its model list"}
                     return {"ok": True,
                             "detail": f"endpoint up ({len(ids)} model{'s' if len(ids) != 1 else ''})" if ids
                             else "endpoint up"}

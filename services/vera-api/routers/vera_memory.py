@@ -109,7 +109,7 @@ def _load_memory_op(b: RestoreBody):
         raise HTTPException(404, "no such op")
     op = ops[b.op_index]
     if op.get("store", "memory") != "memory":
-        raise HTTPException(400, "not a memory-store op — use /knowledge/restore")
+        raise HTTPException(400, "not a memory-store op. Use /knowledge/restore")
     return op
 
 
@@ -142,7 +142,7 @@ async def restore(b: RestoreBody):
     op = _load_memory_op(b)
     if gcm.stale_snapshot(op):
         return {"ok": False, "stale": True,
-                "note": "this was changed again since — review before restoring"}
+                "note": "this was changed again since, review before restoring"}
     return {"ok": True, **_undo_memory(op, b.card_id)}
 
 
@@ -153,7 +153,7 @@ async def reject(b: RestoreBody):
     op = _load_memory_op(b)
     if gcm.stale_snapshot(op):
         return {"ok": False, "stale": True,
-                "note": "this was changed again since — review before rejecting"}
+                "note": "this was changed again since, review before rejecting"}
     res = _undo_memory(op, b.card_id)
     key = gcm.suppress("memory", op["type"], gcm.op_identity(op),
                        reason=op.get("reason") or "rejected by the owner")

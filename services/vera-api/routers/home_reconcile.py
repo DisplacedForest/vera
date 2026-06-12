@@ -280,7 +280,7 @@ async def seed_index():
     """Idempotent: create the live_source index entities from the configured seed list (if absent)."""
     if not SEED_INDEX:
         return {"ok": False, "configured": False,
-                "error": "no live-source index configured — set HOME_LIVE_SOURCE_INDEX or HOME_LIVE_SOURCE_INDEX_PATH"}
+                "error": "no live-source index configured. Set HOME_LIVE_SOURCE_INDEX or HOME_LIVE_SOURCE_INDEX_PATH"}
     created, existing = [], []
     for seed in SEED_INDEX:
         eid = f"live_source:{re.sub(r'[^a-z0-9]+', '-', seed['question'].lower()).strip('-')}"

@@ -15,12 +15,12 @@ def _env_set(name: str, default: str) -> set[str]:
 
 # ha.service is the only physical-actuation verb; restrict it hard. What the household allows is
 # config: HA_ALLOWED_SERVICES grants exact domain.service calls, HA_ALLOWED_DOMAINS grants any
-# service on a domain (turn_on/off/toggle). Defaults cover reversible comfort/scene/script calls
-# plus update.install — the apply path for the pending-updates Pulse card (HA Core, add-ons, HACS,
-# any integration-exposed firmware/agent update).
+# service on a domain (turn_on/off/toggle). Defaults cover reversible comfort/scene/script/media
+# calls plus update.install — the apply path for the pending-updates Pulse card (HA Core, add-ons,
+# HACS, any integration-exposed firmware/agent update).
 HA_ALLOWED_SERVICES = _env_set(
     "HA_ALLOWED_SERVICES", "climate.set_temperature,scene.turn_on,script.turn_on,update.install")
-HA_ALLOWED_DOMAINS = _env_set("HA_ALLOWED_DOMAINS", "light,switch")
+HA_ALLOWED_DOMAINS = _env_set("HA_ALLOWED_DOMAINS", "light,switch,media_player")
 
 
 def ha_allowed(domain, service):

@@ -14,6 +14,16 @@ def test_ha_allowlist():
     assert not sp.ha_allowed("climate", "set_fan_mode")  # only the allowlisted climate service
 
 
+def test_media_player_allowed():
+    # the whole media_player domain is in the default allowlist — playback control is benign
+    for service in ("media_play", "media_pause", "media_next_track", "media_previous_track",
+                    "volume_set", "select_source", "play_media"):
+        assert sp.ha_allowed("media_player", service)
+    assert sp.SPEC["ha.service"]["validate"](
+        {"domain": "media_player", "service": "media_pause",
+         "data": {"entity_id": "media_player.living_room"}}) is None
+
+
 def test_ha_validate():
     assert sp.SPEC["ha.service"]["validate"](
         {"domain": "climate", "service": "set_temperature", "data": {"entity_id": "climate.x", "temperature": 70}}
@@ -86,6 +96,7 @@ def test_preview_strings():
 
 if __name__ == "__main__":
     test_ha_allowlist()
+    test_media_player_allowed()
     test_ha_validate()
     test_knowledge_validate()
     test_grocy_validate()

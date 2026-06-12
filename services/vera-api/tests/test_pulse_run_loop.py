@@ -31,8 +31,12 @@ def _harness(monkeypatch):
     async def _no_vision(pause):
         return None
 
+    async def _no_audit_phase(pending, errs):
+        return None
+
     monkeypatch.setattr(pulse, "_get_memories", _no_memories)
     monkeypatch.setattr(pulse, "_vision", _no_vision)
+    monkeypatch.setattr(pulse, "_audit_phase", _no_audit_phase)
     monkeypatch.setattr(pulse, "_recent_for_user", lambda uid: [])
     monkeypatch.setattr(pulse, "PULSE_MIN_CARDS", 2)
     monkeypatch.setattr(pulse, "PULSE_MAX_CARDS", 5)
@@ -56,7 +60,7 @@ def _wire(monkeypatch, rounds, novel):
 
     researched = []
 
-    async def fake_research(t, who, user_id, idx, provenance, errors):
+    async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False):
         researched.append(t["title"])
         if t["title"] in novel:
             return {"title": t["title"]}
@@ -158,7 +162,7 @@ def test_gate_kills_are_counted_and_starved_run_warns(monkeypatch):
         triage_calls.append(rnd)
         return _topics("A", "B", "C") if rnd == 0 else []
 
-    async def fake_research(t, who, user_id, idx, provenance, errors):
+    async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False):
         errors.append(markers[t["title"]])
         return None
 
@@ -249,3 +253,134 @@ def test_triage_retry_prompt_and_temperature_escalation(monkeypatch):
     run(pulse._triage("Z", None, [], [], ["Old"], want=3, rnd=2))
     assert seen[0]["temperature"] == 0.4 and "already covered" not in seen[0]["user"]
     assert seen[1]["temperature"] == 0.9 and "Do NOT propose a rewording" in seen[1]["user"]
+
+
+# --- end-of-run audit phase ------------------------------------------------------------
+# The batched cross-model audit: one optional wake amortized across every injected card,
+# revisions applied to the store, release only when this run's wake started the model.
+# Bound at import because the loop harness above stubs pulse._audit_phase per-test.
+_audit_phase = pulse._audit_phase
+
+
+def _phase_harness(monkeypatch, wake="http://hooks/wake", release="http://hooks/stop",
+                   wake_reply=None, wake_error=None, stamp="cross-model (m)"):
+    """Wire _audit_phase's collaborators; returns the (hook calls, audits, store writes) journals."""
+    journal = {"hooks": [], "audited": [], "applied": []}
+
+    async def fake_hook(url):
+        journal["hooks"].append(url)
+        if url == wake and wake_error:
+            raise wake_error
+        return (wake_reply or {}) if url == wake else {}
+
+    async def fake_audit(headline, body, sources, errs, title):
+        journal["audited"].append(title)
+        errs.append(f"claim audit: {title} — clean (coder)")
+        return f"{headline} (revised)", f"{body} (revised)", stamp
+
+    monkeypatch.setattr(pulse, "AUDIT_WAKE_URL", wake)
+    monkeypatch.setattr(pulse, "AUDIT_RELEASE_URL", release)
+    monkeypatch.setattr(pulse, "_audit_hook", fake_hook)
+    monkeypatch.setattr(pulse, "audit_claims", fake_audit)
+    monkeypatch.setattr(pulse.store, "apply_audit",
+                        lambda cid, title, body, audit: journal["applied"].append((cid, title, body, audit)))
+    return journal
+
+
+def _pending(*titles):
+    return [({"id": f"id-{t}", "title": t, "body": f"{t} body"}, [{"n": 1}]) for t in titles]
+
+
+def test_audit_phase_audits_every_card_and_applies_revisions(monkeypatch):
+    journal = _phase_harness(monkeypatch)
+    errs = []
+    run(_audit_phase(_pending("A", "B"), errs))
+    assert journal["audited"] == ["A", "B"]
+    assert journal["applied"] == [
+        ("id-A", "A (revised)", "A body (revised)", "cross-model (m)"),
+        ("id-B", "B (revised)", "B body (revised)", "cross-model (m)"),
+    ]
+
+
+def test_audit_phase_brackets_with_wake_then_release(monkeypatch):
+    journal = _phase_harness(monkeypatch)
+    errs = []
+    run(_audit_phase(_pending("A"), errs))
+    assert journal["hooks"] == ["http://hooks/wake", "http://hooks/stop"]
+    assert journal["audited"] == ["A"]  # audited between the two hook calls
+    assert any(e == "audit wake: ok" for e in errs)
+
+
+def test_audit_phase_wake_failure_falls_back_and_skips_release(monkeypatch):
+    journal = _phase_harness(monkeypatch, wake_error=RuntimeError("connect refused"),
+                             stamp="self (fallback)")
+    errs = []
+    run(_audit_phase(_pending("A"), errs))
+    assert journal["hooks"] == ["http://hooks/wake"]  # no release: we never started it
+    assert journal["audited"] == ["A"]  # the audit still runs (per-card fallback)
+    assert journal["applied"][0][3] == "self (fallback)"
+    assert any(e.startswith("audit wake failed") for e in errs)
+
+
+def test_audit_phase_already_up_skips_release(monkeypatch):
+    journal = _phase_harness(monkeypatch, wake_reply={"ok": True, "already_up": True})
+    errs = []
+    run(_audit_phase(_pending("A"), errs))
+    assert journal["hooks"] == ["http://hooks/wake"]  # an already-up model is not ours to stop
+    assert journal["audited"] == ["A"]
+    assert any("already up" in e for e in errs)
+
+
+def test_audit_phase_without_hooks_calls_none(monkeypatch):
+    journal = _phase_harness(monkeypatch, wake="", release="")
+    run(_audit_phase(_pending("A"), []))
+    assert journal["hooks"] == []
+    assert journal["audited"] == ["A"]  # today's behavior exactly, just batched
+
+
+def test_audit_phase_with_nothing_injected_never_wakes(monkeypatch):
+    journal = _phase_harness(monkeypatch)
+    run(_audit_phase([], []))
+    assert journal["hooks"] == [] and journal["audited"] == []
+
+
+def test_audit_phase_card_failure_stays_per_card(monkeypatch):
+    journal = _phase_harness(monkeypatch)
+
+    async def flaky_audit(headline, body, sources, errs, title):
+        if title == "A":
+            raise RuntimeError("boom")
+        journal["audited"].append(title)
+        return headline, body, "cross-model (m)"
+
+    monkeypatch.setattr(pulse, "audit_claims", flaky_audit)
+    errs = []
+    run(_audit_phase(_pending("A", "B"), errs))
+    assert journal["audited"] == ["B"]  # A's failure didn't take B down
+    assert any("audit phase error" in e for e in errs)
+    assert journal["hooks"] == ["http://hooks/wake", "http://hooks/stop"]  # release still fires
+
+
+def test_run_loop_defers_audits_and_feeds_the_phase(monkeypatch):
+    """The loop hands every injected card + its corpus to the phase, with defer_audit on."""
+    captured = {}
+
+    async def fake_phase(pending, errs):
+        captured["pending"] = pending
+
+    async def fake_triage(who, persona, interests, memories, exclusions, want, rnd):
+        return _topics("A") if rnd == 0 else []
+
+    async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False):
+        captured["defer_audit"] = defer_audit
+        return {"title": t["title"], "_corpus": [{"n": 1, "content": "x"}]}
+
+    monkeypatch.setattr(pulse, "_audit_phase", fake_phase)
+    monkeypatch.setattr(pulse, "_triage", fake_triage)
+    monkeypatch.setattr(pulse, "research_topic", fake_research)
+    out = run(pulse._do_run(pulse.PulseRequest()))
+    assert out["injected"] == ["A"]
+    assert captured["defer_audit"] is True
+    [(card, corpus)] = captured["pending"]
+    assert card["title"] == "A" and corpus == [{"n": 1, "content": "x"}]
+    assert "_corpus" not in card  # the ephemeral key never outlives the hand-off

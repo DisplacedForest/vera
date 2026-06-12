@@ -70,6 +70,10 @@ def init():
             # reversible memory-tending diff (json) — what merged/forgot/promoted, with full
             # before-snapshots so the System detail can show it and offer restore/undo.
             c.execute("ALTER TABLE cards ADD COLUMN change_set TEXT")
+        if "audit" not in cols:
+            # claim-audit provenance for research cards — "cross-model (<model>)" |
+            # "self (fallback)" | "none" (null = card kind that is never audited).
+            c.execute("ALTER TABLE cards ADD COLUMN audit TEXT")
         if "items" not in cols:
             # multi-item action card (digest) — json list of per-row items, each with its own
             # staged action token + state (pending|approved|skipped). Drives the approve/skip card UI.
@@ -94,8 +98,8 @@ def insert_card(card: dict):
     with _conn() as c:
         c.execute(
             """INSERT OR REPLACE INTO cards
-               (id, created_at, day, status, title, summary, body, image_url, tint, sources, inline_images, promoted_chat_id, action, kind, severity, user_id, provenance, category, change_set, items)
-               VALUES (:id,:created_at,:day,:status,:title,:summary,:body,:image_url,:tint,:sources,:inline_images,:promoted_chat_id,:action,:kind,:severity,:user_id,:provenance,:category,:change_set,:items)""",
+               (id, created_at, day, status, title, summary, body, image_url, tint, sources, inline_images, promoted_chat_id, action, kind, severity, user_id, provenance, category, change_set, items, audit)
+               VALUES (:id,:created_at,:day,:status,:title,:summary,:body,:image_url,:tint,:sources,:inline_images,:promoted_chat_id,:action,:kind,:severity,:user_id,:provenance,:category,:change_set,:items,:audit)""",
             {
                 "id": card["id"],
                 "created_at": card.get("created_at") or int(time.time()),
@@ -117,6 +121,7 @@ def insert_card(card: dict):
                 "category": card.get("category"),
                 "change_set": json.dumps(card["change_set"]) if card.get("change_set") else None,
                 "items": json.dumps(card["items"]) if card.get("items") else None,
+                "audit": card.get("audit"),
             },
         )
 
@@ -143,6 +148,7 @@ def _row_to_card(r: sqlite3.Row) -> dict:
         "category": r["category"] if "category" in r.keys() else None,
         "change_set": json.loads(r["change_set"]) if ("change_set" in r.keys() and r["change_set"]) else [],
         "items": json.loads(r["items"]) if ("items" in r.keys() and r["items"]) else [],
+        "audit": r["audit"] if "audit" in r.keys() else None,
     }
 
 
@@ -176,6 +182,15 @@ def set_status(card_id: str, status: str, promoted_chat_id: str | None = None):
             c.execute("UPDATE cards SET status=?, promoted_chat_id=? WHERE id=?", (status, promoted_chat_id, card_id))
         else:
             c.execute("UPDATE cards SET status=? WHERE id=?", (status, card_id))
+
+
+def apply_audit(card_id: str, title: str, body: str, audit: str):
+    """Apply the end-of-run claim audit's outcome to a stored card: any title/body
+    revision plus the provenance stamp recording how the claims were checked."""
+    init()
+    with _conn() as c:
+        c.execute("UPDATE cards SET title=?, body=?, audit=? WHERE id=?",
+                  (title, body, audit, card_id))
 
 
 def delete_card(card_id: str):

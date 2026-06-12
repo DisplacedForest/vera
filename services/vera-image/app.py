@@ -101,6 +101,39 @@ def vision_resume():
     return {"ok": _vision_ctl("resume")}
 
 
+# Audit-model lifecycle hooks — the deployment-side targets for vera-api's AUDIT_WAKE_URL /
+# AUDIT_RELEASE_URL. They shell to the coder's own ensure/stop script, so this service stays
+# a thin HTTP presence over whatever lifecycle the host already has. `ensure` reports whether
+# the model was already up: an already-up coder belongs to whoever started it (a human coding
+# session), and the caller is expected to skip its release in that case.
+
+@app.post("/admin/coder/ensure")
+def coder_ensure():
+    """Bring the coder model up (no-op when already up). Blocks through the cold load."""
+    if not os.path.exists(CODER_SCRIPT):
+        raise HTTPException(503, "coder script not present on this host")
+    try:
+        p = subprocess.run(["/bin/sh", CODER_SCRIPT, "ensure"], capture_output=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "coder did not come up in time")
+    out = (p.stdout or b"").decode() + (p.stderr or b"").decode()
+    if p.returncode != 0:
+        raise HTTPException(500, f"coder ensure failed: {out[:300]}")
+    return {"ok": True, "already_up": "already up" in out}
+
+
+@app.post("/admin/coder/stop")
+def coder_stop():
+    """Release the coder model's unified memory."""
+    if not os.path.exists(CODER_SCRIPT):
+        raise HTTPException(503, "coder script not present on this host")
+    try:
+        p = subprocess.run(["/bin/sh", CODER_SCRIPT, "stop"], capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "coder stop timed out")
+    return {"ok": p.returncode == 0}
+
+
 class OpenAIImageRequest(BaseModel):
     prompt: str
     n: int = 1

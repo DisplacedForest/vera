@@ -303,6 +303,9 @@ CARD_SYS = (
 IMAGE_SYS = (
     "You write a single vivid image prompt for a briefing card's cover art. Given the card, output ONE "
     "sentence describing a concrete subject/scene that captures its vibe — objects, setting, mood, light. "
+    "Ground the scene in what the story is actually about. Disambiguate proper nouns: an organization, "
+    "team, or place whose name contains a common noun must be depicted as that entity's world (a football "
+    "club named after a forest gets a stadium scene, never trees). "
     "No text, words, letters, logos, charts, or UI in the image. No art-style words (style is set separately). "
     "Output only the sentence."
 )
@@ -733,7 +736,7 @@ async def audit_claims(headline, body, sources, errs, title):
 
 async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", errors=None):
     """The per-topic deep-research pipeline: broad search -> thread extraction ->
-    follow-up searches -> real imagery -> first-person synthesis -> cover art -> summary -> inject.
+    follow-up searches -> real imagery -> first-person synthesis -> summary -> cover art -> inject.
 
     Extracted from the /pulse/run loop so the scheduled morning briefing AND the heartbeat's
     for-you discovery create cards through ONE path (one feed, one bar). Returns the injected
@@ -844,13 +847,30 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     # Vera revises once, BEFORE cover art (so the art prompt sees the corrected body).
     headline, body = await audit_claims(headline, body, sources, errs, topic.get("title"))
 
-    # Cover art: Vera writes a vibe-matching prompt; style rotates for a fresh feed.
+    # Short, complete preview blurb (so the card face never truncates mid-word). Generated
+    # before cover art so the image prompt can be built from the synthesis.
+    try:
+        summary = (
+            await _vera(
+                [{"role": "system", "content": SUMMARY_SYS}, {"role": "user", "content": body[:1500]}],
+                temperature=0.3,
+            )
+        ).strip().strip('"').replace("\n", " ")
+    except Exception:
+        summary = None
+
+    # Cover art: Vera writes a vibe-matching prompt from the card's own synthesis (headline +
+    # summary + story), not the triage working title; style rotates for a fresh feed.
     image_url = tint = None
     try:
+        img_usr = (f"Headline: {headline or topic.get('title')}\n"
+                   f"Summary: {summary or ''}\n"
+                   f"Story: {body[:600]}")
+        log.info("cover prompt input: %s", img_usr.replace("\n", " | "))
         img_prompt = (
             await _vera(
                 [{"role": "system", "content": IMAGE_SYS},
-                 {"role": "user", "content": f"Title: {topic.get('title')}\n\n{body[:900]}"}],
+                 {"role": "user", "content": img_usr}],
                 temperature=0.8,
             )
         ).strip().strip('"')
@@ -861,17 +881,6 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     # image we already gathered to the cover so cards are never imageless.
     if not image_url and inline_images:
         image_url = inline_images[0]["url"]
-
-    # Short, complete preview blurb (so the card face never truncates mid-word).
-    try:
-        summary = (
-            await _vera(
-                [{"role": "system", "content": SUMMARY_SYS}, {"role": "user", "content": body[:1500]}],
-                temperature=0.3,
-            )
-        ).strip().strip('"').replace("\n", " ")
-    except Exception:
-        summary = None
 
     card = {
         "id": str(uuid.uuid4()),

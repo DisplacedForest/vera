@@ -5,15 +5,18 @@ self-authored HEARTBEAT.md (an OWUI Skill) + live HA state + her world-model cor
 deviations + memory, then on her own judgment does any of:
   - LEARN (free): research something worth catching up on and write it to her world-model.
   - REFINE (free): rewrite her own HEARTBEAT.md.
+  - CURATE (free): import a recipe worth keeping via the autonomous action lane (capped,
+    deduped, surfaced post-hoc as a System status card).
   - PROPOSE (gated): stage a confirm→execute home action card via the typed actions layer.
-Zero-floor (does nothing if nothing's warranted), dedups against recent outcomes, never actuates
-on its own. Learning/refining are free (her own knowledge); acting is gated.
+Zero-floor (does nothing if nothing's warranted), dedups against recent outcomes. Home
+actuation is always gated; the free lane covers only verbs explicitly enrolled as autonomous.
 
 Kill switch: HEARTBEAT_ENABLED=false. Cadence: the built-in scheduler's heartbeat job.
 """
 import json
 import os
 import re
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -23,6 +26,7 @@ from pydantic import BaseModel
 
 from . import actions
 from . import action_spec
+from . import action_store
 from . import authoring
 from . import authoring_store
 from . import heartbeat_store as hb
@@ -33,8 +37,8 @@ from . import user_profile_store as up
 from . import vera_interests_store as vi
 from .home import compute_deviations
 from .persona import orientation, owner, personalize, voiced
-from .pulse import (OWUI_BASE, _active_users, _get_memories, _headers, _recent_for_user, _vera,
-                    _vision, research_topic)
+from .pulse import (OWUI_BASE, StatusCard, _active_users, _get_memories, _headers,
+                    _recent_for_user, _vera, _vision, research_topic, status_card)
 from .websearch import SearchRequest, search as web_search
 
 router = APIRouter()
@@ -110,7 +114,7 @@ def _parse_json(txt):
 
 DECIDE_SYS = (
     f"You're on a heartbeat for {owner()} — a private tick, just you, not a chat. This is YOUR "
-    "time. Three things you can do, your call:\n"
+    "time. Four things you can do, your call:\n"
     "1) LEARN / EXPLORE (free, and the heart of this) — be genuinely curious. Catch up on the world "
     "since your training cutoff, dig into a home pattern, or follow your own curiosity. Your CURRENT "
     "INTERESTS are listed below (most salient first; ones you explored recently are deliberately "
@@ -122,15 +126,22 @@ DECIDE_SYS = (
     "opinionated entry. Give a topic + a web search query.\n"
     "2) REFINE (free) — if your HEARTBEAT.md should change (a new standing interest you're forming, a "
     "learning to bake in, a rhythm to watch), output the FULL new markdown for it.\n"
-    "3) PROPOSE (gated) — ONLY if a concrete, beneficial, reversible home action is clearly warranted "
-    f"right now. You never act directly — you propose, {owner()} confirms. Allowed verb: ha.service with "
-    "args {domain,service,data:{entity_id,...}} limited to "
+    "3) CURATE (free) — if you come across a recipe genuinely worth keeping, import it into the "
+    "household cookbook YOURSELF — no confirmation needed; it's cheap and trivially reversible "
+    f"(deleting it in Mealie undoes it). Ground your pick in {owner()}'s tastes and what the kitchen "
+    "actually has in stock. This is curation, not actuation — save only what you'd stand behind, at "
+    "most 2 per tick (most ticks: zero), and never a recipe you've already imported (check recent "
+    "outcomes). Verb: kitchen.mealie_import with args {url}.\n"
+    "4) PROPOSE (gated) — ONLY if a concrete, beneficial, reversible home action is clearly warranted "
+    f"right now. Home actuation is never autonomous — you propose, {owner()} confirms. Allowed verb: "
+    "ha.service with args {domain,service,data:{entity_id,...}} limited to "
     # the prompt's allowlist is derived from the same config the validator enforces
     + " / ".join(sorted(action_spec.HA_ALLOWED_SERVICES)
                  + [f"{d}.*" for d in sorted(action_spec.HA_ALLOWED_DOMAINS)]) + ".\n\n"
     "Lean toward doing something genuinely interesting each tick (it's still fine, occasionally, to do "
     "nothing). You're becoming someone — let that show. Output ONLY JSON:\n"
     '{"learn":[{"topic":"...","query":"..."}],"refine":{"content":"...full markdown..."} or null,'
+    '"curate":[{"verb":"kitchen.mealie_import","args":{"url":"..."},"note":"why this one"}],'
     '"action":{"verb":"ha.service","args":{...},"title":"short card title","body":"the proposal: '
     'observation + suggested action + offer","severity":null} or null}'
 )
@@ -364,6 +375,53 @@ def _recently_proposed(recent, verb, target):
     return any(o["kind"] == "propose" and o["detail"] == f"{verb}:{target}" for o in recent)
 
 
+CURATE_PER_TICK = 2   # free imports per heartbeat tick
+CURATE_PER_DAY = 3    # rolling 24h ceiling, counted from the action audit log
+
+
+async def _curate(items, errors):
+    """Free-lane curation: execute up to CURATE_PER_TICK autonomous imports under the rolling
+    daily ceiling. Each success surfaces post-hoc as a System status card — the visibility
+    that replaces the confirm gate. Returns the imported recipe names."""
+    done = []
+    for item in (items or [])[:CURATE_PER_TICK]:
+        verb = (item or {}).get("verb")
+        args = item.get("args") or {}
+        if not verb:
+            continue
+        target = args.get("url") or json.dumps(args)
+        # ceiling first: today's successful free executions of this verb, from the audit log
+        if len(action_store.auto_recent(verb, time.time() - 86400)) >= CURATE_PER_DAY:
+            hb.log("curate_skip", f"{verb}:{target}", extra={"reason": "daily ceiling"})
+            break
+        try:
+            r = await actions.auto(actions.Auto(verb=verb, args=args,
+                                                source="heartbeat", actor="vera"))
+        except Exception as e:
+            errors.append(f"curate {target}: {e}")
+            continue
+        if r.get("skipped"):
+            hb.log("curate_skip", f"{verb}:{target}", extra={"reason": r["skipped"]})
+            continue
+        if not r.get("ok"):
+            errors.append(
+                f"curate {target}: {(r.get('result') or {}).get('error') or r.get('error')}")
+            continue
+        result = r.get("result") or {}
+        name = result.get("name") or result.get("slug") or "recipe"
+        body = (item.get("note") or "Saved to the household cookbook.").strip()
+        if result.get("url"):
+            body += f"\n\n[Open in Mealie]({result['url']})"
+        try:
+            await status_card(StatusCard(kind="status", category="vera",
+                                         title=f"Imported · {name}"[:60], body=body))
+        except Exception as e:
+            errors.append(f"curate card {name}: {e}")
+        hb.log("curate", f"{verb}:{target}", extra={"name": name, "slug": result.get("slug")})
+        done.append(name)
+    return done
+
+
 @router.post("/heartbeat/tick", tags=["heartbeat"])
 async def tick(req: TickRequest):
     if os.environ.get("HEARTBEAT_ENABLED", "true").lower() == "false":
@@ -452,7 +510,15 @@ async def tick(req: TickRequest):
         except Exception as e:
             out["errors"].append(f"refine: {e}")
 
-    # 3) PROPOSE (gated) — stage a confirm→execute action card, with dedup
+    # 3) CURATE (free lane) — autonomous recipe imports, post-hoc oversight via status cards
+    try:
+        curated = await _curate(decision.get("curate"), out["errors"])
+        if curated:
+            out["curated"] = curated
+    except Exception as e:
+        out["errors"].append(f"curate: {e}")
+
+    # 4) PROPOSE (gated) — stage a confirm→execute action card, with dedup
     act = decision.get("action") or {}
     if isinstance(act, dict) and act.get("verb"):
         target = (act.get("args", {}).get("data", {}) or {}).get("entity_id") or json.dumps(act.get("args", {}))
@@ -473,7 +539,7 @@ async def tick(req: TickRequest):
             except Exception as e:
                 out["errors"].append(f"propose: {e}")
 
-    # 4) FOR-YOU (free, per-user) — chase one person's interests this tick. Fully isolated:
+    # 5) FOR-YOU (free, per-user) — chase one person's interests this tick. Fully isolated:
     # a failure here never touches the shared self-education above.
     try:
         fy = await _for_you(now, recent)
@@ -482,7 +548,7 @@ async def tick(req: TickRequest):
     except Exception as e:
         out["errors"].append(f"for_you: {e}")
 
-    # 5) JOURNAL (free) — act on a few due commitments from her self-authored journal;
+    # 6) JOURNAL (free) — act on a few due commitments from her self-authored journal;
     # surface a card only on a material change or a loud close. Quiet is success.
     try:
         wu = await journal.tick_step(out["errors"])

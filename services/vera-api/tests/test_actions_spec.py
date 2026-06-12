@@ -52,6 +52,31 @@ def test_docker_update_spec():
     assert "radarr" in sp.SPEC["docker.update"]["preview"]({"name": "radarr", "image": "x/radarr:latest"})
 
 
+def test_autonomous_enrollment():
+    # the free lane is an explicit allowlist: exactly one verb enrolled today
+    assert sp.is_autonomous("kitchen.mealie_import")
+    assert [v for v, s in sp.SPEC.items() if s["autonomous"]] == ["kitchen.mealie_import"]
+    assert not sp.is_autonomous("ha.service")
+    assert not sp.is_autonomous("kitchen.grocy_adjust")
+    assert not sp.is_autonomous("knowledge.set")
+    assert not sp.is_autonomous("nonexistent.verb")
+
+
+def test_autonomy_invariant():
+    # autonomous requires risk in {none,low} AND reversible — anything else fails at load
+    sp.check_autonomy_invariant(sp.SPEC)  # the live registry must pass
+    bad_risk = {"x": {"risk": "medium", "reversible": True, "autonomous": True}}
+    bad_rev = {"x": {"risk": "low", "reversible": False, "autonomous": True}}
+    for bad in (bad_risk, bad_rev):
+        try:
+            sp.check_autonomy_invariant(bad)
+            assert False, "invariant should have raised"
+        except AssertionError as e:
+            assert "cannot be autonomous" in str(e)
+    # a dangerous verb left gated is fine
+    sp.check_autonomy_invariant({"x": {"risk": "high", "reversible": False, "autonomous": False}})
+
+
 def test_preview_strings():
     assert "climate.set_temperature" in sp.SPEC["ha.service"]["preview"](
         {"domain": "climate", "service": "set_temperature", "data": {"entity_id": "climate.x"}})
@@ -66,5 +91,7 @@ if __name__ == "__main__":
     test_grocy_validate()
     test_update_install_allowed()
     test_docker_update_spec()
+    test_autonomous_enrollment()
+    test_autonomy_invariant()
     test_preview_strings()
     print("OK")

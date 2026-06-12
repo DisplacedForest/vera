@@ -36,6 +36,11 @@ def init():
             );
             """
         )
+        # migrations: add later columns if this is a pre-existing action_log table
+        cols = [r[1] for r in c.execute("PRAGMA table_info(action_log)").fetchall()]
+        if "auto" not in cols:
+            # 1 = executed through the free (no-confirm) autonomous lane, 0 = the gated path
+            c.execute("ALTER TABLE action_log ADD COLUMN auto INTEGER DEFAULT 0")
 
 
 def stage(verb, args, preview, risk, reversible,
@@ -77,10 +82,35 @@ def set_result(token, result: dict, status="applied"):
         c.execute("UPDATE action_pending SET status=?, result=? WHERE token=?",
                   (status, json.dumps(result), token))
         c.execute(
-            "INSERT INTO action_log(ts, token, verb, args, result, status) VALUES(?,?,?,?,?,?)",
+            "INSERT INTO action_log(ts, token, verb, args, result, status, auto) VALUES(?,?,?,?,?,?,0)",
             (int(time.time()), token, row["verb"] if row else None,
              row["args"] if row else "{}", json.dumps(result), status),
         )
+
+
+def log_auto(verb, args: dict, result: dict, status="applied"):
+    """Audit a free-lane execution. No token, no pending row — the autonomous path skips
+    staging entirely; the log row IS its whole record."""
+    init()
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO action_log(ts, token, verb, args, result, status, auto) VALUES(?,?,?,?,?,?,1)",
+            (int(time.time()), None, verb, json.dumps(args), json.dumps(result), status),
+        )
+
+
+def auto_recent(verb, since_ts):
+    """Successful free-lane rows for a verb since a timestamp — the source for the rolling
+    daily cap and the URL dedup window."""
+    init()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT ts, args, result FROM action_log "
+            "WHERE auto=1 AND verb=? AND status='applied' AND ts>=? ORDER BY id DESC",
+            (verb, int(since_ts)),
+        ).fetchall()
+    return [{"ts": r["ts"], "args": json.loads(r["args"] or "{}"),
+             "result": json.loads(r["result"]) if r["result"] else None} for r in rows]
 
 
 def dismiss(token):
@@ -93,12 +123,13 @@ def recent_log(limit=50):
     init()
     with _conn() as c:
         rows = c.execute(
-            "SELECT ts, token, verb, args, result, status FROM action_log ORDER BY id DESC LIMIT ?",
+            "SELECT ts, token, verb, args, result, status, auto FROM action_log ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
     return [
         {"ts": r["ts"], "token": r["token"], "verb": r["verb"],
          "args": json.loads(r["args"] or "{}"),
-         "result": json.loads(r["result"]) if r["result"] else None, "status": r["status"]}
+         "result": json.loads(r["result"]) if r["result"] else None, "status": r["status"],
+         "auto": bool(r["auto"])}
         for r in rows
     ]

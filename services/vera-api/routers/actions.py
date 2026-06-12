@@ -1,10 +1,14 @@
 """Actions router — the typed execute primitive.
 
 Generalizes the knowledge store's propose/token/commit into a registry of allowlisted verbs, each with a pure
-validator/preview (action_spec.py) and an async executor here. Flow: propose -> stage (token) ->
-commit (execute once, audited, idempotent). Cards carry an action+token; the Mac app Confirms.
+validator/preview (action_spec.py) and an async executor here. Two lanes:
+  - gated (default): propose -> stage (token) -> commit (execute once, audited, idempotent).
+    Cards carry an action+token; the Mac app Confirms.
+  - free (/actions/auto): verbs explicitly enrolled with `autonomous: True` execute with no
+    confirm, audited with auto=true; oversight is post-hoc via a status card.
 """
 import os
+import time
 import uuid
 
 import aiohttp
@@ -254,11 +258,63 @@ async def dismiss(d: Dismiss):
     return {"ok": True}
 
 
+# ---- the free lane (trust-graduated autonomy) -------------------------------
+
+# Dedup window for the free lane: an auto-imported URL is never re-imported within this span.
+AUTO_DEDUP_SECS = 30 * 86400
+
+
+def _norm_url(u: str) -> str:
+    """Dedup key normalization: case-fold scheme+host, drop the fragment and trailing slash,
+    so trivially restyled links to the same page collide."""
+    u = (u or "").strip().split("#", 1)[0].rstrip("/")
+    parts = u.split("://", 1)
+    if len(parts) == 2:
+        scheme, rest = parts
+        host, _, path = rest.partition("/")
+        u = f"{scheme.lower()}://{host.lower()}" + (f"/{path}" if path else "")
+    return u
+
+
+class Auto(BaseModel):
+    verb: str
+    args: dict = {}
+    source: str = "heartbeat"
+    actor: str = "vera"
+
+
+@router.post("/actions/auto", tags=["actions"])
+async def auto(a: Auto):
+    """Execute a verb WITHOUT a confirm gate — allowed only for verbs explicitly enrolled
+    via `autonomous: True` in the spec (that allowlist is the entire boundary). No token, no
+    pending row: validate, dedup, run the same executor the gated path uses, audit with
+    auto=true. Oversight is post-hoc (the caller surfaces a status card)."""
+    if not spec.is_autonomous(a.verb):
+        return {"ok": False, "rejected": True,
+                "error": f"{a.verb} is not enrolled for autonomous execution"}
+    s = spec.SPEC[a.verb]
+    err = s["validate"](a.args)
+    if err:
+        return {"ok": False, "error": err}
+    url = a.args.get("url")
+    if url:
+        key = _norm_url(url)
+        for row in store.auto_recent(a.verb, time.time() - AUTO_DEDUP_SECS):
+            if _norm_url((row.get("args") or {}).get("url", "")) == key:
+                return {"ok": True, "skipped": "duplicate", "verb": a.verb,
+                        "result": row.get("result")}
+    result = await EXECUTORS[a.verb](a.args)
+    ok = bool((result or {}).get("ok", True))
+    store.log_auto(a.verb, a.args, result, status="applied" if ok else "failed")
+    return {"ok": ok, "verb": a.verb, "result": result}
+
+
 @router.get("/actions/registry", tags=["actions"])
 async def registry():
     """The verb catalog — the discovery surface clients and tools read instead of
     hardcoding verbs, arg shapes, or the HA allowlist (which is deployment config)."""
     return {"verbs": [{"verb": k, "risk": v["risk"], "reversible": v["reversible"],
+                       "autonomous": bool(v.get("autonomous")),
                        "summary": v.get("summary", ""), "args": v.get("args", "{}")}
                       for k, v in spec.SPEC.items() if k in EXECUTORS],
             "ha_allowlist": {"services": sorted(spec.HA_ALLOWED_SERVICES),

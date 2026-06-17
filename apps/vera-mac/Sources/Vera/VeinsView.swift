@@ -63,8 +63,15 @@ final class VeinsStore: ObservableObject {
 struct VeinsView: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
+    @Environment(\.openSettings) private var openSettings
     @StateObject private var veins = VeinsStore()
     @State private var editing: VeinEntry?
+
+    // A vein's unmet requirement points at Plugins, now a Settings tab: select it, then open Settings.
+    private func openPlugins() {
+        store.settingsTab = .plugins
+        openSettings()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -91,7 +98,7 @@ struct VeinsView: View {
         }
         .sheet(item: $editing) { entry in
             VeinSheet(entry: entry, veins: veins,
-                      openPlugins: { store.section = .plugins })
+                      openPlugins: openPlugins)
         }
     }
 
@@ -135,7 +142,7 @@ struct VeinsView: View {
                 ForEach(veins.entries) { entry in
                     VeinCard(entry: entry, veins: veins,
                              onConfigure: { editing = entry },
-                             openPlugins: { store.section = .plugins })
+                             openPlugins: openPlugins)
                 }
             }
         }

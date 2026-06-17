@@ -16,17 +16,26 @@ struct PulseView: View {
     // Detail/vein selection lives in the store so the sidebar Pulse button can dismiss it.
     private var detail: PulseCard? { store.pulseDetail }
     private var veinDetail: PulseVein? { store.pulseVeinDetail }
+    // Veins configure this feed, so the manager opens from here as a sheet, not the sidebar.
+    @State private var showVeins = false
 
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                HStack {
+                HStack(spacing: 10) {
                     Text("Today's pulse").font(.system(size: 22, weight: .bold))
-                    Spacer()
                     Text("\(store.feedCards.count)").font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(Theme.surface).clipShape(Capsule())
+                    Spacer()
+                    Button { showVeins = true } label: {
+                        Image(systemName: "rectangle.split.3x1").font(.system(size: 14))
+                            .foregroundStyle(Theme.textSecondary)
+                            .frame(width: 28, height: 28)
+                            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain).help("Veins (ambient watches pinned above the feed)")
                 }
                 .frame(maxWidth: pulseFeedWidth, alignment: .leading).frame(maxWidth: .infinity)
                 .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
@@ -38,7 +47,7 @@ struct PulseView: View {
                         .padding(.horizontal, 28).padding(.bottom, 8)
                 } else if store.isLive {
                     // No veins enabled — a quiet affordance instead of dead space.
-                    Button { store.section = .veins } label: {
+                    Button { showVeins = true } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "plus.circle").font(.system(size: 11))
                             Text("Add veins to pin ambient watches above the feed")
@@ -85,6 +94,26 @@ struct PulseView: View {
         .animation(.easeInOut(duration: 0.18), value: detail)
         .animation(.easeInOut(duration: 0.18), value: veinDetail)
         .task { await store.refreshPulse() }   // pull the latest feed + veins whenever Pulse opens
+        .sheet(isPresented: $showVeins) { VeinsSheet() }
+    }
+}
+
+/// The veins manager presented over Pulse — the existing `VeinsView` with a Done bar and a frame
+/// sized for its card grid. Veins configure the Pulse feed, so this is where they are managed.
+struct VeinsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 4)
+            VeinsView()
+        }
+        .frame(width: 900, height: 680)
+        .background(Theme.bg)
+        .preferredColorScheme(.dark)
     }
 }
 

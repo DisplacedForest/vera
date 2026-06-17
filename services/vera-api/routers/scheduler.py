@@ -97,6 +97,11 @@ async def _job_media_curate():
     return await media_curation.curate()
 
 
+async def _job_conversation_extract():
+    from . import conversation_extract
+    return await conversation_extract.run()
+
+
 # id -> (label, default cron, handler). The shipped schedule; everything overridable.
 REGISTRY: dict[str, tuple[str, str, object]] = {
     "pulse":          ("Pulse briefing run",        "0 5 * * *",    _job_pulse),
@@ -110,6 +115,7 @@ REGISTRY: dict[str, tuple[str, str, object]] = {
     "healthcheck":    ("Service health probe",      "*/15 * * * *", _job_healthcheck),
     "updates":        ("Stack updates check",       "30 7 * * *",   _job_updates),
     "media_curate":   ("Media curation digest",     "0 9 * * 0",    _job_media_curate),
+    "conversation_extract": ("Conversation extraction into the Profile Graph", "45 4 * * *", _job_conversation_extract),
 }
 
 

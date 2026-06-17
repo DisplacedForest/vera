@@ -7,28 +7,107 @@ struct ShotView: View {
     var section: AppSection = .chat
     var emptyChat: Bool = false
     var attachDemo: Bool = false
+    // Veins and Plugins/MCP no longer have sidebar destinations — they render in their new homes.
+    var chrome: ShotChrome = .window
+
+    /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
+    enum ShotChrome: Equatable { case window, veinsSheet, settings(SettingsTab) }
 
     var body: some View {
+        Group {
+            switch chrome {
+            case .window: windowBody
+            case .veinsSheet: veinsSheetShot
+            case .settings(let tab): settingsShot(tab)
+            }
+        }
+        .frame(width: 1180, height: 760)
+        .foregroundStyle(Theme.textPrimary)
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var windowBody: some View {
         HStack(spacing: 0) {
             sidebar.frame(width: 268).background(Theme.sidebar)
             Rectangle().fill(Theme.hairline).frame(width: 1)
             Group {
                 switch section {
                 case .pulse: pulse
-                case .veins: veinsBoard
                 case .journal: journal
                 case .memory: memory
-                case .plugins: pluginsBoard
-                case .mcp: mcpBoard
                 case .agentic: agenticBoard
                 default: if emptyChat { emptyChatShot } else { chat }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
         }
-        .frame(width: 1180, height: 760)
-        .foregroundStyle(Theme.textPrimary)
-        .environment(\.colorScheme, .dark)
+    }
+
+    /// The Veins manager as it now appears: a sheet card (Done bar + the veins board) over a dimmed Pulse.
+    private var veinsSheetShot: some View {
+        ZStack {
+            windowBodyForPulse.opacity(0.5)
+            Color.black.opacity(0.35)
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    Text("Done").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
+                }
+                .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 4)
+                veinsBoard
+            }
+            .frame(width: 900, height: 600)
+            .background(Theme.bg)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+    }
+
+    private var windowBodyForPulse: some View {
+        HStack(spacing: 0) {
+            sidebar.frame(width: 268).background(Theme.sidebar)
+            Rectangle().fill(Theme.hairline).frame(width: 1)
+            pulse.frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
+        }
+    }
+
+    /// A Settings tab (Plugins or MCP) — the Settings window chrome (tab bar) over the moved board.
+    private func settingsShot(_ tab: SettingsTab) -> some View {
+        ZStack {
+            Color.black.opacity(0.45)
+            VStack(spacing: 0) {
+                settingsTabBar(tab)
+                Divider().overlay(Theme.hairline)
+                Group { tab == .mcp ? AnyView(mcpBoard) : AnyView(pluginsBoard) }
+            }
+            .frame(width: 860, height: 640, alignment: .top)
+            .background(Theme.bg)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+    }
+
+    private func settingsTabBar(_ active: SettingsTab) -> some View {
+        let tabs: [(SettingsTab, String, String)] = [
+            (.connection, "Connection", "link"), (.model, "Model", "cpu"),
+            (.services, "Services", "server.rack"), (.plugins, "Plugins", "shippingbox"),
+            (.mcp, "MCP", "puzzlepiece.extension"), (.identity, "Identity", "person"),
+            (.about, "About", "info.circle"),
+        ]
+        return HStack(spacing: 22) {
+            ForEach(tabs, id: \.0) { t in
+                VStack(spacing: 3) {
+                    Image(systemName: t.2).font(.system(size: 16))
+                    Text(t.1).font(.system(size: 11))
+                }
+                .foregroundStyle(t.0 == active ? Theme.accent : Theme.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 10).background(Theme.surface)
     }
 
     /// Render-safe stand-in for a Toggle (ImageRenderer can't draw the live switch).
@@ -184,12 +263,9 @@ struct ShotView: View {
     private var chatSidebarBody: some View {
             VStack(spacing: 1) {
                 shotNav("New chat", "square.and.pencil", active: false)
-                shotNav("Pulse", "newspaper", active: false)
-                shotNav("Veins", "rectangle.split.3x1", active: section == .veins)
+                shotNav("Pulse", "newspaper", active: section == .pulse)
                 shotNav("Journal", "book.closed", active: section == .journal)
-                shotNav("Memory", "tray.full", active: false)
-                shotNav("Plugins", "shippingbox", active: section == .plugins)
-                shotNav("MCP", "puzzlepiece.extension", active: false)
+                shotNav("Memory", "tray.full", active: section == .memory)
             }
             .padding(.horizontal, 8)
 

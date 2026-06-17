@@ -150,7 +150,7 @@ docker compose up -d --build        # backend (uncomment `build:` in docker-comp
 cd apps/vera-mac && scripts/deploy.sh   # app — packages Vera.app and installs it to /Applications
 ```
 
-Onboarding asks for your endpoints, then offers the opt-in veins; integrations are configured anytime from the sidebar.
+Onboarding asks for your endpoints, then offers the opt-in veins (managed anytime from the Pulse header); integrations are configured anytime from the Settings window.
 
 <div align="center"><img src="docs/assets/onboarding.png" alt="Onboarding" width="700"></div>
 

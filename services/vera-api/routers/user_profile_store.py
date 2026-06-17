@@ -63,6 +63,13 @@ def _iid(user_id, topic):
     return hashlib.sha1(f"{user_id}\n{topic.strip().lower()}".encode()).hexdigest()[:12]
 
 
+def _cutover():
+    """True once the Profile Graph is the interest write target: per-user interest ACCRUAL stops
+    so this deprecated store no longer diverges. Reversible via PROFILE_GRAPH_CUTOVER; reads and
+    persona/prefs config are unaffected."""
+    return os.environ.get("PROFILE_GRAPH_CUTOVER", "").strip().lower() not in ("", "0", "false", "no")
+
+
 def set_persona(user_id, name=None, persona=None, prefs=None):
     init()
     now = int(time.time())
@@ -87,6 +94,8 @@ def observe(user_id, topic, weight=1.0, source="vera", provenance=None, gloss=No
     init()
     if not topic or not topic.strip():
         return None
+    if _cutover():
+        return None   # the Profile Graph is the write target now; the legacy store stops accruing
     iid = _iid(user_id, topic)
     now = int(time.time())
     with _conn() as c:

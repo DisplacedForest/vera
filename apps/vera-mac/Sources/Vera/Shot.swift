@@ -157,15 +157,22 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "veins" || view == "settings-plugins" || view == "settings-mcp" {
+            // Veins is now a sheet over Pulse; Plugins and MCP are Settings tabs.
+            let chrome: ShotView.ShotChrome = view == "veins" ? .veinsSheet
+                : (view == "settings-mcp" ? .settings(.mcp) : .settings(.plugins))
+            content = AnyView(
+                ShotView(store: store, chrome: chrome)
+                    .environmentObject(store)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else {
             let section: AppSection
             switch view {
             case "pulse": section = .pulse
-            case "veins": section = .veins
             case "journal": section = .journal; store.journalEntries = JournalEntry.mock()
             case "memory": section = .memory
-            case "plugins": section = .plugins
-            case "mcp": section = .mcp
             case "agentic": section = .agentic
             default: section = .chat
             }

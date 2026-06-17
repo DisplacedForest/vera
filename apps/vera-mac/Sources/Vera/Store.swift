@@ -8,6 +8,7 @@ final class ChatStore: ObservableObject {
     @Published var selectedID: String?
     @Published var draft: String = ""
     @Published var section: AppSection = .chat
+    @Published var settingsTab: SettingsTab = .connection  // selected Settings tab; deep links set it before opening Settings
     @Published var agenticPane: AgenticPane = .canvas   // which Agentic surface the sidebar shows
     @Published var pulseCards: [PulseCard] = []
     @Published var pulseVeins: [PulseVein] = PulseVein.mock()   // pinned ambient veins

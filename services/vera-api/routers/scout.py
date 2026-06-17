@@ -43,10 +43,13 @@ def _is_live(node, now):
     if ntype == "watch":
         nc = node.get("next_check")
         return state == "active" and (nc is None or nc <= now)
-    if ntype == "project":
-        return state in (None, "active")
-    if ntype == "thread":
-        return state == "open"
+    # A project/thread must be open AND recently engaged: an abandoned years-old "open project"
+    # has decayed below the floor and is not worth scouting. Watches alone are engagement-
+    # independent (an explicit check schedule). Everything else gates on engagement.
+    if ntype == "project" and state not in (None, "active"):
+        return False
+    if ntype == "thread" and state != "open":
+        return False
     return pg.engagement_now(node, now) >= ENGAGEMENT_FLOOR
 
 

@@ -61,15 +61,23 @@ def test_watch_cooldown_via_next_check():
     assert "cooling" not in picked
 
 
-def test_open_project_and_thread_selected_resolved_skipped():
+def test_open_engaged_project_and_thread_selected_resolved_skipped():
     nodes = [
-        _node(id="proj", type="project", state="active", engagement=0.0),
-        _node(id="done_proj", type="project", state="resolved", engagement=9.0),
-        _node(id="thread", type="thread", state="open", engagement=0.0),
-        _node(id="closed", type="thread", state="resolved", engagement=9.0),
+        _node(id="proj", type="project", state="active", engagement=2.0, last_engaged=NOW),
+        _node(id="done_proj", type="project", state="resolved", engagement=9.0, last_engaged=NOW),
+        _node(id="thread", type="thread", state="open", engagement=2.0, last_engaged=NOW),
+        _node(id="closed", type="thread", state="resolved", engagement=9.0, last_engaged=NOW),
     ]
     picked = [n["id"] for n in scout.select_live_nodes(nodes=nodes, now=NOW)]
     assert set(picked) == {"proj", "thread"}
+
+
+def test_abandoned_open_project_decayed_out_is_not_live():
+    # an open project that hasn't been engaged in ~2 years has decayed below the floor
+    stale = NOW - 700 * 86400
+    nodes = [_node(id="abandoned", type="project", state="active", engagement=1.0,
+                   last_engaged=stale)]
+    assert scout.select_live_nodes(nodes=nodes, now=NOW) == []
 
 
 def test_ranked_by_decayed_engagement_and_capped(monkeypatch):

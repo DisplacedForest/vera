@@ -1,8 +1,8 @@
 import Foundation
 
-/// One standing commitment from Vera's self-authored journal (GET /journal). The document
-/// is hers; the app renders it read-only. `body` is the entry's markdown without its
-/// heading line (the heading renders as the card title).
+/// One standing commitment from the journal (GET /journal), a read-only view the app
+/// renders. `body` is the entry's markdown without its heading line (the heading renders
+/// as the card title).
 struct JournalEntry: Identifiable, Hashable {
     let id: String          // slug
     let heading: String

@@ -35,7 +35,6 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from . import env_compat
-from . import journal
 from .pulse import DEFAULT_FOLDER, _inject, _vera, store
 from .persona import home_region_is_us, orientation, owner, voiced
 from .websearch import SearchRequest, search as web_search
@@ -779,14 +778,13 @@ async def check(req: SignalsRequest):
         res = await _inject(title, body, kind="signals", severity=tier,
                             sources=card_sources, summary=summary)
         out["cards"].append(res.get("id"))
-        # Hand the situation to her journal: she folds a repeat of a known situation into its
-        # existing entry or authors a new commitment, and her heartbeat acts on it from there.
+        # Land the situation as a watch node: the store's cosine merge folds a repeat of a known
+        # situation onto its node, two unrelated situations stay two nodes, and the Pulse pipeline
+        # surfaces material changes from there.
         try:
-            topics = ", ".join(watch) or "(none stated)"
-            await journal.author(
-                f"A signals situation you just briefed:\n\n{body}\n\n"
-                f"The card's watching line: {topics}",
-                origin=f"signals: {headline}")
+            from . import editor
+            await editor.author_watch(headline, facts=[body],
+                                      resolve_condition=", ".join(watch) or None, origin="self")
         except Exception as e:
             out["errors"].append(f"journal {headline}: {e}")
 

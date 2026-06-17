@@ -548,12 +548,13 @@ async def tick(req: TickRequest):
     except Exception as e:
         out["errors"].append(f"for_you: {e}")
 
-    # 6) JOURNAL (free) — act on a few due commitments from her self-authored journal;
-    # surface a card only on a material change or a loud close. Quiet is success.
+    # 6) JOURNAL (free) — resolve due watch nodes by deterministic state transition
+    # (resolve_condition + date + observed). No LLM recheck; an immortal watch cannot recur.
     try:
-        wu = await journal.tick_step(out["errors"])
-        if wu:
-            out["journal"] = wu
+        from . import editor
+        resolved = editor.resolve_due(now=int(time.time()))
+        if resolved:
+            out["journal"] = resolved
     except Exception as e:
         out["errors"].append(f"journal: {e}")
 

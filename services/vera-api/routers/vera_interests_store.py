@@ -77,11 +77,20 @@ def _iid(topic):
     return hashlib.sha1(topic.strip().lower().encode()).hexdigest()[:12]
 
 
+def _cutover():
+    """True once the Profile Graph is the interest write target: legacy interest ACCRUAL stops
+    so this deprecated store no longer diverges. Reversible via PROFILE_GRAPH_CUTOVER; reads and
+    cooldown bookkeeping are unaffected."""
+    return os.environ.get("PROFILE_GRAPH_CUTOVER", "").strip().lower() not in ("", "0", "false", "no")
+
+
 def observe(topic, stance=None, salience_bump=1.0, source="self", provenance=None):
     """Note/strengthen one of her interests. Idempotent on topic — re-observing bumps salience so a
     recurring interest rises. Preserves an existing stance if none is given. Free."""
     if not topic or not topic.strip():
         return None
+    if _cutover():
+        return None   # the Profile Graph is the write target now; the legacy store stops accruing
     init()
     iid = _iid(topic)
     now = int(time.time())

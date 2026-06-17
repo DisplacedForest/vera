@@ -4,15 +4,21 @@ import SwiftUI
 /// `~/.vera/config.json`. Env vars still win over file values; env-overridden fields carry
 /// an InfoTip naming the variable. Cheap changes apply live; OWUI session changes offer a reconnect.
 struct SettingsView: View {
+    @EnvironmentObject var store: ChatStore
     var body: some View {
-        TabView {
-            ConnectionTab().tabItem { Label("Connection", systemImage: "link") }
-            ModelTab().tabItem { Label("Model", systemImage: "cpu") }
-            ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }
-            IdentityTab().tabItem { Label("Identity", systemImage: "person") }
-            AboutTab().tabItem { Label("About", systemImage: "info.circle") }
+        TabView(selection: $store.settingsTab) {
+            ConnectionTab().tabItem { Label("Connection", systemImage: "link") }.tag(SettingsTab.connection)
+            ModelTab().tabItem { Label("Model", systemImage: "cpu") }.tag(SettingsTab.model)
+            ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }.tag(SettingsTab.services)
+            // Plugins and MCP are configuration surfaces, not destinations — they live here, not the sidebar.
+            PluginsView().tabItem { Label("Plugins", systemImage: "shippingbox") }.tag(SettingsTab.plugins)
+            MCPView().tabItem { Label("MCP", systemImage: "puzzlepiece.extension") }.tag(SettingsTab.mcp)
+            IdentityTab().tabItem { Label("Identity", systemImage: "person") }.tag(SettingsTab.identity)
+            AboutTab().tabItem { Label("About", systemImage: "info.circle") }.tag(SettingsTab.about)
         }
-        .frame(width: 560)
+        // Wider than a plain form window so the moved Plugins/MCP surfaces (860-wide content) breathe;
+        // a fixed height keeps their scrolling panes from collapsing in the Settings scene.
+        .frame(width: 860, height: 640)
         .preferredColorScheme(.dark)
     }
 }

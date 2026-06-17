@@ -68,6 +68,7 @@ struct VeraApp: App {
             SettingsView()
                 .environmentObject(config)
                 .environmentObject(store)
+                .environmentObject(tools)   // the Plugins and MCP tabs render from the shared ToolsStore
                 .environmentObject(updates)
         }
     }

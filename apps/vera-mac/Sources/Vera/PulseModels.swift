@@ -1,30 +1,35 @@
 import Foundation
 
-/// App surfaces. `chat` and `agentic` are the top modality tabs; `pulse`/`memory`/`plugins`/`mcp`
-/// are nav rows under the Chat tab.
+/// App surfaces the sidebar carries. `chat` and `agentic` are the top modality tabs; `pulse`,
+/// `journal`, and `memory` are nav rows under the Chat tab. Veins lives inside Pulse, and
+/// Plugins/MCP live inside Settings, so none of those three are sections.
 enum AppSection: String, CaseIterable, Identifiable {
-    case chat, pulse, veins, journal, memory, plugins, mcp, agentic
+    case chat, pulse, journal, memory, agentic
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .chat: "Chat"; case .pulse: "Pulse"; case .veins: "Veins"; case .journal: "Journal"
-        case .memory: "Memory"; case .plugins: "Plugins"; case .mcp: "MCP"; case .agentic: "Agentic"
+        case .chat: "Chat"; case .pulse: "Pulse"; case .journal: "Journal"
+        case .memory: "Memory"; case .agentic: "Agentic"
         }
     }
     var icon: String {
         switch self {
         case .chat: "message"
         case .pulse: "newspaper"
-        case .veins: "rectangle.split.3x1"
         case .journal: "book.closed"
         case .memory: "tray.full"
-        case .plugins: "shippingbox"
-        case .mcp: "puzzlepiece.extension"
         case .agentic: "slider.horizontal.3"
         }
     }
     /// True when this surface lives under the Chat tab (vs the Agentic tab).
     var underChatTab: Bool { self != .agentic }
+}
+
+/// Tabs in the Settings window. Plugins and MCP join the connection/identity tabs here; a deep
+/// link (the Veins "Open Plugins" warning) sets the shared selection before opening Settings.
+enum SettingsTab: String, CaseIterable, Identifiable {
+    case connection, model, services, plugins, mcp, identity, about
+    var id: String { rawValue }
 }
 
 /// One numbered source backing a Pulse card (for per-paragraph chips + the expandable list).

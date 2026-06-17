@@ -25,6 +25,7 @@ GROUPS: list[tuple[str, list[str]]] = [
                        "PULSE_W_URGENCY", "PULSE_W_SERENDIPITY", "PULSE_NOVELTY_FLOOR",
                        "PULSE_URGENCY_DECAY", "PULSE_URGENCY_WINDOW", "PULSE_UNDATED_URGENCY",
                        "PULSE_EPSILON", "ANALYST_LOG_PATH"]),
+    ("pulse editor",  ["PULSE_STALE_CLAIM_DAYS", "PULSE_LINK_ENGAGEMENT_FLOOR", "PULSE_LINK_LIMIT"]),
     ("identity",      ["VERA_OWNER_NAME", "HOME_LOCATION_NAME", "HOME_TZ"]),
     ("location",      ["WEATHER_LAT", "WEATHER_LON", "HOME_STATE"]),
     ("home assistant", ["HOME_ASSISTANT_BASE", "HOME_ASSISTANT_KEY"]),

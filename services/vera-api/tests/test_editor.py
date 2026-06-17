@@ -176,3 +176,61 @@ def test_select_topics_falls_back_to_triage_when_graph_empty(monkeypatch):
     topics = asyncio.run(pulse._select_topics(0, who="Sam", persona=None, all_interests=["x"],
                                               memories=[], exclusions=[], want=8))
     assert seen.get("called") and topics[0]["title"] == "v1 topic"
+
+
+# --------------------------------------------------------------- journal-as-view
+
+
+def _watch(nid, *, label=None, resolve_condition="", next_check=None, satisfied=False,
+           state="active", origin="self", facts=None):
+    fl = list(facts or [])
+    fl.append(pg.make_fact(origin, source="journal:origin"))
+    if satisfied:
+        fl.append(pg.make_fact("condition observed", source="resolution:obs"))
+    pg.upsert_node(id=nid, type="watch", label=label or nid, state=state,
+                   resolve_condition=resolve_condition, next_check=next_check, facts=fl)
+
+
+def test_journal_view_contract_shape_and_origin():
+    _watch("w1", label="Strait of Hormuz", origin="requested", next_check=NOW,
+           facts=[pg.make_fact("tankers rerouting", source="signals")])
+    v = editor.journal_view(now=NOW)
+    assert v["ok"] is True and set(v) == {"ok", "entries", "raw", "archive"}
+    e = v["entries"][0]
+    assert set(e) == {"heading", "slug", "text", "next_check", "origin"}
+    assert e["heading"] == "Strait of Hormuz" and e["origin"] == "requested"
+    assert "tankers rerouting" in e["text"]
+
+
+def test_journal_view_resolved_node_goes_to_archive():
+    _watch("r1", label="Old thing", state="resolved")
+    v = editor.journal_view(now=NOW)
+    assert all(e["heading"] != "Old thing" for e in v["entries"])
+    assert any("Old thing" in a["text"] for a in v["archive"])
+
+
+def test_resolve_due_requires_both_condition_and_date():
+    _watch("ready", resolve_condition="strait reopens", next_check=NOW - 10, satisfied=True)
+    _watch("future", resolve_condition="x", next_check=NOW + 100000, satisfied=True)
+    _watch("unmet", resolve_condition="x", next_check=NOW - 10, satisfied=False)
+    _watch("nocond", resolve_condition="", next_check=NOW - 10, satisfied=True)
+    resolved = editor.resolve_due(now=NOW)
+    assert resolved == ["ready"]
+    assert pg.get_node("ready")["state"] == "resolved"
+    assert pg.get_node("future")["state"] == "active"     # date not yet met
+    assert pg.get_node("unmet")["state"] == "active"       # condition not observed
+    assert pg.get_node("nocond")["state"] == "active"      # no resolve condition
+
+
+def test_author_watch_unrelated_situations_do_not_fold():
+    n1 = asyncio.run(editor.author_watch("Strait closure", embedding=[1.0, 0.0, 0.0], now=NOW))
+    n2 = asyncio.run(editor.author_watch("Hazelnut harvest", embedding=[0.0, 1.0, 0.0], now=NOW))
+    assert n1 != n2                                         # cosine gate keeps them separate
+    assert len(pg.all_nodes(type="watch")) == 2
+
+
+def test_author_watch_paraphrase_folds():
+    n1 = asyncio.run(editor.author_watch("Strait of Hormuz closure", embedding=[1.0, 0.0], now=NOW))
+    n2 = asyncio.run(editor.author_watch("Hormuz strait shutdown", embedding=[0.99, 0.01], now=NOW))
+    assert n1 == n2                                        # near-duplicate collapses onto one node
+    assert len(pg.all_nodes(type="watch")) == 1

@@ -1185,6 +1185,10 @@ async def _do_run(req: PulseRequest):
                                                 defer_audit=True, outcome=oc)
                     if card:
                         pending_audit.append((card, card.pop("_corpus", [])))
+                        if t.get("seed_node_id"):
+                            from . import learn_store
+                            learn_store.record_card(card["id"], [t["seed_node_id"]],
+                                                    t.get("scores") or {}, int(time.time()))
                         out["injected"].append(card["title"])
                         record["injected"].append(card["title"])
                         item.update({"title": card["title"], "status": "injected",

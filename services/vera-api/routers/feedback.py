@@ -1,8 +1,9 @@
-"""Feedback log — human thumbs-up/down on Pulse cards and chat responses.
+"""Feedback log + write-back — human reactions on Pulse cards and chat responses.
 
-Capture-only: appends one JSON line per rating to feedback.jsonl. This is the seed of a
-human-preference dataset (RLHF / DPO post-training data) and the future signal for Pulse
-topic weighting. It does NOT change Vera's behavior yet.
+Appends one JSON line per rating to feedback.jsonl (the seed of a human-preference dataset)
+AND, when a `card_id` is given, writes the reaction back into the Profile Graph: the served
+node(s)' engagement moves by the signal's effect (`learn.apply_signal`), closing the loop so
+the feed learns from what the owner does with it.
 
 Persisted under a mounted data dir (FEEDBACK_PATH) so it survives container rebuilds.
 """
@@ -28,6 +29,8 @@ class Feedback(BaseModel):
     chat_id: str | None = None
     message_id: str | None = None
     model: str | None = None
+    card_id: str | None = None   # the Pulse card this reaction is on (enables graph write-back)
+    signal: str | None = None    # explicit signal (open/bookmark/promote/expire); else sentiment
 
 
 @router.post("/feedback", tags=["feedback"])
@@ -37,7 +40,11 @@ async def submit(fb: Feedback):
     os.makedirs(os.path.dirname(FEEDBACK_PATH) or ".", exist_ok=True)
     with open(FEEDBACK_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    return {"ok": True}
+    written = None
+    if fb.card_id:
+        from . import learn
+        written = learn.apply_signal(fb.card_id, fb.signal or fb.sentiment)
+    return {"ok": True, "write_back": written}
 
 
 @router.get("/feedback/summary", tags=["feedback"])

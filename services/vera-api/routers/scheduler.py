@@ -102,6 +102,12 @@ async def _job_conversation_extract():
     return await conversation_extract.run()
 
 
+async def _job_weight_fit():
+    from . import learn
+    coeffs = learn.fit_weights()
+    return {"installed": coeffs is not None, "coeffs": coeffs}
+
+
 # id -> (label, default cron, handler). The shipped schedule; everything overridable.
 REGISTRY: dict[str, tuple[str, str, object]] = {
     "pulse":          ("Pulse briefing run",        "0 5 * * *",    _job_pulse),
@@ -116,6 +122,7 @@ REGISTRY: dict[str, tuple[str, str, object]] = {
     "updates":        ("Stack updates check",       "30 7 * * *",   _job_updates),
     "media_curate":   ("Media curation digest",     "0 9 * * 0",    _job_media_curate),
     "conversation_extract": ("Conversation extraction into the Profile Graph", "45 4 * * *", _job_conversation_extract),
+    "weight_fit":     ("Ranking weight fit from feedback", "30 4 * * 0",  _job_weight_fit),
 }
 
 

@@ -220,6 +220,8 @@ async def merge_conversation(conv, extracted, now=None):
     nodes whose state flips to resolved when a later conversation closes them. Returns counts."""
     now = int(time.time()) if now is None else now
     cid, cts = conv.get("conv_id"), conv.get("ts") or now
+    from . import learn, learn_store
+    served = learn_store.served_nodes()
     label_to_id = {}
     for n in extracted.get("nodes", []):
         label = (n.get("label") or "").strip()
@@ -231,6 +233,8 @@ async def merge_conversation(conv, extracted, now=None):
         emb = await pg.embed(label)
         nid = pg.merge_or_create(type=ntype, label=label, embedding=emb, facts=facts, now=now,
                                  recency_factor=float(n.get("engagement_signal") or 1.0))
+        if nid in served:
+            learn.reinforce_node(nid, now=now)   # discussed later: a carded topic returns in chat
         label_to_id[label] = nid
     edges = 0
     for e in extracted.get("edges", []):

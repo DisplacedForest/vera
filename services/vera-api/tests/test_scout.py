@@ -283,6 +283,31 @@ def test_scout_fans_out_collapses_urls_and_surfaces_skipped():
         assert "published_date" in c and c["seed_node_id"]
 
 
+def test_scout_isolates_a_failing_source(monkeypatch):
+    nodes = [_node(id="A", engagement=3.0, last_engaged=NOW)]
+
+    async def llm(messages, temperature=0.2):
+        return '{"query": "q", "sources": ["news", "reddit"]}'
+
+    news = _FakeAdapter("news", {
+        "A": [scout._candidate("a-news", "A News", "https://x/u1", "2026-06-01", "news", "A")]})
+
+    class _Boom:
+        name = "reddit"
+
+        def configured(self):
+            return True
+
+        async def search(self, *a, **k):
+            raise RuntimeError("403 Blocked")
+
+    out = _run(scout.scout(nodes=nodes, now=NOW, llm=llm,
+                           adapters={"news": news, "reddit": _Boom()},
+                           configured={"news", "reddit"}))
+    assert [c["url"] for c in out["candidates"]] == ["https://x/u1"]   # news survived reddit's failure
+    assert "reddit" in out["failed_sources"]                          # the failure is recorded, not fatal
+
+
 def test_scout_uses_live_config_when_not_injected(monkeypatch):
     monkeypatch.setattr(scout, "configured_sources", lambda: set())
 

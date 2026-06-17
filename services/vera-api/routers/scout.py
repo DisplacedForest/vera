@@ -322,14 +322,19 @@ async def scout(nodes=None, now=None, llm=None, adapters=None, configured=None):
     available = configured_sources() if configured is None else set(configured)
 
     selected = select_live_nodes(nodes=nodes, now=now)
-    candidates, seen = [], set()
+    candidates, seen, failed = [], set(), set()
     for node in selected:
         plan = await phrase_query(node, llm=llm, configured=available)
         for name in plan["sources"]:
             adapter = src.get(name)
             if adapter is None:
                 continue
-            for c in await adapter.search(plan["query"], node, now):
+            try:
+                results = await adapter.search(plan["query"], node, now)
+            except Exception:
+                failed.add(name)        # a blocked/flaky source is recorded, never fatal
+                continue
+            for c in results:
                 url = c.get("url")
                 if url and url in seen:
                     continue
@@ -338,4 +343,5 @@ async def scout(nodes=None, now=None, llm=None, adapters=None, configured=None):
                 candidates.append(c)
     return {"candidates": candidates,
             "scouted_nodes": [n["id"] for n in selected],
-            "skipped_sources": sorted(set(ALLOWED_SOURCES) - available)}
+            "skipped_sources": sorted(set(ALLOWED_SOURCES) - available),
+            "failed_sources": sorted(failed)}

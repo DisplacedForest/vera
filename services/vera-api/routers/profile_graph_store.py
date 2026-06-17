@@ -54,7 +54,7 @@ def init():
                 type TEXT,                 -- project|interest|goal|person|company|location|asset|thread|watch
                 label TEXT,                -- canonical display label
                 aliases TEXT,              -- json [str] — every paraphrase that collapsed here
-                facts TEXT,                -- json [str] — durable, never decays
+                facts TEXT,                -- json: [{text, source, observed_at}]; durable, no decay
                 engagement REAL,           -- decaying weight; the only driver of research
                 last_engaged INTEGER,      -- for lazy decay
                 state TEXT,                -- active|dormant|resolved (projects/threads/watches)

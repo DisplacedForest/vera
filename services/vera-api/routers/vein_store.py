@@ -22,8 +22,8 @@ _lock = threading.Lock()
 
 
 def _adopt_legacy() -> None:
-    """Veins were once called lanes. A data volume from that era holds `lanes.json`;
-    when the vein store doesn't exist yet, adopt it in place (same volume, atomic)."""
+    """Adopt a legacy `lanes.json` in the data volume as the vein store when the vein
+    store does not exist yet (same volume, atomic)."""
     legacy = os.path.join(os.path.dirname(PATH) or ".", "lanes.json")
     if os.path.exists(PATH) or not os.path.exists(legacy):
         return

@@ -734,7 +734,10 @@ async def check(req: SignalsRequest):
     except Exception as e:
         out["errors"].append(f"cluster: {e}")
     if not clusters:
-        clusters = [{"headline": t["title"][:48], "members": [i], "query": t["title"]}
+        def _clip(s, n=48):
+            s = s.strip()
+            return s if len(s) <= n else (s[:n].rsplit(" ", 1)[0] or s[:n])
+        clusters = [{"headline": _clip(t["title"]), "members": [i], "query": t["title"]}
                     for i, t in enumerate(trips)]
 
     out["cards"] = []

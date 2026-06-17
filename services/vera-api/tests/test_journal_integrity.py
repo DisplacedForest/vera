@@ -80,7 +80,7 @@ def test_legacy_fallback_origin_is_always_self():
     assert entries[0]["origin"] == "self"   # the "user" phrasing must not read as requested
 
 
-# --- structured origin is read from the marker fact (pins SER-192) -------------------
+# --- structured origin is read from the marker fact --------------------------------
 
 def test_origin_reads_the_stamped_marker():
     requested = {"facts": [{"text": "requested", "source": "journal:origin", "observed_at": 1},

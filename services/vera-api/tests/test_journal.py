@@ -17,7 +17,7 @@ Next check: 2026-06-12
 - 2026-06-11: ceasefire talks announced, no traffic change yet.
 
 ## Lumber prices
-Origin: Zachary asked (2026-06-11)
+Origin: Alex asked (2026-06-11)
 Watching for a material move before the deck project.
 Next check: 2026-06-13 09:00
 

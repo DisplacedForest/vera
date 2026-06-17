@@ -1,0 +1,7 @@
+# Leak-gate allowlist. One POSIX-extended regex per line; any scan hit line matching a
+# regex here is exempt. Lines beginning with # and blank lines are ignored.
+# Justify every entry: a hit is allowlisted only when it is demonstrably not a real leak.
+
+# Synthetic UniFi gateway fixture in the knowledge-merge test. 10.0.0.1 is a generic
+# default-gateway example, not household infrastructure (the home LAN is a different range).
+^services/vera-api/tests/test_knowledge_groom\.py:[0-9]+:.*10\.0\.0\.1

@@ -48,3 +48,16 @@ jobs:
       - name: Selftest
         working-directory: apps/vera-mac
         run: .build/debug/Vera --selftest
+
+  leak-gate:
+    name: leak-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan tracked tree for leaks
+        env:
+          VERA_OWNER_NAME: ${{ secrets.VERA_OWNER_NAME }}
+          HOME_LOCATION_NAME: ${{ secrets.HOME_LOCATION_NAME }}
+          WEATHER_LAT: ${{ secrets.WEATHER_LAT }}
+          WEATHER_LON: ${{ secrets.WEATHER_LON }}
+        run: sh scripts/leak-gate.sh

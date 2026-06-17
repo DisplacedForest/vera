@@ -25,7 +25,7 @@ Trunk-based, deliberately simple:
 
 Enforced in review:
 
-1. **Everything is parameterized.** No hardcoded endpoints, IPs, hostnames, home-directory paths, model names, or personal data — anywhere. Every external service is a URL in config. Every judgment call (taste, thresholds, region) is a config value with a neutral default.
+1. **Everything is parameterized.** No hardcoded endpoints, IPs, hostnames, home-directory paths, model names, or personal data — anywhere. Every external service is a URL in config. Every judgment call (taste, thresholds, region) is a config value with a neutral default. `scripts/leak-gate.sh` enforces this in CI: it scans the tracked tree for LAN IPs, home-directory paths, owner/location values, ticket references in comments, and key-shaped strings (hex, base64, `sk-`, JWT, PEM), and fails the build on any hit. For a proven false positive, add a justified regex to `scripts/leak-allow.txt`.
 2. **Live data only.** Fetch from the real source; if it is unavailable, show "N/A" or an honest error state. Never substitute a fake default, never fake success.
 3. **Degrade gracefully.** Every capability must behave sensibly when its endpoint or integration is unconfigured: report itself as off in the config report, refuse politely at runtime, and never affect the rest of the stack.
 4. **One capability = one router.** New server-side capabilities are a single `APIRouter` module in `services/vera-api/routers/` plus one `include_router` line in `main.py`. No new containers, no sidecars.

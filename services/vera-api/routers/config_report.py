@@ -17,6 +17,7 @@ GROUPS: list[tuple[str, list[str]]] = [
     ("web search",    ["SEARXNG_BASE", "PLAYWRIGHT_WS"]),
     ("dream/coder",   ["DREAM_BASE", "DREAM_MODEL", "DREAM_TOOL_PROTOCOL"]),
     ("image gen",     ["VERA_IMAGE_BASE", "IMAGE_PROTOCOL"]),
+    ("embeddings",    ["VERA_EMBED_URL", "VERA_EMBED_MODEL"]),
     ("identity",      ["VERA_OWNER_NAME", "HOME_LOCATION_NAME", "HOME_TZ"]),
     ("location",      ["WEATHER_LAT", "WEATHER_LON", "HOME_STATE"]),
     ("home assistant", ["HOME_ASSISTANT_BASE", "HOME_ASSISTANT_KEY"]),

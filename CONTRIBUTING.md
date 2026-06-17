@@ -33,6 +33,7 @@ Enforced in review:
 6. **Typed throughout.** Python is type-hinted, Swift is Swift 6 strict.
 7. **Comments describe the present.** What the code does and why, never its history or what it replaced.
 8. **No em dashes in product copy.** UI strings use periods, commas, or parentheses; missing values render as "N/A". `scripts/check-copy.sh` enforces this for the app's string literals and runs as part of `deploy.sh`; server-side user-facing strings (API error details, card titles) follow the same rule in review. Prompts, log lines, and code comments are exempt.
+9. **Math over LLM for numbers; learned over hand-set once data exists.** Anything quantitative (ranking, dedup distance, engagement decay, urgency) is deterministic math with declared, env-tunable constants, never an LLM choosing a number that feeds another number. Pulse's five ranking weights ship hand-set and are replaced by a periodic logistic-regression fit over recorded feedback once enough labeled cards accrue: a transparent linear model over the same five features, gated on a sample threshold, never a black box.
 
 ## Project layout
 

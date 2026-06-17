@@ -39,6 +39,23 @@ EPSILON = _envf("PULSE_EPSILON", "0.1")               # exploration share: the r
 LOG_PATH = os.environ.get("ANALYST_LOG_PATH", "/data/analyst_log.jsonl")
 
 
+def _weights():
+    """The five ranking weights: the learned coefficients once the feedback fit has installed
+    them, else the hand-set env constants. Read at call time so a fresh fit takes effect with no
+    restart."""
+    try:
+        from . import learn_store
+        w = learn_store.get_weights()
+        if w and w.get("coeffs"):
+            c = w["coeffs"]
+            return (c.get("relevance", W_RELEVANCE), c.get("novelty", W_NOVELTY),
+                    c.get("opportunity", W_OPPORTUNITY), c.get("urgency", W_URGENCY),
+                    c.get("serendipity", W_SERENDIPITY))
+    except Exception:
+        pass
+    return (W_RELEVANCE, W_NOVELTY, W_OPPORTUNITY, W_URGENCY, W_SERENDIPITY)
+
+
 def _clamp01(x):
     return 0.0 if x < 0 else 1.0 if x > 1 else x
 
@@ -220,9 +237,10 @@ def _log_run(scored, floored, chosen_ids):
             rows.append({"url": cand["url"], "seed": cand["seed_node_id"], "relevance": 0.0,
                          "novelty": nov, "opportunity": 0.0, "urgency": 0.0, "serendipity": 0.0,
                          "total": 0.0, "chosen": False, "floored": True})
-        rec = {"ts": int(time.time()), "weights":
-               {"relevance": W_RELEVANCE, "novelty": W_NOVELTY, "opportunity": W_OPPORTUNITY,
-                "urgency": W_URGENCY, "serendipity": W_SERENDIPITY},
+        wr, wn, wo, wu, ws = _weights()
+        rec = {"ts": int(time.time()),
+               "weights": {"relevance": wr, "novelty": wn, "opportunity": wo,
+                           "urgency": wu, "serendipity": ws},
                "candidates": rows}
         with open(LOG_PATH, "a") as f:
             f.write(json.dumps(rec) + "\n")
@@ -287,6 +305,7 @@ async def rank(candidates, *, now=None, recent_card_texts=None, classify=None, e
             continue
         scored.append({"cand": c, "novelty": nov})
 
+    wr, wn, wo, wu, ws = _weights()
     rel = relevance_scores([s["cand"]["seed_node_id"] for s in scored], now)
     for i, s in enumerate(scored):
         s["relevance"] = rel[i]
@@ -295,14 +314,14 @@ async def rank(candidates, *, now=None, recent_card_texts=None, classify=None, e
         s["opportunity"] = opportunity(cls.get("actionable"),
                                        project_connection(s["cand"]["seed_node_id"]))
         s["urgency"] = urgency(s["cand"].get("published_date"), cls.get("deadline"), now)
-        s["exploit"] = (W_RELEVANCE * s["relevance"] + W_NOVELTY * s["novelty"]
-                        + W_OPPORTUNITY * s["opportunity"] + W_URGENCY * s["urgency"])
+        s["exploit"] = (wr * s["relevance"] + wn * s["novelty"]
+                        + wo * s["opportunity"] + wu * s["urgency"])
 
     by_exploit = sorted(scored, key=lambda s: (-s["exploit"], s["cand"]["url"]))
     top_k_ids = {s["cand"]["seed_node_id"] for s in by_exploit[:max_cards]}
     for s in scored:
         s["serendipity"] = serendipity(s["cand"]["seed_node_id"], top_k_ids)
-        s["total"] = s["exploit"] + W_SERENDIPITY * s["serendipity"]
+        s["total"] = s["exploit"] + ws * s["serendipity"]
         s["cand"]["scores"] = _terms(s)
         s["cand"]["classification"] = s["cls"]
         s["cand"].setdefault("reserved", False)

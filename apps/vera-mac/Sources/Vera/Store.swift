@@ -11,7 +11,7 @@ final class ChatStore: ObservableObject {
     @Published var settingsTab: SettingsTab = .connection  // selected Settings tab; deep links set it before opening Settings
     @Published var agenticPane: AgenticPane = .canvas   // which Agentic surface the sidebar shows
     @Published var pulseCards: [PulseCard] = []
-    @Published var pulseVeins: [PulseVein] = PulseVein.mock()   // pinned ambient veins
+    @Published var pulseVeins: [PulseVein] = []   // pinned ambient veins, populated from vera-api
     @Published var memories: [MemoryItem] = []
     @Published var journalEntries: [JournalEntry] = []        // her standing commitments (read-only)
     @Published var journalArchive: [JournalArchiveMonth] = [] // recently resolved ones
@@ -195,7 +195,7 @@ final class ChatStore: ObservableObject {
         async let veinsTask = client.fetchPulseVeins()
         let (cards, veins) = await (cardsTask, veinsTask)
         pulseCards = cards
-        if !veins.isEmpty { pulseVeins = veins }   // keep mock veins if the backend returns none
+        pulseVeins = veins   // empty when vera-api is unconfigured or returns none
         bookmarkedPulseIDs = Set(cards.filter { $0.status == "bookmarked" }.map { $0.id })
         readPulseIDs = Set(cards.filter { $0.read }.map { $0.id })   // per-row read state
     }

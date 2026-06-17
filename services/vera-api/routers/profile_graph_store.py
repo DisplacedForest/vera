@@ -208,6 +208,17 @@ def neighbors(nid):
              "weight": r["weight"]} for r in rows]
 
 
+def neighbors_undirected(nid):
+    """Edges incident to `nid` in either direction, as `{other_id, type, weight}`. Connectivity
+    questions (e.g. is a node linked to a project) ignore edge direction."""
+    init()
+    with _conn() as c:
+        rows = c.execute("SELECT src_id,dst_id,type,weight FROM edge WHERE src_id=? OR dst_id=?",
+                         (nid, nid)).fetchall()
+    return [{"other_id": r["dst_id"] if r["src_id"] == nid else r["src_id"],
+             "type": r["type"], "weight": r["weight"]} for r in rows]
+
+
 # --------------------------------------------------------------------------- math: decay
 
 

@@ -78,9 +78,9 @@ def _iid(topic):
 
 
 def _cutover():
-    """True once the Profile Graph is the interest write target: legacy interest ACCRUAL stops
-    so this deprecated store no longer diverges. Reversible via PROFILE_GRAPH_CUTOVER; reads and
-    cooldown bookkeeping are unaffected."""
+    """Whether PROFILE_GRAPH_CUTOVER routes interest accrual to the Profile Graph. When set,
+    `observe` is a no-op so the graph is the sole interest write target; reads and cooldown
+    bookkeeping run normally."""
     return os.environ.get("PROFILE_GRAPH_CUTOVER", "").strip().lower() not in ("", "0", "false", "no")
 
 
@@ -90,7 +90,7 @@ def observe(topic, stance=None, salience_bump=1.0, source="self", provenance=Non
     if not topic or not topic.strip():
         return None
     if _cutover():
-        return None   # the Profile Graph is the write target now; the legacy store stops accruing
+        return None   # under cutover the Profile Graph is the interest write target
     init()
     iid = _iid(topic)
     now = int(time.time())

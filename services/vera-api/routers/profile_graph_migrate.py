@@ -1,13 +1,11 @@
-"""Profile Graph migration — the one-time seed that brings the existing structured state
-into the graph so Pulse v2 starts from what Vera already knows.
+"""Profile Graph migration — seeds the graph from the existing structured state so Pulse
+starts from what Vera already knows.
 
-Deterministic and idempotent: it keys on (type, label) rather than embeddings, so it runs
-safely at every boot until the conversation-extraction job becomes the live write path.
+Deterministic and idempotent: it keys on (type, label), so re-running is safe and a no-op.
 Interests become interest nodes (their gloss is a durable fact, their weight the seed
 engagement); standing journal commitments become watch nodes; hand-mapped identity facts
-become typed fact-bearing nodes. Free-text memory understanding is the extraction job's
-domain, not this seed's: anything needing language judgement arrives as `seed_facts`,
-already structured.
+become typed fact-bearing nodes. Inputs are structured: anything needing language judgement
+arrives as `seed_facts`, already parsed by the extraction job.
 """
 from . import profile_graph_store as pg
 

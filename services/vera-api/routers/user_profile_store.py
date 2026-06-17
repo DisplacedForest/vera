@@ -64,9 +64,9 @@ def _iid(user_id, topic):
 
 
 def _cutover():
-    """True once the Profile Graph is the interest write target: per-user interest ACCRUAL stops
-    so this deprecated store no longer diverges. Reversible via PROFILE_GRAPH_CUTOVER; reads and
-    persona/prefs config are unaffected."""
+    """Whether PROFILE_GRAPH_CUTOVER routes per-user interest accrual to the Profile Graph. When
+    set, `observe` is a no-op so the graph is the sole interest write target; reads and
+    persona/prefs config run normally."""
     return os.environ.get("PROFILE_GRAPH_CUTOVER", "").strip().lower() not in ("", "0", "false", "no")
 
 
@@ -95,7 +95,7 @@ def observe(user_id, topic, weight=1.0, source="vera", provenance=None, gloss=No
     if not topic or not topic.strip():
         return None
     if _cutover():
-        return None   # the Profile Graph is the write target now; the legacy store stops accruing
+        return None   # under cutover the Profile Graph is the interest write target
     iid = _iid(user_id, topic)
     now = int(time.time())
     with _conn() as c:

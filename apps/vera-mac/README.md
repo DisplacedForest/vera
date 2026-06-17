@@ -1,14 +1,15 @@
 # Vera (macOS app)
 
 Native SwiftUI client for Vera (Open WebUI). Chat streams through OWUI's pipeline
-(memory + tools) over Socket.IO; surfaces for Pulse, Memory, and the MCP manager.
+(memory + tools) over Socket.IO; surfaces for Pulse, Journal, Memory, and the Agentic
+canvas. Veins are managed from the Pulse header; the Plugins and MCP managers live in Settings.
 
 ## Develop
 ```bash
 swift run                       # dev build + launch
 swift build                     # compile check
 .build/debug/Vera --selftest    # headless: exercise the live OWUI client
-.build/debug/Vera --shot out.png --view chat|pulse|memory|mcp|agentic|settings|onboarding   # render a screenshot
+.build/debug/Vera --shot out.png --view chat|pulse|journal|memory|agentic|veins|settings-plugins|settings-mcp|settings|onboarding   # render a screenshot
 ```
 Config lives in `~/.vera/config.json`, editable in-app via Settings (⌘,): `base`, `api_key`,
 `model`, `completions_url`, `voice_base`, `vera_api_base`, `owui_email`, `owui_password`,

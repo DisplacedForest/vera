@@ -1,14 +1,11 @@
 """Conversation extraction — the Profile Graph's write path.
 
-ChatGPT Pulse's premise is that you chat normally and a model of you accrues. This job reads
-new conversations from the owner's normal conversational surfaces, runs one structured-output
-extraction call per conversation (the single irreducibly-LLM step), and merges the resulting
-nodes/edges/threads into the Profile Graph through SER-188's deterministic dedup/decay math.
+This job reads new conversations from the owner's conversational surfaces, runs one
+structured-output extraction call per conversation (the single irreducibly-LLM step), and
+merges the resulting nodes/edges/threads into the Profile Graph through its dedup/decay math.
 
-Sources are the places the owner actually thinks out loud: Open WebUI (their chats with Vera)
-and ChatGPT / Claude.ai platform data exports. Coding-agent transcripts (Claude Code, Codex)
-are deliberately NOT a source: a coding session is not the owner's mind, and would pollute the
-model of them.
+Sources are Open WebUI (the owner's chats with Vera) and ChatGPT / Claude.ai platform data
+exports. Coding-agent transcripts (Claude Code, Codex) are not a source.
 
 Adapters normalize every source to `{conv_id, text, ts, source}`. A per-source cursor
 (extract_store) makes ingestion incremental and re-runs a no-op. All I/O is injected so the
@@ -198,8 +195,8 @@ def _parse_json(txt):
 
 async def extract(text):
     """The one irreducibly-LLM step: a conversation -> structured nodes/edges/threads. Returns
-    the empty shape on any parse failure, so a bad extraction skips the conversation rather than
-    breaking the run."""
+    the empty shape on any parse failure, so a bad extraction skips its conversation and the run
+    continues."""
     raw = await _vera([{"role": "system", "content": EXTRACT_SYS},
                        {"role": "user", "content": text}], temperature=0.2)
     parsed = _parse_json(raw)
@@ -217,7 +214,7 @@ EDGE_TYPES = {"supports", "depends_on", "related_to", "part_of", "about", "at_lo
 
 
 async def merge_conversation(conv, extracted, now=None):
-    """Land one conversation's extracted nodes/edges/threads in the graph through SER-188's
+    """Land one conversation's extracted nodes/edges/threads in the graph through the store's
     dedup math. Facts are stamped with this conversation's id/time; engagement is bumped by the
     extraction's per-node signal; edges connect the labels seen here; threads become thread
     nodes whose state flips to resolved when a later conversation closes them. Returns counts."""

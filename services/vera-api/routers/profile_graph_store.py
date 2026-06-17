@@ -1,18 +1,17 @@
 """Profile Graph store — the single source of truth for what Vera knows about the owner.
 
 A typed node/edge graph. Each node carries a durable FACT layer (never decays) and a
-decaying ENGAGEMENT weight (the only thing that drives proactive research), so a topic
-can stay true forever while its pull on the feed fades when it stops being discussed.
+decaying ENGAGEMENT weight (the only thing that drives proactive research): a topic stays
+true while its pull on the feed tracks how recently it has been discussed.
 
-Three deterministic math helpers live here and are the reason interest-modelling is
-arithmetic rather than LLM judgement:
+Three deterministic math helpers:
   - engagement decay on read (an exponential half-life),
   - cosine dedup-merge (paraphrases of one topic collapse onto one node),
   - spreading activation (a finding inherits the engagement of the nodes it connects to).
 
-Mirrors the other `*_store.py` modules: an env-bound SQLite path, `_conn()`, and an
-`init()` that creates tables idempotently. The embeddings call and the dedup tie-break
-are injected so the math path runs offline.
+Follows the `*_store.py` shape: an env-bound SQLite path, `_conn()`, and an `init()` that
+creates tables idempotently. The embeddings call and the dedup tie-break are injected so the
+math path runs offline.
 """
 import json
 import math

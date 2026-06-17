@@ -36,6 +36,7 @@ _STORE_PATHS = {
     "SCHEDULER_DB_PATH": "scheduler.db",
     "USER_PROFILE_DB_PATH": "user_profiles/store.db",
     "VERA_INTERESTS_DB_PATH": "vera_interests/store.db",
+    "PROFILE_GRAPH_DB_PATH": "profile_graph/store.db",
     "VERA_JOURNAL_PATH": "journal/JOURNAL.md",
     "VERA_MEMORY_DIR": "vera_memory",
 }

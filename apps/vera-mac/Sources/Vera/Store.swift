@@ -358,6 +358,21 @@ final class ChatStore: ObservableObject {
         Task {
             let ok = await client.decideDigestItem(cardID: card.id, itemID: item.itemID, approve: approve)
             digestItemState[key] = ok ? (approve ? "approved" : "skipped") : "failed"
+            // A successful apply changes the system: re-check so the card reflects reality
+            // (the pending count drops) without waiting for the daily scheduled check.
+            if ok, approve, card.category == "update" {
+                await client.checkUpdatesNow()
+                await refreshPulse()
+            }
+        }
+    }
+
+    /// Force a fresh stack-updates check, then refresh the feed (the updates card's "Check now").
+    func checkUpdatesNow() {
+        guard let client else { return }
+        Task {
+            await client.checkUpdatesNow()
+            await refreshPulse()
         }
     }
 

@@ -556,6 +556,10 @@ struct UpdatesDigestView: View {
     @EnvironmentObject var store: ChatStore
     let card: PulseCard
 
+    // Rows armed for apply: the first tap arms (docker.update is non-reversible), the second
+    // applies. Single-element so arming one row disarms any other.
+    @State private var armed: Set<String> = []
+
     // Group names and their order come entirely from the server's digest payload (items
     // arrive pre-ordered by source) — no infrastructure taxonomy lives in the app.
     private var groups: [(String, [PulseDigestItem])] {
@@ -572,6 +576,18 @@ struct UpdatesDigestView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Rectangle().fill(Theme.hairline).frame(height: 1)
+            HStack {
+                Spacer()
+                Button { store.checkUpdatesNow() } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 10, weight: .semibold))
+                        Text("Check now").font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.plain).pointerCursor()
+                .help("Re-check the stack for available updates now")
+            }
             ForEach(groups, id: \.0) { (group, items) in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(group.uppercased()).font(.system(size: 11, weight: .semibold))
@@ -580,6 +596,8 @@ struct UpdatesDigestView: View {
                 }
             }
         }
+        // Re-read the feed when the card opens so an out-of-band apply is reflected.
+        .task { await store.refreshPulse() }
     }
 
     private func itemRow(_ item: PulseDigestItem) -> some View {
@@ -613,17 +631,38 @@ struct UpdatesDigestView: View {
                 if state == "failed" {
                     Text("failed").font(.system(size: 10, weight: .medium)).foregroundStyle(.orange)
                 }
-                Button { store.decideDigestItem(card, item, approve: true) } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.down.circle").font(.system(size: 10, weight: .semibold))
-                        Text("Update").font(.system(size: 11, weight: .semibold))
+                if armed.contains(item.itemID) {
+                    Button { armed.remove(item.itemID) } label: {
+                        Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Theme.surface).clipShape(Capsule())
                     }
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(Theme.accent).clipShape(Capsule())
+                    .buttonStyle(.plain).pointerCursor().help("Cancel")
+                    applyButton(item, label: "Confirm", icon: "checkmark", tint: .orange) {
+                        armed.remove(item.itemID)
+                        store.decideDigestItem(card, item, approve: true)
+                    }
+                } else {
+                    applyButton(item, label: "Update", icon: "arrow.down.circle", tint: Theme.accent) {
+                        armed = [item.itemID]   // arm; a second tap confirms (non-reversible)
+                    }
                 }
-                .buttonStyle(.plain).pointerCursor()
             }
         }
+    }
+
+    private func applyButton(_ item: PulseDigestItem, label: String, icon: String,
+                             tint: Color, _ go: @escaping () -> Void) -> some View {
+        Button(action: go) {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                Text(label).font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(tint).clipShape(Capsule())
+        }
+        .buttonStyle(.plain).pointerCursor()
     }
 }

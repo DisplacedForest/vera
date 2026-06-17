@@ -32,6 +32,7 @@ _STORE_PATHS = {
     "MEDIA_DB_PATH": "media.db",
     "PULSE_DB_PATH": "pulse.db",
     "SIGNALS_LOG_PATH": "signals_log.jsonl",
+    "ANALYST_LOG_PATH": "analyst_log.jsonl",
     "RHYTHM_DB_PATH": "rhythm.db",
     "SCHEDULER_DB_PATH": "scheduler.db",
     "USER_PROFILE_DB_PATH": "user_profiles/store.db",

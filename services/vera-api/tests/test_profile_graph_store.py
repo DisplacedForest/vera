@@ -149,3 +149,54 @@ def test_embeddings_configured_flag(monkeypatch):
     assert pg.embeddings_configured() is False
     monkeypatch.setenv("VERA_EMBED_URL", "https://example.invalid/v1")
     assert pg.embeddings_configured() is True
+
+
+def test_embed_posts_and_parses_when_configured(monkeypatch):
+    captured = {}
+
+    async def fake_post(url, payload):
+        captured["url"] = url
+        captured["payload"] = payload
+        return {"data": [{"embedding": [1.0, 2.0, 3.0]}]}
+
+    monkeypatch.setenv("VERA_EMBED_URL", "https://host/v1")
+    monkeypatch.setenv("VERA_EMBED_MODEL", "emb-model")
+    monkeypatch.setattr(pg, "_embeddings_post", fake_post)
+    vec = asyncio.run(pg.embed("hello"))
+    assert vec == [1.0, 2.0, 3.0]
+    assert captured["url"].endswith("/embeddings")
+    assert captured["payload"]["input"] == "hello"
+    assert captured["payload"]["model"] == "emb-model"
+
+
+def test_embed_node_caches_vector_onto_the_node(monkeypatch):
+    async def fake_post(url, payload):
+        return {"data": [{"embedding": [0.1, 0.2, 0.3]}]}
+
+    monkeypatch.setenv("VERA_EMBED_URL", "https://host/v1")
+    monkeypatch.setattr(pg, "_embeddings_post", fake_post)
+    nid = pg.upsert_node(type="interest", label="hazelnuts")
+    vec = asyncio.run(pg.embed_node(nid))
+    assert vec == [0.1, 0.2, 0.3]
+    assert pg.get_node(nid)["embedding"] == [0.1, 0.2, 0.3]   # persisted back onto the node
+
+
+def test_embed_node_is_none_and_leaves_node_unembedded_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("VERA_EMBED_URL", raising=False)
+    nid = pg.upsert_node(type="interest", label="hazelnuts")
+    assert asyncio.run(pg.embed_node(nid)) is None
+    assert pg.get_node(nid)["embedding"] is None
+
+
+def test_merge_without_embedding_falls_back_to_label_then_tiebreak():
+    """The degradation path: with no embeddings endpoint, dedup matches on exact label,
+    then consults the injected canonicalization tie-break, then creates."""
+    now = 1_000_000_000
+    a = pg.merge_or_create(type="interest", label="winemaking", embedding=None, now=now)
+    a2 = pg.merge_or_create(type="interest", label="winemaking", embedding=None, now=now)
+    assert a == a2                                   # exact-label match merges, no vector needed
+    b = pg.merge_or_create(type="interest", label="wine making", embedding=None, now=now,
+                           tiebreak=lambda label, node: node["label"] == "winemaking")
+    assert b == a                                    # tie-break canonicalizes the paraphrase
+    c = pg.merge_or_create(type="interest", label="UniFi networking", embedding=None, now=now)
+    assert c != a                                    # no match, no tie-break → a new node

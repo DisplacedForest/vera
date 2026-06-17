@@ -219,7 +219,11 @@ async def merge_conversation(conv, extracted, now=None):
     extraction's per-node signal; edges connect the labels seen here; threads become thread
     nodes whose state flips to resolved when a later conversation closes them. Returns counts."""
     now = int(time.time()) if now is None else now
-    cid, cts = conv.get("conv_id"), conv.get("ts") or now
+    # Engagement is stamped at the conversation's own time, not wall-clock now, so the store's
+    # decay weights an old conversation's topics down: a years-old dump seeds nodes that have
+    # already decayed below the research floor, while recent chats stay live.
+    cts = min(conv.get("ts") or now, now)
+    cid = conv.get("conv_id")
     from . import learn, learn_store
     served = learn_store.served_nodes()
     label_to_id = {}
@@ -231,10 +235,10 @@ async def merge_conversation(conv, extracted, now=None):
         facts = [pg.make_fact(f, source=f"extraction:{cid}", observed_at=cts)
                  for f in (n.get("facts") or []) if isinstance(f, str) and f.strip()]
         emb = await pg.embed(label)
-        nid = pg.merge_or_create(type=ntype, label=label, embedding=emb, facts=facts, now=now,
+        nid = pg.merge_or_create(type=ntype, label=label, embedding=emb, facts=facts, now=cts,
                                  recency_factor=float(n.get("engagement_signal") or 1.0))
         if nid in served:
-            learn.reinforce_node(nid, now=now)   # discussed later: a carded topic returns in chat
+            learn.reinforce_node(nid, now=cts)   # discussed later: a carded topic returns in chat
         label_to_id[label] = nid
     edges = 0
     for e in extracted.get("edges", []):

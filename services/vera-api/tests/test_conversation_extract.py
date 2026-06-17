@@ -23,6 +23,29 @@ def _fresh(tmp_path, monkeypatch):
 
 # --------------------------------------------------------------- export dump adapter
 
+def test_old_conversation_seeds_a_decayed_node():
+    import time
+    from routers import scout
+    now = int(time.time())
+    old = now - 700 * 86400          # ~2 years ago
+    extracted = {"nodes": [{"type": "interest", "label": "old hobby", "facts": [],
+                            "engagement_signal": 1.0}], "edges": [], "threads": []}
+    asyncio.run(ce.merge_conversation({"conv_id": "old", "ts": old}, extracted, now=now))
+    node = pg.node_by_label("interest", "old hobby")
+    assert pg.engagement_now(node, now) < scout.ENGAGEMENT_FLOOR   # aged out, not scouted
+
+
+def test_recent_conversation_seeds_a_live_node():
+    import time
+    from routers import scout
+    now = int(time.time())
+    extracted = {"nodes": [{"type": "interest", "label": "fresh topic", "facts": [],
+                            "engagement_signal": 1.0}], "edges": [], "threads": []}
+    asyncio.run(ce.merge_conversation({"conv_id": "new", "ts": now - 86400}, extracted, now=now))
+    node = pg.node_by_label("interest", "fresh topic")
+    assert pg.engagement_now(node, now) >= scout.ENGAGEMENT_FLOOR  # recent → live
+
+
 def test_dump_adapter_parses_chatgpt_export(tmp_path):
     d = tmp_path / "dumps"
     d.mkdir()

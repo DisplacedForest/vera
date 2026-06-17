@@ -120,7 +120,8 @@ def survivors_to_topics(chosen):
         title = (c.get("title") or finding[:80]).strip()
         topics.append({"title": title, "angle": angle[:240],
                        "query": (c.get("title") or finding).strip(),
-                       "interest": interest, "seed_node_id": seed, "url": c.get("url")})
+                       "interest": interest, "seed_node_id": seed, "url": c.get("url"),
+                       "scores": c.get("scores")})
     return topics
 
 

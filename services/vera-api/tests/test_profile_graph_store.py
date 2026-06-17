@@ -20,15 +20,36 @@ def _fresh(tmp_path):
 
 
 def test_node_round_trips_aliases_and_facts():
+    fact = pg.make_fact("keeps a cellar", source="chat", observed_at=1_000_000_000)
     nid = pg.upsert_node(type="interest", label="winemaking",
-                         aliases=["fermentation"], facts=["keeps a cellar"],
-                         engagement=2.0)
+                         aliases=["fermentation"], facts=[fact], engagement=2.0)
     n = pg.get_node(nid)
     assert n["type"] == "interest"
     assert n["label"] == "winemaking"
     assert n["aliases"] == ["fermentation"]
-    assert n["facts"] == ["keeps a cellar"]
+    assert n["facts"] == [fact]
     assert n["engagement"] == 2.0
+
+
+def test_facts_carry_source_and_timestamp_provenance():
+    now = 1_000_000_000
+    nid = pg.upsert_node(type="location", label="Franklin",
+                         facts=[pg.make_fact("grew up here", source="owui-memory", observed_at=now)])
+    f = pg.get_node(nid)["facts"][0]
+    assert f["text"] == "grew up here"
+    assert f["source"] == "owui-memory"
+    assert f["observed_at"] == now
+
+
+def test_fact_merge_dedupes_by_text_keeping_first_provenance():
+    now = 1_000_000_000
+    a = pg.merge_or_create(type="interest", label="winemaking", embedding=[1.0, 0.0, 0.0], now=now,
+                           facts=[pg.make_fact("keeps a cellar", "chat", now)])
+    pg.merge_or_create(type="interest", label="winemaking", embedding=[1.0, 0.0, 0.0], now=now,
+                       facts=[pg.make_fact("keeps a cellar", "extraction", now + 5)])
+    facts = pg.get_node(a)["facts"]
+    assert [f["text"] for f in facts].count("keeps a cellar") == 1   # deduped by text
+    assert facts[0]["source"] == "chat"                              # first provenance survives
 
 
 def test_edge_links_nodes_and_neighbors_reads_back():
@@ -53,12 +74,13 @@ def test_engagement_decays_to_half_at_one_half_life():
 
 def test_decay_does_not_touch_facts():
     now = 1_000_000_000
+    facts = [pg.make_fact("grew up here", "owui-memory", now),
+             pg.make_fact("moved away ~20y ago", "owui-memory", now)]
     nid = pg.upsert_node(type="location", label="Franklin",
-                         facts=["grew up here", "moved away ~20y ago"],
-                         engagement=5.0, last_engaged=now - 365 * 86400)
+                         facts=facts, engagement=5.0, last_engaged=now - 365 * 86400)
     n = pg.get_node(nid)
     assert pg.engagement_now(n, now=now) < 0.001   # a year cold → effectively zero
-    assert n["facts"] == ["grew up here", "moved away ~20y ago"]   # facts intact
+    assert n["facts"] == facts                     # facts intact, decay never touches them
 
 
 def test_bump_decays_then_adds_and_restamps():

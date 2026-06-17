@@ -27,7 +27,7 @@ All endpoints, model servers, thresholds, and behavioral defaults are configurat
 Three components, connected by URLs:
 
 - **[Open WebUI](https://github.com/open-webui/open-webui)** — conversations, memory, and tool execution, against any OpenAI-compatible model server.
-- **vera-api** — a single FastAPI service; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, memory grooming, a scheduler, and a typed confirm-before-acting actuation layer.
+- **vera-api** (optional) — a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, memory grooming, a scheduler, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
 - **Vera.app** — a native SwiftUI macOS client: chat, the Pulse feed, veins, memory curation, integrations, and voice.
 
 ```mermaid

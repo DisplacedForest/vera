@@ -31,7 +31,7 @@ def _harness(monkeypatch):
     async def _no_vision(pause):
         return None
 
-    async def _no_audit_phase(pending, errs):
+    async def _no_audit_phase(pending, errs, items_by_card=None):
         return None
 
     monkeypatch.setattr(pulse, "_get_memories", _no_memories)
@@ -60,10 +60,10 @@ def _wire(monkeypatch, rounds, novel):
 
     researched = []
 
-    async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False):
+    async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False, outcome=None):
         researched.append(t["title"])
         if t["title"] in novel:
-            return {"title": t["title"]}
+            return {"id": f"id-{t['title']}", "title": t["title"]}
         return None  # the dedup gate (or empty synthesis)
 
     monkeypatch.setattr(pulse, "_triage", fake_triage)
@@ -162,7 +162,7 @@ def test_gate_kills_are_counted_and_starved_run_warns(monkeypatch):
         triage_calls.append(rnd)
         return _topics("A", "B", "C") if rnd == 0 else []
 
-    async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False):
+    async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False, outcome=None):
         errors.append(markers[t["title"]])
         return None
 
@@ -276,7 +276,8 @@ def _phase_harness(monkeypatch, wake="http://hooks/wake", release="http://hooks/
     async def fake_audit(headline, body, sources, errs, title):
         journal["audited"].append(title)
         errs.append(f"claim audit: {title} — clean (coder)")
-        return f"{headline} (revised)", f"{body} (revised)", stamp
+        return (f"{headline} (revised)", f"{body} (revised)", stamp,
+                {"verdict": "clean", "unsupported": 0, "auditor": "coder"})
 
     monkeypatch.setattr(pulse, "AUDIT_WAKE_URL", wake)
     monkeypatch.setattr(pulse, "AUDIT_RELEASE_URL", release)
@@ -411,7 +412,7 @@ def test_audit_phase_card_failure_stays_per_card(monkeypatch):
         if title == "A":
             raise RuntimeError("boom")
         journal["audited"].append(title)
-        return headline, body, "cross-model (m)"
+        return headline, body, "cross-model (m)", {"verdict": "clean", "unsupported": 0, "auditor": "coder"}
 
     monkeypatch.setattr(pulse, "audit_claims", flaky_audit)
     errs = []
@@ -425,15 +426,15 @@ def test_run_loop_defers_audits_and_feeds_the_phase(monkeypatch):
     """The loop hands every injected card + its corpus to the phase, with defer_audit on."""
     captured = {}
 
-    async def fake_phase(pending, errs):
+    async def fake_phase(pending, errs, items_by_card=None):
         captured["pending"] = pending
 
     async def fake_triage(who, persona, interests, memories, exclusions, want, rnd):
         return _topics("A") if rnd == 0 else []
 
-    async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False):
+    async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False, outcome=None):
         captured["defer_audit"] = defer_audit
-        return {"title": t["title"], "_corpus": [{"n": 1, "content": "x"}]}
+        return {"id": f"id-{t['title']}", "title": t["title"], "_corpus": [{"n": 1, "content": "x"}]}
 
     monkeypatch.setattr(pulse, "_audit_phase", fake_phase)
     monkeypatch.setattr(pulse, "_triage", fake_triage)

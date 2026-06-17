@@ -721,7 +721,8 @@ struct AgenticDetailShot: View {
                     case "agentic-pulse":
                         if let flow = graph.flow("pulse") {
                             PulseDrill(flow: flow, graph: graph,
-                                       viewport: CGSize(width: 1180, height: 640))
+                                       viewport: CGSize(width: 1180, height: 640),
+                                       detail: PulseRunClient.mock(), initialExpandedStage: "triage")
                         }
                     case "agentic-heartbeat":
                         if let flow = graph.flow("heartbeat") {

@@ -122,7 +122,6 @@ REDDIT_MAX = _envi("SCOUT_REDDIT_MAX", "6")
 GITHUB_MAX = _envi("SCOUT_GITHUB_MAX", "6")
 PAPERS_MAX = _envi("SCOUT_PAPERS_MAX", "6")
 
-REDDIT_BASE = "https://www.reddit.com"          # public default; override with REDDIT_BASE
 GITHUB_API_BASE = "https://api.github.com"      # public default; override with GITHUB_API_BASE
 ARXIV_BASE = "http://export.arxiv.org"          # public default; override with ARXIV_BASE
 
@@ -200,26 +199,81 @@ class _LocalAdapter(_NewsAdapter):
         return await super().search(f"{query} {persona.location()}", node, now, fetch=fetch)
 
 
+REDDIT_OAUTH = "https://oauth.reddit.com"
+REDDIT_TOKEN_URL = "https://www.reddit.com/api/v1/access_token"
+_REDDIT_TOKENS = {}   # client_id -> (token, expiry_epoch)
+
+
+def _reddit_ua():
+    return os.environ.get("REDDIT_USER_AGENT", "").strip() or "vera-scout/1.0 (by /u/vera)"
+
+
+async def _reddit_token_post(cid, sec):
+    """App-only OAuth token via the client-credentials grant. Returns (token, expires_in)."""
+    import aiohttp
+    async with aiohttp.ClientSession() as s:
+        async with s.post(REDDIT_TOKEN_URL, auth=aiohttp.BasicAuth(cid, sec),
+                          data={"grant_type": "client_credentials"},
+                          headers={"User-Agent": _reddit_ua()},
+                          timeout=aiohttp.ClientTimeout(total=20)) as r:
+            r.raise_for_status()
+            d = await r.json()
+    return d.get("access_token"), d.get("expires_in")
+
+
+async def _reddit_token(cid, sec, now=None, post=None):
+    """A cached app-only bearer token for `cid`, refreshed when it nears expiry."""
+    import time
+    now = int(time.time()) if now is None else now
+    cached = _REDDIT_TOKENS.get(cid)
+    if cached and cached[1] > now + 60:
+        return cached[0]
+    tok, ttl = await (post or _reddit_token_post)(cid, sec)
+    if tok:
+        _REDDIT_TOKENS[cid] = (tok, now + int(ttl or 3600))
+    return tok
+
+
+async def _reddit_oauth_get(token, url, params):
+    import aiohttp
+    async with aiohttp.ClientSession() as s:
+        async with s.get(url, params=params,
+                         headers={"Authorization": f"bearer {token}", "User-Agent": _reddit_ua()},
+                         timeout=aiohttp.ClientTimeout(total=20)) as r:
+            r.raise_for_status()
+            return await r.json()
+
+
 class _RedditAdapter:
     name = "reddit"
 
-    def _base(self):
-        return (os.environ.get("REDDIT_BASE", REDDIT_BASE) or "").strip().rstrip("/")
+    def _cfg(self):
+        from . import integrations
+        return integrations.integration("reddit") or {}
+
+    def _creds(self):
+        cfg = self._cfg()
+        return (cfg.get("client_id", "").strip(), cfg.get("client_secret", "").strip())
 
     def configured(self):
-        return bool(self._base())
+        cid, sec = self._creds()
+        return bool(cid and sec)
 
-    async def search(self, query, node, now, *, fetch=None):
-        fetch = fetch or _get_json
-        base = self._base()
-        data = await fetch(f"{base}/search.json",
-                           {"q": query, "sort": "new", "limit": REDDIT_MAX,
-                            "t": "month", "raw_json": 1})
+    async def search(self, query, node, now, *, token_fn=None, fetch=None):
+        cid, sec = self._creds()
+        if not (cid and sec):
+            return []
+        token = await (token_fn or _reddit_token)(cid, sec)
+        if not token:
+            return []
+        data = await (fetch or _reddit_oauth_get)(
+            token, f"{REDDIT_OAUTH}/search",
+            {"q": query, "sort": "new", "limit": REDDIT_MAX, "t": "month", "raw_json": 1})
         out = []
         for ch in ((data.get("data") or {}).get("children") or [])[:REDDIT_MAX]:
             d = ch.get("data") or {}
             title = d.get("title") or ""
-            url = base + (d.get("permalink") or "")
+            url = "https://www.reddit.com" + (d.get("permalink") or "")
             body = (d.get("selftext") or "").strip()
             out.append(_candidate(body or title, title, url, _epoch_date(d.get("created_utc")),
                                   self.name, node["id"]))

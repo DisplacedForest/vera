@@ -137,21 +137,52 @@ def _fetch(canned):
     return f
 
 
-def test_reddit_adapter_parses_fixture():
-    canned = {"data": {"children": [
-        {"data": {"title": "Growing hazelnuts in zone 6", "permalink": "/r/permaculture/comments/x1/",
-                  "created_utc": 1_717_000_000.0, "selftext": "any tips?"}},
-        {"data": {"title": "Hazelnut harvest", "permalink": "/r/homestead/comments/x2/",
-                  "created_utc": 1_717_100_000.0, "selftext": ""}},
-    ]}}
-    out = _run(scout.adapters["reddit"].search("hazelnuts", SEED, NOW, fetch=_fetch(canned)))
-    assert len(out) == 2
+def test_reddit_oauth_adapter_parses(monkeypatch):
+    from routers import integrations
+    monkeypatch.setattr(integrations, "integration",
+                        lambda iid: {"client_id": "cid", "client_secret": "sec"} if iid == "reddit" else None)
+    seen = {}
+
+    async def token_fn(cid, sec):
+        seen["creds"] = (cid, sec)
+        return "tok123"
+
+    async def fetch(token, url, params):
+        seen["token"], seen["url"] = token, url
+        return {"data": {"children": [
+            {"data": {"title": "Growing hazelnuts in zone 6", "permalink": "/r/permaculture/comments/x1/",
+                      "created_utc": 1_717_000_000.0, "selftext": "any tips?"}}]}}
+
+    out = _run(scout.adapters["reddit"].search("hazelnuts", SEED, NOW, token_fn=token_fn, fetch=fetch))
+    assert seen["creds"] == ("cid", "sec")                       # creds from the integration registry
+    assert "oauth.reddit.com" in seen["url"] and seen["token"] == "tok123"
+    assert len(out) == 1
     c = out[0]
     assert c["source"] == "reddit" and c["seed_node_id"] == "seed1"
     assert c["title"] == "Growing hazelnuts in zone 6"
     assert c["url"].endswith("/r/permaculture/comments/x1/")
     assert c["published_date"] == "2024-05-29"
-    assert "any tips?" in c["finding_text"]
+
+
+def test_reddit_skipped_without_creds(monkeypatch):
+    from routers import integrations
+    monkeypatch.setattr(integrations, "integration", lambda iid: None)
+    assert scout.adapters["reddit"].configured() is False
+    assert _run(scout.adapters["reddit"].search("q", SEED, NOW)) == []   # no public .json fallback
+
+
+def test_reddit_token_caches(monkeypatch):
+    scout._REDDIT_TOKENS.clear()
+    calls = []
+
+    async def post(cid, sec):
+        calls.append(1)
+        return "tok", 3600
+
+    t1 = _run(scout._reddit_token("cid", "sec", now=NOW, post=post))
+    t2 = _run(scout._reddit_token("cid", "sec", now=NOW + 10, post=post))
+    assert t1 == "tok" and t2 == "tok"
+    assert len(calls) == 1                                       # second call served from cache
 
 
 def test_github_adapter_parses_fixture():
@@ -228,11 +259,12 @@ def test_weather_adapter_emits_one_candidate_when_coords_set(monkeypatch):
 
 
 def test_configured_gating(monkeypatch):
-    from routers import weather
+    from routers import weather, integrations
     monkeypatch.setattr(weather, "LAT", None)
     monkeypatch.setattr(weather, "LON", None)
     monkeypatch.setattr(scout.adapters["news"], "_searxng", lambda: None)
-    monkeypatch.setenv("REDDIT_BASE", "https://www.reddit.com")
+    monkeypatch.setattr(integrations, "integration",
+                        lambda iid: {"client_id": "c", "client_secret": "s"} if iid == "reddit" else None)
     assert scout.adapters["reddit"].configured() is True
     assert scout.adapters["weather"].configured() is False
     assert scout.adapters["news"].configured() is False

@@ -18,7 +18,7 @@ GROUPS: list[tuple[str, list[str]]] = [
     ("dream/coder",   ["DREAM_BASE", "DREAM_MODEL", "DREAM_TOOL_PROTOCOL"]),
     ("image gen",     ["VERA_IMAGE_BASE", "IMAGE_PROTOCOL"]),
     ("embeddings",    ["VERA_EMBED_URL", "VERA_EMBED_MODEL"]),
-    ("scout sources", ["REDDIT_BASE", "GITHUB_API_BASE", "ARXIV_BASE"]),
+    ("scout sources", ["GITHUB_API_BASE", "ARXIV_BASE"]),
     ("scout knobs",   ["SCOUT_ENGAGEMENT_FLOOR", "SCOUT_MAX_NODES", "SCOUT_NEWS_MAX",
                        "SCOUT_REDDIT_MAX", "SCOUT_GITHUB_MAX", "SCOUT_PAPERS_MAX"]),
     ("pulse ranking", ["PULSE_W_RELEVANCE", "PULSE_W_NOVELTY", "PULSE_W_OPPORTUNITY",

@@ -74,9 +74,9 @@ A row of status chips above the feed — System, Weather, Signals, Media — eac
 
 <div align="center"><img src="docs/assets/pulse.png" alt="The Pulse surface with its vein chips" width="850"></div>
 
-### Journal — her standing commitments, in her own words
+### Journal — her standing commitments, as a live graph view
 
-When a monitored situation deserves follow-through (a signals event, or simply "keep an eye on lumber prices for me"), Vera writes a commitment into her journal: what she is watching, why it matters, what would resolve it, and when to check next. Each heartbeat she acts on the entries that are due, appends dated findings, surfaces a card only when something materially changed, and retires an entry when its own resolve condition is met. The journal is a plain markdown document she authors and maintains herself — the app renders it read-only, and every touch is logged. It follows the same contract as her self-authored heartbeat instructions: the code parses only entry boundaries and a cadence line; the content is entirely hers. You steer it by talking to her: in chat she reads her own journal (`read_journal`) and takes instructions about it (`journal_commit`) — ask what she's keeping an eye on, hand her a new watch, or have her consolidate or retire an entry, all through the same authoring judgment.
+When a monitored situation deserves follow-through (a signals event, or simply "keep an eye on lumber prices for me"), Vera lands it as a watch in her Profile Graph, the same memory the rest of Pulse ranks from. The Journal is a live view over those watch and project nodes: each shows what she is watching, why it matters, what would resolve it, and when to check next. A repeat of a known situation folds onto its existing node by vector similarity instead of piling up, so the list cannot run away; a watch retires only when its resolve condition and date are both met. The app renders the view read-only at `GET /journal`, and Pulse surfaces a card when a watched node materially changes. You steer it by talking to her: hand her a new watch and it becomes a node, ask what she is keeping an eye on, or have her let one go.
 
 ### Agentic — the autonomy control room
 

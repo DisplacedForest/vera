@@ -333,7 +333,7 @@ struct PulseCard: Identifiable, Hashable {
         {"type":"bar","title":"Midfield minutes, 2025-26","yLabel":"mins","series":[{"name":"mins","points":[{"x":"Carter","y":2890},{"x":"Okafor","y":2100},{"x":"Reyes","y":2750}]}]}
         ```
 
-        So what: if the Carter sale completes, the tell will be the reinvestment — watch for a single marquee midfielder, not a scattering of depth signings. [3]
+        So what: if the Carter sale completes, the tell will be the reinvestment. Watch for a single marquee midfielder, not a scattering of depth signings. [3]
         """
         return PulseCard(
             id: "deep", title: "Ashvale's record-breaking summer", preview: "Carter sale could fund the rebuild.",

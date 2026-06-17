@@ -236,34 +236,34 @@ struct OWUIAdminClient: Sendable {
 
         \(Self.presentationConventionMarker)
         You can present information as more than prose, and you SHOULD when the shape of the data calls
-        for it. Prose is still the default and a block that adds nothing is a mistake — but do not avoid
+        for it. Prose is still the default and a block that adds nothing is a mistake, but do not avoid
         these when they clearly fit.
 
         Decide by the SHAPE of the data:
         - Comparing the same metrics across different ENTITIES (two players, two clubs) -> markdown table.
         - Tracking ONE metric across an ordered SEQUENCE (seasons, months, years, steps) -> CHART, not a
           table. A single number moving over time is a chart. If you catch yourself listing a metric
-          season-by-season or year-by-year (e.g. goals per season), that is a chart — emit a vera:chart,
+          season-by-season or year-by-year (e.g. goals per season), that is a chart. Emit a vera:chart,
           do not put it in a table. Use a line for a continuous trend, bars for discrete periods.
 
-        - Markdown table — the same 3+ metrics across 2+ entities. GitHub-flavored syntax, header row.
+        - Markdown table: the same 3+ metrics across 2+ entities. GitHub-flavored syntax, header row.
           (One or two stray numbers: just write the sentence.)
-        - Chart (a fenced ```vera:chart block) — one metric across an ordered sequence:
+        - Chart (a fenced ```vera:chart block): one metric across an ordered sequence:
         ```vera:chart
         {"type":"bar|line|groupedBar","title":"...","yLabel":"goals","series":[{"name":"Isak","points":[{"x":"23-24","y":21},{"x":"24-25","y":23}]}]}
         ```
-        - Stat cards (a fenced ```vera:stats block) — 2-4 headline numbers worth pulling out:
+        - Stat cards (a fenced ```vera:stats block): 2-4 headline numbers worth pulling out:
         ```vera:stats
         {"cards":[{"value":"23","label":"PL goals","sub":"34 games"},{"value":"7.30","label":"rating"}]}
         ```
 
-        Worked example — a question about a value over time becomes a chart, NOT a bulleted list. If asked
+        Worked example: a question about a value over time becomes a chart, NOT a bulleted list. If asked
         "how has X changed each year", you answer like this:
         ```vera:chart
         {"type":"bar","title":"Monthly active users","yLabel":"users","series":[{"name":"MAU","points":[{"x":"Jan","y":1200},{"x":"Feb","y":1850},{"x":"Mar","y":2600}]}]}
         ```
         Then one or two sentences interpreting it. Critically: even when you used tools (search, code) to
-        gather the numbers, you STILL emit the chart block afterward — never fall back to listing the values
+        gather the numbers, you STILL emit the chart block afterward, never fall back to listing the values
         as a bold/bulleted prose list. Use only real values you have; keep the "so what" in the prose around it.
         For large or interactive things, use a Canvas artifact instead.
         """

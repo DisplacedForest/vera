@@ -713,26 +713,34 @@ async def audit_claims(headline, body, sources, errs, title):
              {"role": "user", "content": f"Numbered sources:\n{corpus}\n\nBriefing:\n{body}"}])
         return _parse_audit(raw), auditor, stamp
 
+    from . import editor
+    today = datetime.now(TZ).date().isoformat()
+    stale = editor.stale_current_claims(body, sources, today)
+
     try:
         unsupported, auditor, stamp = await verdict()
-        if unsupported is None:
-            errs.append(f"claim audit: {title} — audit unavailable (unparseable verdict from {auditor})")
-            return headline, body, "none", {"verdict": "unavailable", "unsupported": 0, "auditor": auditor}
-        if not unsupported:
+        parse_failed = unsupported is None
+        flagged = list(dict.fromkeys((unsupported or []) + stale))
+        if not flagged:
+            if parse_failed:
+                errs.append(f"claim audit: {title} — audit unavailable (unparseable verdict from {auditor})")
+                return headline, body, "none", {"verdict": "unavailable", "unsupported": 0, "auditor": auditor}
             errs.append(f"claim audit: {title} — clean ({auditor})")
             return headline, body, stamp, {"verdict": "clean", "unsupported": 0, "auditor": auditor}
+        eff_stamp = stamp if not parse_failed else "date check (verdict unparseable)"
         revised = (await _vera(
             [{"role": "system", "content": REVISE_SYS},
-             {"role": "user", "content": ("Unsupported claims:\n- " + "\n- ".join(unsupported)
+             {"role": "user", "content": ("Unsupported claims:\n- " + "\n- ".join(flagged)
                                           + f"\n\nBriefing:\nHEADLINE: {headline or title}\n\n{body}")}],
             temperature=0.2,
         )).strip()
         new_headline, new_body = _split_headline(revised)
-        info = {"verdict": "revised", "unsupported": len(unsupported), "auditor": auditor}
+        info = {"verdict": "revised", "unsupported": len(flagged), "auditor": auditor}
         if not new_body:
-            errs.append(f"claim audit: {title} — {len(unsupported)} unsupported, revision empty; shipped original")
-            return headline, body, stamp, info
-        record = f"claim audit: {title} — {len(unsupported)} unsupported, revised ({auditor})"
+            errs.append(f"claim audit: {title} — {len(flagged)} unsupported, revision empty; shipped original")
+            return headline, body, eff_stamp, info
+        stale_note = f", {len(stale)} stale-dated" if stale else ""
+        record = f"claim audit: {title} — {len(flagged)} unsupported{stale_note}, revised ({auditor})"
         try:
             body = new_body  # re-audit the revision for the record only
             still, _, _ = await verdict()
@@ -741,10 +749,43 @@ async def audit_claims(headline, body, sources, errs, title):
         except Exception:
             pass
         errs.append(record)
-        return (new_headline or headline), new_body, stamp, info
+        return (new_headline or headline), new_body, eff_stamp, info
     except Exception as e:
         errs.append(f"claim audit: {title} — audit unavailable ({e})")
         return headline, body, "none", {"verdict": "unavailable", "unsupported": 0, "auditor": None}
+
+
+async def _select_topics(rnd, *, who, persona, all_interests, memories, exclusions, want,
+                         recent_texts=None):
+    """The run's topic source. When the Profile Graph has live nodes the selection is the
+    Scout -> Analyst pipeline (cheap-rank-first: rank hundreds, keep the top `want`); the
+    Analyst delivers its ranked best in one pass, so later rounds yield nothing. With an empty
+    graph it falls back to v1 `_triage`, so the feed keeps running until extraction is deployed."""
+    from . import scout, analyst, editor
+    try:
+        live = scout.select_live_nodes()
+    except Exception:
+        live = []
+    if live:
+        if rnd > 0:
+            return []
+        found = await scout.scout()
+        ranked = await analyst.rank(found.get("candidates", []), recent_card_texts=recent_texts or [],
+                                    max_cards=want)
+        return editor.survivors_to_topics(ranked.get("chosen", []))
+    return await _triage(who, persona, all_interests, memories, exclusions, want, rnd)
+
+
+def _synthesis_user_prompt(topic, sources, who):
+    """The synthesis user message: the topic, its numbered sources, and (when the topic carries
+    a Profile Graph seed) the active neighbour nodes the LLM may draw a cross-domain link to."""
+    usr = (f"Topic: {topic.get('title')}\nWhy it surfaced: {topic.get('angle', '')}\n\n"
+           f"Numbered sources:\n{_numbered_corpus(sources)}")
+    seed = topic.get("seed_node_id")
+    if seed:
+        from . import editor
+        usr += editor.connections_block(who, editor.cross_domain_links(seed))
+    return usr
 
 
 async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", errors=None,
@@ -853,8 +894,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
         img_instr = (f"There are {len(inline_images)} images available. Place each where it best "
                      f"illustrates the text, as a token on its own line: {span}. Use each token at most "
                      f"once. The images show: {caps}.\n")
-    card_usr = (f"Topic: {topic.get('title')}\nWhy it surfaced: {topic.get('angle', '')}\n\n"
-                f"Numbered sources:\n{_numbered_corpus(sources)}")
+    card_usr = _synthesis_user_prompt(topic, sources, who)
     body = (
         await _vera(
             [{"role": "system", "content": voiced(CARD_SYS.format(
@@ -1109,7 +1149,10 @@ async def _do_run(req: PulseRequest):
             if want <= 0:
                 break
             try:
-                topics = await _triage(who, persona, all_interests, memories, exclusions, want, rnd)
+                topics = await _select_topics(rnd, who=who, persona=persona,
+                                              all_interests=all_interests, memories=memories,
+                                              exclusions=exclusions, want=want,
+                                              recent_texts=exclusions)
             except Exception as e:
                 out["errors"].append(f"triage round {rnd + 1}: {e}")
                 break

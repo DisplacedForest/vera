@@ -1,8 +1,11 @@
 """Vera memory router — read/write/core/groom over her world-model store.
 
-Writes are FREE (her own knowledge, no external effect). The `/memory/self/core` digest is what the
-OWUI inlet filter injects on every request; `/memory/self/recall` backs the on-demand recall tool.
-Routes live under /memory/self/* — distinct from the existing OWUI-memory groomer at /memory/groom.
+Writes to `scratch`/`archive` are FREE (her own knowledge, no external effect). The always-present
+`core` tier is reached only through the nightly grooming pass: a model self-write that asks for
+`core` lands in `archive` and the groomer promotes durable, grounded beliefs from there. The
+`/memory/self/core` digest is what the OWUI inlet filter injects on every request;
+`/memory/self/recall` backs the on-demand recall tool. Routes live under /memory/self/* —
+distinct from the existing OWUI-memory groomer at /memory/groom.
 """
 import os
 
@@ -36,13 +39,22 @@ async def self_write(b: WriteBody):
         raise HTTPException(400, f"tier must be one of {vm.TIERS}")
     if b.kind not in ("fact", "opinion"):
         raise HTTPException(400, "kind must be fact|opinion")
+    # The always-injected core tier is reached only through the nightly grooming pass, never a
+    # per-write: a requested core write lands in archive, and the groomer promotes durable,
+    # grounded beliefs to core. Learning stays free; the injected surface stays disciplined.
+    redirected = b.tier == "core"
+    tier = "archive" if redirected else b.tier
     try:
         eid = vm.write(b.topic, b.content, source=b.source, confidence=b.confidence,
-                       tier=b.tier, ttl_hours=b.ttl_hours, provenance=b.provenance,
+                       tier=tier, ttl_hours=b.ttl_hours, provenance=b.provenance,
                        kind=b.kind, fact_refs=b.fact_refs)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {"id": eid}
+    out = {"id": eid, "tier": tier}
+    if redirected:
+        out["note"] = ("stored to archive; the always-present core tier is reached only through "
+                       "the nightly grooming pass, which promotes durable, grounded beliefs")
+    return out
 
 
 @router.post("/memory/self/mirror", tags=["vera_memory"])

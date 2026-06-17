@@ -26,7 +26,7 @@ enum Shot {
             )
         } else if view == "blocks" {
             let demo = """
-            Here's how Openda's output stacks up — and why the Juventus dip is system, not talent. [1]
+            Here's how Openda's output stacks up, and why the Juventus dip is system, not talent. [1]
 
             ```vera:stats
             {"cards":[{"value":"33","label":"goals","sub":"69 Bundesliga games"},{"value":"0.23","label":"G+A / 90","sub":"at Juventus"},{"value":"6.64","label":"xG","sub":"this season"}]}

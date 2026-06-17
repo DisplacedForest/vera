@@ -133,6 +133,17 @@ REGISTRY: dict[str, dict] = {
         ],
         "unlocks": ["web search for chat, research, Pulse, and signals news"],
     },
+    "reddit": {
+        "display_name": "Reddit",
+        "fields": [
+            {"id": "client_id", "env": "REDDIT_CLIENT_ID", "label": "App client ID", "secret": True,
+             "hint": "create a 'script' app at reddit.com/prefs/apps; the id sits under the app name"},
+            {"id": "client_secret", "env": "REDDIT_CLIENT_SECRET", "label": "App secret", "secret": True},
+            {"id": "user_agent", "env": "REDDIT_USER_AGENT", "label": "User-Agent", "secret": False,
+             "optional": True, "hint": "a descriptive UA, e.g. vera-scout/1.0 by /u/you"},
+        ],
+        "unlocks": ["Reddit as a Pulse research source (reddit-native search via the official API)"],
+    },
 }
 
 # Legacy kill-switches: these env vars can force a feature OFF (back-compat with
@@ -337,6 +348,14 @@ async def _probe(iid: str, v: dict) -> dict:
                 async with s.get(url, params={"q": "connection test", "format": "json"}) as r:
                     ok = r.status == 200
                     return {"ok": ok, "detail": "search responding" if ok else f"HTTP {r.status}"}
+            if iid == "reddit":
+                async with s.post("https://www.reddit.com/api/v1/access_token",
+                                  auth=aiohttp.BasicAuth(v.get("client_id", ""), v.get("client_secret", "")),
+                                  data={"grant_type": "client_credentials"},
+                                  headers={"User-Agent": v.get("user_agent") or "vera-scout/1.0"}) as r:
+                    body = await r.json(content_type=None)
+                    ok = r.status == 200 and bool((body or {}).get("access_token"))
+                    return {"ok": ok, "detail": "app-only token acquired" if ok else f"HTTP {r.status}"}
     except Exception as e:  # noqa: BLE001 — a probe reports, never raises
         return {"ok": False, "detail": f"{type(e).__name__}: {e}"}
     return {"ok": False, "detail": "no probe defined"}

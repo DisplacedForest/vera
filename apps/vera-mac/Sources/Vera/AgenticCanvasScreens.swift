@@ -543,6 +543,10 @@ struct InspectorContent: View {
     var onDrill: (() -> Void)?
     var onClose: () -> Void
     var liveControls: Bool = true
+    // Lets the screenshot harness open one activity entry; live use starts collapsed.
+    var initialExpandedEventID: String? = nil
+    // Which activity entry is expanded in place (secondary selection within the inspector).
+    @State private var expandedEventID: String? = nil
 
     var body: some View {
             VStack(alignment: .leading, spacing: 0) {
@@ -592,17 +596,29 @@ struct InspectorContent: View {
                     section("Activity") {
                         VStack(spacing: 0) {
                             ForEach(events.prefix(6)) { event in
-                                HStack(spacing: 8) {
-                                    Image(systemName: event.icon).font(.system(size: 11))
-                                        .foregroundStyle(event.failed ? FlowStatus.fail.dotColor : Theme.textSecondary)
-                                        .frame(width: 14)
-                                    Text(event.title).font(.system(size: 12)).lineLimit(1)
-                                    Spacer(minLength: 8)
-                                    Text(relativeTime(event.ts)).font(.system(size: 10))
-                                        .foregroundStyle(Theme.textSecondary)
+                                let expanded = (expandedEventID ?? initialExpandedEventID) == event.id
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Button {
+                                        expandedEventID = expanded ? nil : event.id
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: event.icon).font(.system(size: 11))
+                                                .foregroundStyle(event.failed ? FlowStatus.fail.dotColor : Theme.textSecondary)
+                                                .frame(width: 14)
+                                            Text(event.title).font(.system(size: 12)).lineLimit(1)
+                                            Spacer(minLength: 8)
+                                            Text(relativeTime(event.ts)).font(.system(size: 10))
+                                                .foregroundStyle(Theme.textSecondary)
+                                            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                                                .font(.system(size: 9, weight: .semibold))
+                                                .foregroundStyle(Theme.textSecondary.opacity(0.7))
+                                        }
+                                        .padding(.vertical, 5)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    if expanded { eventDetail(event) }
                                 }
-                                .padding(.vertical, 5)
-                                .help(event.detail.isEmpty ? event.title : event.detail)
                             }
                         }
                     }
@@ -714,11 +730,23 @@ struct InspectorContent: View {
                     Circle().fill(flowStatus(flow, job: job).dotColor).frame(width: 7, height: 7)
                     Text(lastRunLine(job)).font(.system(size: 12))
                 }
+                // Plain-English summary from the producer (the raw run record is never serialized here).
                 if !job.lastRunDetail.isEmpty {
                     Text(job.lastRunDetail).font(.system(size: 11))
-                        .foregroundStyle(Theme.textSecondary).lineLimit(3)
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
-                        .help(job.lastRunDetail)
+                }
+                // Run warnings as plain-English bullet items.
+                if let st = flow.pulseState, !st.warnings.isEmpty {
+                    ForEach(st.warnings, id: \.self) { warning in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle").font(.system(size: 9))
+                                .foregroundStyle(.orange).padding(.top, 2)
+                            Text(warning).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
                 }
                 if let st = flow.pulseState, !st.gates.isEmpty {
                     Text(gatesLine(st)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
@@ -743,6 +771,38 @@ struct InspectorContent: View {
             return "\(order[key] ?? key) \(n)"
         }
         return "Gate kills: " + parts.joined(separator: " · ")
+    }
+
+    /// The full event behind an activity row: its detail text plus the labeled fields
+    /// (source, kind, when, tool, ref). This is where a structured payload lives, formatted.
+    private func eventDetail(_ event: ActivityEvent) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if !event.detail.isEmpty {
+                Text(event.detail).font(.system(size: 11))
+                    .foregroundStyle(Theme.textPrimary.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            detailRow("Source", event.source)
+            detailRow("Kind", event.kind.isEmpty ? "event" : event.kind)
+            detailRow("When", event.ts.formatted(date: .abbreviated, time: .shortened))
+            if let tool = event.tool, !tool.isEmpty { detailRow("Tool", tool) }
+            if let ref = event.ref, !ref.isEmpty { detailRow("Ref", ref) }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.bottom, 5)
+    }
+
+    private func detailRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(label).font(.system(size: 10, weight: .semibold)).tracking(0.4)
+                .foregroundStyle(Theme.textSecondary).frame(width: 44, alignment: .leading)
+            Text(value).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
     }
 
     private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {

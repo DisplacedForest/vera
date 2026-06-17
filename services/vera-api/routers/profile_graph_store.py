@@ -239,21 +239,38 @@ def _best_match(type, embedding):
     return best, best_cos
 
 
+def _label_or_tiebreak_match(type, label, tiebreak):
+    """The degradation path used when no embedding is available: match an existing same-type
+    node by exact label, else let the injected `tiebreak` canonicalize a paraphrase, else None."""
+    exact = node_by_label(type, label)
+    if exact:
+        return exact
+    if tiebreak is not None:
+        for n in all_nodes(type=type):
+            if tiebreak(label, n):
+                return n
+    return None
+
+
 def merge_or_create(*, type, label, embedding, facts=None, now=None, tiebreak=None,
                     recency_factor=1.0, state=None, resolve_condition=None, next_check=None):
     """Add an observation of `label` to the graph, collapsing paraphrases onto one node.
 
-    Cosine against existing same-type nodes: >= DEDUP_SAME merges (records the label as an
-    alias, bumps engagement, unions the facts); < DEDUP_NEW creates a new node; the gray
-    band consults `tiebreak(label, node) -> bool` (an injected LLM judgement, the only model
-    call here) and merges only on True. Returns the node id."""
+    With an embedding: cosine against existing same-type nodes >= DEDUP_SAME merges (records the
+    label as an alias, bumps engagement, unions the facts); < DEDUP_NEW creates a new node; the
+    gray band consults `tiebreak(label, node) -> bool` (an injected LLM judgement, the only model
+    call here). With no embedding (the unconfigured-endpoint degradation path): match on exact
+    label, then on the `tiebreak` canonicalization, else create. Returns the node id."""
     now = int(time.time()) if now is None else now
     facts = facts or []
-    match, cos = _best_match(type, embedding)
-    same = bool(match) and (
-        cos >= DEDUP_SAME
-        or (cos >= DEDUP_NEW and tiebreak is not None and tiebreak(label, match)))
-    if same:
+    if embedding is None:
+        match = _label_or_tiebreak_match(type, label, tiebreak)
+    else:
+        cand, cos = _best_match(type, embedding)
+        match = cand if (cand and (
+            cos >= DEDUP_SAME
+            or (cos >= DEDUP_NEW and tiebreak is not None and tiebreak(label, cand)))) else None
+    if match:
         aliases = list(dict.fromkeys(match["aliases"] + [label]))
         merged_facts = list(dict.fromkeys(match["facts"] + facts))
         upsert_node(id=match["id"], type=type, label=match["label"], aliases=aliases,
@@ -313,6 +330,16 @@ def embeddings_configured():
     return bool(os.environ.get("VERA_EMBED_URL", "").strip())
 
 
+async def _embeddings_post(url, payload):
+    """The raw POST to an OpenAI-compatible /v1/embeddings endpoint. Isolated so tests can
+    substitute a canned response without a live endpoint."""
+    import aiohttp
+    async with aiohttp.ClientSession() as s:
+        async with s.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as r:
+            r.raise_for_status()
+            return await r.json()
+
+
 async def embed(text):
     """Embed `text` via the configured OpenAI-compatible /v1/embeddings endpoint, or return
     None when no endpoint is set (graceful degradation, no LAN default). Read at call time so
@@ -321,13 +348,24 @@ async def embed(text):
     if not base:
         return None
     model = os.environ.get("VERA_EMBED_MODEL", "").strip()
-    import aiohttp
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(f"{base}/embeddings", json={"model": model, "input": text},
-                              timeout=aiohttp.ClientTimeout(total=30)) as r:
-                r.raise_for_status()
-                d = await r.json()
+        d = await _embeddings_post(f"{base}/embeddings", {"model": model, "input": text})
         return (d.get("data") or [{}])[0].get("embedding")
     except Exception:
         return None
+
+
+async def embed_node(nid):
+    """Embed a node's canonical label and persist the vector back onto the node. Returns the
+    vector, or None when no endpoint is configured (the node is left unembedded). This is how
+    a node acquires the embedding the dedup/novelty math reads."""
+    node = get_node(nid)
+    if not node:
+        return None
+    vec = await embed(node["label"])
+    if vec is None:
+        return None
+    with _conn() as c:
+        c.execute("UPDATE node SET embedding=?, updated_at=? WHERE id=?",
+                  (json.dumps(vec), int(time.time()), nid))
+    return vec

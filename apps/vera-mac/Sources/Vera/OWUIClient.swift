@@ -424,6 +424,20 @@ struct OWUIClient: Sendable {
         _ = try? await URLSession.shared.data(for: r)
     }
 
+    /// Force a fresh stack-updates check (POST /updates/check). Returns true on a 2xx, so the
+    /// caller can refresh the feed once the card has been reconciled against current reality.
+    @discardableResult
+    func checkUpdatesNow() async -> Bool {
+        guard let url = veraAPI("/updates/check") else { return false }
+        var r = URLRequest(url: url)
+        r.httpMethod = "POST"
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try? JSONSerialization.data(withJSONObject: [String: Any]())
+        guard let (_, resp) = try? await URLSession.shared.data(for: r),
+              let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else { return false }
+        return true
+    }
+
     /// Promote a card → create/return its OWUI chat id (so it opens as a real chat).
     func promotePulse(id: String) async -> String? {
         guard let url = veraAPI("/pulse/\(id)/promote") else { return nil }

@@ -7,6 +7,7 @@ validator/preview (action_spec.py) and an async executor here. Two lanes:
   - free (/actions/auto): verbs explicitly enrolled with `autonomous: True` execute with no
     confirm, audited with auto=true; oversight is post-hoc via a status card.
 """
+import asyncio
 import os
 import time
 import uuid
@@ -236,8 +237,11 @@ async def _run_token(token: str) -> dict:
     if not executor:
         return {"applied": False, "error": f"unknown verb {p['verb']}"}
     result = await executor(p["args"])
-    store.set_result(token, result, "applied")
-    return {"applied": True, "result": result}
+    # Only a successful result burns the token. A failed apply stays pending so a retry
+    # re-runs; otherwise the content-hash token (no TTL) would replay the cached failure forever.
+    ok = bool((result or {}).get("ok", True))
+    store.set_result(token, result, "applied" if ok else "pending")
+    return {"applied": ok, "result": result}
 
 
 @router.post("/actions/commit", tags=["actions"])
@@ -436,6 +440,22 @@ async def _apply_item(item: dict, decision: str) -> dict:
     return {"ok": False, "error": "decision must be approve|skip"}
 
 
+def _repoll_updates(card: dict, res: dict) -> None:
+    """After a successful apply on the stack-updates card, re-run the updates check so the card
+    reflects reality without waiting for the daily scheduled check. Fire-and-forget and best-effort
+    (the check does live HA/Unraid I/O); the applying client also refreshes."""
+    if (card or {}).get("category") != "update" or not res.get("ok"):
+        return
+
+    async def _run():
+        try:
+            from . import updates
+            await updates.check(updates.UpdateCheck())
+        except Exception:
+            pass
+    asyncio.create_task(_run())
+
+
 class CardItemDecision(BaseModel):
     card_id: str
     item_id: str
@@ -455,6 +475,7 @@ async def card_item(d: CardItemDecision):
         return {"ok": True, "state": item["state"], "applied": False}
     res = await _apply_item(item, d.decision)
     pstore.set_items(d.card_id, items)
+    _repoll_updates(card, res)
     return res
 
 
@@ -470,9 +491,12 @@ async def card_all(d: CardAllDecision):
         return {"ok": False, "error": "unknown card"}
     items = card.get("items") or []
     applied = 0
+    any_ok = False
     for item in items:
         if item.get("state") == "pending":
-            await _apply_item(item, d.decision)
+            r = await _apply_item(item, d.decision)
+            any_ok = any_ok or bool(r.get("ok"))
             applied += 1
     pstore.set_items(d.card_id, items)
+    _repoll_updates(card, {"ok": any_ok})
     return {"ok": True, "applied": applied, "items": items}

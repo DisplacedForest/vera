@@ -5,7 +5,7 @@ structured-output extraction call per conversation (the single irreducibly-LLM s
 merges the resulting nodes/edges/threads into the Profile Graph through its dedup/decay math.
 
 Sources are Open WebUI (the owner's chats with Vera) and ChatGPT / Claude.ai platform data
-exports. Coding-agent transcripts (Claude Code, Codex) are not a source.
+exports.
 
 Adapters normalize every source to `{conv_id, text, ts, source}`. A per-source cursor
 (extract_store) makes ingestion incremental and re-runs a no-op. All I/O is injected so the

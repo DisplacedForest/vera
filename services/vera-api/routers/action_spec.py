@@ -150,7 +150,31 @@ def _p_overseerr(args):
 # POST /actions/auto with NO confirm gate. It is an explicit per-verb enrollment — a
 # deliberate one-line act, never derived from risk/reversible — and every entry carries
 # it so flipping a verb free is always a visible diff.
+HEARTBEAT_SKILL_ID = "heartbeat"   # the sanctioned direct self-authored surface, never gated here
+
+
+def _v_skill(args):
+    if not (args.get("name") or "").strip():
+        return "skill name required"
+    if not (args.get("content") or "").strip():
+        return "skill content required"
+    if (args.get("id") or "").strip() == HEARTBEAT_SKILL_ID:
+        return "heartbeat is the sanctioned direct surface; author it through /authoring/heartbeat"
+    return None
+
+
+def _p_skill(args):
+    name = (args.get("name") or "(unnamed)").strip()
+    content = (args.get("content") or "").strip()
+    opening = content.splitlines()[0][:80] if content else ""
+    return f"Author OWUI skill '{name}' ({len(content)} chars). Opens: {opening}"
+
+
 SPEC = {
+    "owui.skill_upsert": {"validate": _v_skill, "preview": _p_skill, "risk": "high", "reversible": True,
+                          "autonomous": False,
+                          "summary": "create or modify an OWUI skill (Vera's own cognition config)",
+                          "args": '{"name": "...", "content": "...", "id": "...", "description": "..."}'},
     "ha.service": {"validate": _v_ha, "preview": _p_ha, "risk": "medium", "reversible": True,
                    "autonomous": False,
                    "summary": "call a Home Assistant service (the server enforces a configurable allowlist)",

@@ -67,12 +67,21 @@ class SkillBody(BaseModel):
 
 @router.post("/authoring/skill", tags=["authoring"])
 async def author_skill(b: SkillBody):
-    """Vera authors or refines one of her own skills/protocols. Free; versioned."""
+    """Propose an OWUI skill write. A skill is durable, always-active cognition config, so this
+    no longer writes directly: it stages a gated `owui.skill_upsert` proposal (visible in the
+    Agentic activity feed) and the write applies only on confirmation. HEARTBEAT.md keeps its
+    own sanctioned direct path (/authoring/heartbeat)."""
     _require_owui()
     sid = b.id or _slug(b.name)
-    store.snapshot(f"skill:{sid}", b.content, note=b.name)
-    await _skill_upsert(sid, b.name, b.description, b.content)
-    return {"id": sid}
+    from . import actions
+    ok, err = actions._stage("owui.skill_upsert",
+                             {"name": b.name, "content": b.content, "id": sid,
+                              "description": b.description},
+                             source="self_author", actor="vera", chat_id=None, message_id=None)
+    if err:
+        raise HTTPException(400, err.get("error", "invalid skill proposal"))
+    return {"proposed": True, "token": ok["token"], "preview": ok["preview"],
+            "message": "proposed, awaiting confirmation"}
 
 
 class HeartbeatBody(BaseModel):

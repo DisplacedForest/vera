@@ -743,9 +743,9 @@ struct AgenticDetailShot: View {
                 .overlay(Rectangle().fill(Theme.hairline).frame(height: 1), alignment: .top)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if variant == "agentic-inspector", let flow = graph.flow("pulse") {
+            if variant.hasPrefix("agentic-inspector"), let flow = inspectorFlow(graph) {
                 let events = Array(ActivityEvent.mock().prefix(4))
-                InspectorContent(flow: flow, job: jobs["pulse"], sched: SchedulerStore(),
+                InspectorContent(flow: flow, job: inspectorJob(jobs), sched: SchedulerStore(),
                                  events: events,
                                  onEditSchedule: { _ in }, onDrill: {}, onClose: {},
                                  liveControls: false,
@@ -762,9 +762,31 @@ struct AgenticDetailShot: View {
         .environment(\.colorScheme, .dark)
     }
 
+    /// The pulse flow for the inspector shot; the `-long` variant seeds oversized run state
+    /// (many gate kills, multi-sentence warnings) to prove sections lay out below long content.
+    private func inspectorFlow(_ graph: AgenticGraph) -> GraphFlow? {
+        guard var flow = graph.flow("pulse") else { return nil }
+        guard variant == "agentic-inspector-long", var st = flow.pulseState else { return flow }
+        st.warnings = [
+            "Starved run: only 6 of the target 8 cards survived after 3 triage rounds, so the briefing shipped short.",
+            "Signals corpus for the Strait of Hormuz watch grew past the fold threshold and was held for manual review rather than auto-merged.",
+            "Cover art for 2 cards fell back to source photos because the image service was busy at synthesis time.",
+        ]
+        st.gates = ["dedup": 11, "freshness": 4, "coherence": 3, "empty": 2, "interest_cap": 5]
+        flow.pulseState = st
+        return flow
+    }
+
+    private func inspectorJob(_ jobs: [String: SchedulerJob]) -> SchedulerJob? {
+        guard var job = jobs["pulse"] else { return nil }
+        guard variant == "agentic-inspector-long" else { return job }
+        job.lastRunDetail = "Signals check tripped 4 of 12 watched indicators this run. Brent crude held above its 90-day band for a third straight session, the Baltic Dry index broke its upper threshold, Taiwan Strait AIS density fell below the quiet-water floor, and the EUR/USD cross-currency basis widened past its alert line. Each trip carries its own multi-source corpus and a recommended follow-up; the longest ran to nine sources and was condensed to a single paragraph for the card."
+        return job
+    }
+
     @ViewBuilder
     private func header(_ graph: AgenticGraph) -> some View {
-        if variant == "agentic-inspector" {
+        if variant.hasPrefix("agentic-inspector") {
             HStack(spacing: 10) {
                 Text("Agentic").font(.system(size: 22, weight: .bold))
                 Text("\(graph.flows.count) flows").font(.system(size: 13, weight: .semibold))

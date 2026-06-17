@@ -745,6 +745,7 @@ struct InspectorContent: View {
                 }
                 if let sub = subline {
                     Text(sub).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 7).padding(.leading, 37)
                 }
                 if let job {
@@ -904,9 +905,11 @@ struct InspectorContent: View {
     private func lastRun(_ job: SchedulerJob) -> some View {
         section("Last run") {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 7) {
+                HStack(alignment: .top, spacing: 7) {
                     Circle().fill(flowStatus(flow, job: job).dotColor).frame(width: 7, height: 7)
+                        .padding(.top, 4)
                     Text(lastRunLine(job)).font(.system(size: 12))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 // Plain-English summary from the producer (the raw run record is never serialized here).
                 if !job.lastRunDetail.isEmpty {
@@ -928,6 +931,7 @@ struct InspectorContent: View {
                 }
                 if let st = flow.pulseState, !st.gates.isEmpty {
                     Text(gatesLine(st)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

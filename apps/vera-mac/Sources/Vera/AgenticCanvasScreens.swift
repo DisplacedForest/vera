@@ -6,6 +6,7 @@ struct AgenticCanvasView: View {
     @ObservedObject var graphStore: GraphStore
     @ObservedObject var sched: SchedulerStore
     @ObservedObject var activity: ActivityStore
+    @ObservedObject var pulseRun: PulseRunStore
     var onEditSchedule: (SchedulerJob) -> Void
 
     @State private var selected: String?
@@ -169,7 +170,7 @@ struct AgenticCanvasView: View {
         if flow.stageLayout == "fan" {
             HeartbeatDrill(flow: flow, graph: graph, viewport: viewport)
         } else {
-            PulseDrill(flow: flow, graph: graph, viewport: viewport)
+            PulseDrill(flow: flow, graph: graph, viewport: viewport, detail: pulseRun.detail)
         }
     }
 
@@ -269,30 +270,46 @@ struct PulseDrill: View {
     let flow: GraphFlow
     let graph: AgenticGraph
     let viewport: CGSize
+    var detail: PulseRunDetail? = nil
+    var initialExpandedStage: String? = nil   // lets the screenshot harness open a stage
+    @State private var expandedStage: String?
 
-    private static let gateOrder = ["dedup", "freshness", "coherence", "empty", "interest_cap"]
-    private static let gateLabels = ["dedup": "Dedup", "freshness": "Freshness",
-                                     "coherence": "Coherence", "empty": "Empty",
-                                     "interest_cap": "Interest cap"]
+    static let gateOrder = ["dedup", "freshness", "coherence", "empty", "interest_cap"]
+    static let gateLabels = ["dedup": "Dedup", "freshness": "Freshness",
+                             "coherence": "Coherence", "empty": "Empty",
+                             "interest_cap": "Interest cap"]
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(flow.stages.enumerated()), id: \.element.id) { i, stage in
-                if i > 0 { connector }
-                StageNode(stage: stage, primary: primaryLine(stage), secondary: secondaryLine(stage),
-                          gateRows: stage.id == "gates" ? gateRows : [],
-                          warn: stage.id == "synthesis" && !(flow.pulseState?.warnings.isEmpty ?? true),
-                          tool: stageTool(stage))
+        let active = expandedStage ?? initialExpandedStage
+        VStack(spacing: 0) {
+            Spacer(minLength: 20)
+            HStack(spacing: 0) {
+                ForEach(Array(flow.stages.enumerated()), id: \.element.id) { i, stage in
+                    if i > 0 { connector }
+                    StageNode(stage: stage, primary: primaryLine(stage), secondary: secondaryLine(stage),
+                              gateRows: stage.id == "gates" ? gateRows : [],
+                              warn: stage.id == "synthesis" && !(flow.pulseState?.warnings.isEmpty ?? true),
+                              tool: stageTool(stage), selected: active == stage.id,
+                              onTap: { expandedStage = (active == stage.id) ? nil : stage.id })
+                }
+                if let surface = graph.surfaces.first(where: { flow.feeds.contains($0.id) }) {
+                    connector
+                    SurfaceNode(surface: surface)
+                        .frame(width: OrganismLayout.surfaceSize.width,
+                               height: OrganismLayout.surfaceSize.height)
+                }
             }
-            if let surface = graph.surfaces.first(where: { flow.feeds.contains($0.id) }) {
-                connector
-                SurfaceNode(surface: surface)
-                    .frame(width: OrganismLayout.surfaceSize.width,
-                           height: OrganismLayout.surfaceSize.height)
+            .padding(.horizontal, 28)
+            if let active, let stage = flow.stages.first(where: { $0.id == active }) {
+                StageDetailPanel(stage: stage, detail: detail,
+                                 warnings: flow.pulseState?.warnings ?? [])
+                    .frame(maxWidth: 720, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 28).padding(.top, 16)
             }
+            Spacer(minLength: 20)
         }
-        .padding(.horizontal, 28)
-        .frame(minWidth: viewport.width, minHeight: viewport.height)
+        .frame(minWidth: viewport.width, minHeight: viewport.height, alignment: .top)
         .background(DotGrid())
     }
 
@@ -352,6 +369,8 @@ struct StageNode: View {
     var gateRows: [(String, String)] = []
     var warn: Bool = false
     var tool: String?
+    var selected: Bool = false
+    var onTap: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -364,6 +383,9 @@ struct StageNode: View {
                         .foregroundStyle(graphTint(stage.tint)))
                 Text(stage.label).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 0)
+                Image(systemName: selected ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
             }
             if !gateRows.isEmpty {
                 VStack(spacing: 5) {
@@ -397,9 +419,165 @@ struct StageNode: View {
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12)
-            .stroke(warn ? FlowStatus.warn.dotColor.opacity(0.42) : Theme.hairline, lineWidth: 1))
+            .stroke(strokeColor, lineWidth: selected ? 1.5 : 1))
         .overlay(alignment: .leading) { PortDot().offset(x: -3.5) }
         .overlay(alignment: .trailing) { PortDot().offset(x: 3.5) }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+    }
+
+    private var strokeColor: Color {
+        if selected { return Theme.accent.opacity(0.7) }
+        return warn ? FlowStatus.warn.dotColor.opacity(0.42) : Theme.hairline
+    }
+}
+
+/// The expanded detail for a tapped pipeline stage: the per-item evidence behind the summary
+/// face. Triage lists every candidate and its outcome; Gates groups the named casualties; the
+/// shipping stages show per-card audit, cover, and inject results. Jargon is explained in place.
+struct StageDetailPanel: View {
+    let stage: GraphStage
+    var detail: PulseRunDetail?
+    var warnings: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 7) {
+                Image(systemName: stage.icon).font(.system(size: 12)).foregroundStyle(graphTint(stage.tint))
+                Text(stage.label).font(.system(size: 14, weight: .semibold))
+                Spacer()
+            }
+            if let note = stageNote {
+                Text(note).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    @ViewBuilder private var content: some View {
+        if let detail, !detail.items.isEmpty {
+            switch stage.id {
+            case "triage": triageList(detail)
+            case "gates": gatesList(detail)
+            default: injectedList(detail)
+            }
+        } else {
+            Text("No detail recorded for this run.")
+                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+        }
+    }
+
+    private var stageNote: String? {
+        switch stage.id {
+        case "gates": return PulseVocabulary.explain("gate kills")
+        case "synthesis": return warnings.isEmpty ? nil : PulseVocabulary.explain("starved run")
+        case "claim_audit": return "Each shipped card is checked against its own sources by a second model."
+        case "cover_art": return "Generated is a fresh cover image; fallback reused a real photo from the sources."
+        default: return nil
+        }
+    }
+
+    private func triageList(_ d: PulseRunDetail) -> some View {
+        VStack(spacing: 0) { ForEach(d.items) { itemRow($0) } }
+    }
+
+    private func gatesList(_ d: PulseRunDetail) -> some View {
+        let groups = PulseDrill.gateOrder.compactMap { g -> (String, [PulseRunItem])? in
+            let k = d.killed(at: g); return k.isEmpty ? nil : (g, k)
+        }
+        return VStack(alignment: .leading, spacing: 12) {
+            if groups.isEmpty {
+                Text("No candidates were cut by gates this run.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+            ForEach(groups, id: \.0) { g, items in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(PulseDrill.gateLabels[g] ?? g).font(.system(size: 11, weight: .semibold))
+                        Text("\(items.count)").font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(FlowStatus.warn.dotColor)
+                        InfoTip(text: PulseVocabulary.explain(g))
+                        Spacer()
+                    }
+                    ForEach(items) { itemRow($0, showGate: false) }
+                }
+            }
+        }
+    }
+
+    private func injectedList(_ d: PulseRunDetail) -> some View {
+        let items = d.injectedItems
+        return VStack(spacing: 0) {
+            if items.isEmpty {
+                Text("No cards shipped this run.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+            ForEach(items) { item in
+                HStack(alignment: .top, spacing: 8) {
+                    Circle().fill(FlowStatus.ok.dotColor).frame(width: 6, height: 6).padding(.top, 5)
+                    Text(item.title).font(.system(size: 12)).lineLimit(2)
+                    Spacer(minLength: 8)
+                    Text(stageValue(item)).font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .padding(.vertical, 5)
+            }
+        }
+    }
+
+    private func stageValue(_ item: PulseRunItem) -> String {
+        switch stage.id {
+        case "claim_audit":
+            let v = item.auditVerdict ?? "not audited"
+            if v == "revised", let n = item.auditUnsupported { return "revised (\(n) fixed)" }
+            return v
+        case "cover_art": return (item.coverGenerated ?? false) ? "generated" : "fallback"
+        case "inject": return item.cardID != nil ? "shipped" : ""
+        default: return ""   // synthesis: the title alone is the per-card result
+        }
+    }
+
+    private func itemRow(_ item: PulseRunItem, showGate: Bool = true) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Circle().fill(dotColor(item)).frame(width: 6, height: 6).padding(.top, 5)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title).font(.system(size: 12)).lineLimit(2)
+                if let line = evidenceLine(item, showGate: showGate) {
+                    Text(line).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(.vertical, 5)
+    }
+
+    private func dotColor(_ item: PulseRunItem) -> Color {
+        switch item.status {
+        case "injected": return FlowStatus.ok.dotColor
+        case "error": return FlowStatus.fail.dotColor
+        default: return FlowStatus.warn.dotColor
+        }
+    }
+
+    private func evidenceLine(_ item: PulseRunItem, showGate: Bool) -> String? {
+        if item.status == "injected" { return "shipped" }
+        let label = item.gate.map { PulseDrill.gateLabels[$0] ?? $0 } ?? "skipped"
+        let prefix = showGate ? "\(label): " : ""
+        switch item.gate {
+        case "dedup": return "\(prefix)already covered by \(item.detail ?? "an existing card")"
+        case "freshness": return "\(prefix)newest source \(item.detail ?? "undated")"
+        case "coherence": return "\(prefix)corpus about \(item.detail ?? "another subject")"
+        case "interest_cap": return "\(prefix)\(item.detail ?? "this interest") already shipped this run"
+        case "empty": return "\(prefix)research produced nothing"
+        default: return item.reason.map { "\(prefix)\($0)" }
+        }
     }
 }
 

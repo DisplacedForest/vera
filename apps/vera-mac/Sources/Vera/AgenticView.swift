@@ -104,6 +104,26 @@ final class ActivityStore: ObservableObject {
     }
 }
 
+/// Live state for the last Pulse run's structured per-item detail (`GET /pulse/run_status`),
+/// used by the pulse drill-in's stage expansions. Absent or older runs leave `detail` nil so
+/// the canvas degrades to "no detail recorded for this run".
+@MainActor
+final class PulseRunStore: ObservableObject {
+    @Published var detail: PulseRunDetail?
+
+    private var client: PulseRunClient?
+
+    func configure(base: URL?) {
+        client = base.map { PulseRunClient(base: $0) }
+        if client == nil { detail = nil }
+    }
+
+    func refresh() async {
+        guard let client else { detail = nil; return }
+        if case .ok(let d) = await client.fetch() { detail = d } else { detail = nil }
+    }
+}
+
 /// The Agentic surface. Canvas: the organism map of every autonomous flow, with
 /// drill-ins and the node inspector. Activity: the reverse-chronological feed of
 /// everything Vera did on her own in the last day.
@@ -113,6 +133,7 @@ struct AgenticView: View {
     @StateObject private var sched = SchedulerStore()
     @StateObject private var activity = ActivityStore()
     @StateObject private var graphStore = GraphStore()
+    @StateObject private var pulseRun = PulseRunStore()
     @State private var editing: SchedulerJob?
 
     var body: some View {
@@ -120,7 +141,7 @@ struct AgenticView: View {
             switch store.agenticPane {
             case .canvas:
                 AgenticCanvasView(graphStore: graphStore, sched: sched, activity: activity,
-                                  onEditSchedule: { editing = $0 })
+                                  pulseRun: pulseRun, onEditSchedule: { editing = $0 })
             case .activity:
                 AgenticActivityView(activity: activity)
             }
@@ -131,16 +152,19 @@ struct AgenticView: View {
             sched.configure(base: config.resolved?.veraAPIBase)
             activity.configure(base: config.resolved?.veraAPIBase)
             graphStore.configure(base: config.resolved?.veraAPIBase)
+            pulseRun.configure(base: config.resolved?.veraAPIBase)
             async let s: Void = sched.refresh()
             async let a: Void = activity.refresh()
             async let g: Void = graphStore.refresh()
-            _ = await (s, a, g)
+            async let p: Void = pulseRun.refresh()
+            _ = await (s, a, g, p)
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
                 async let s2: Void = sched.refresh()
                 async let a2: Void = activity.refresh()
                 async let g2: Void = graphStore.refresh()
-                _ = await (s2, a2, g2)
+                async let p2: Void = pulseRun.refresh()
+                _ = await (s2, a2, g2, p2)
             }
         }
         .sheet(item: $editing) { job in

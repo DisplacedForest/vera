@@ -225,7 +225,7 @@ def test_audit_clean_body_unchanged(monkeypatch):
         return '{"claims":[{"claim":"ok","source":1}]}', "coder", "cross-model (m)"
     monkeypatch.setattr(pulse, "_auditor", auditor)
     errs = []
-    h, b, stamp = _run(pulse.audit_claims("Head", "Body text.", _srcs(), errs, "T"))
+    h, b, stamp, _info = _run(pulse.audit_claims("Head", "Body text.", _srcs(), errs, "T"))
     assert (h, b) == ("Head", "Body text.")
     assert stamp == "cross-model (m)"
     assert errs == ["claim audit: T — clean (coder)"]
@@ -244,7 +244,7 @@ def test_audit_unsupported_revises(monkeypatch):
     monkeypatch.setattr(pulse, "_auditor", auditor)
     monkeypatch.setattr(pulse, "_vera", vera)
     errs = []
-    h, b, stamp = _run(pulse.audit_claims("Head", "Body under Sean Dyche.", _srcs(), errs, "T"))
+    h, b, stamp, _info = _run(pulse.audit_claims("Head", "Body under Sean Dyche.", _srcs(), errs, "T"))
     assert h == "Fixed Head" and b == "Revised body without the claim."
     assert stamp == "cross-model (m)"
     assert errs == ["claim audit: T — 1 unsupported, revised (coder)"]
@@ -255,7 +255,7 @@ def test_audit_machinery_failure_ships_original(monkeypatch):
         raise RuntimeError("studio offline")
     monkeypatch.setattr(pulse, "_auditor", auditor)
     errs = []
-    h, b, stamp = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
+    h, b, stamp, _info = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
     assert (h, b) == ("Head", "Body.")
     assert stamp == "none"  # no effective audit happened
     assert "audit unavailable" in errs[0]
@@ -266,7 +266,7 @@ def test_audit_unparseable_ships_original(monkeypatch):
         return "I cannot really say", "coder", "cross-model (m)"
     monkeypatch.setattr(pulse, "_auditor", auditor)
     errs = []
-    h, b, stamp = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
+    h, b, stamp, _info = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
     assert (h, b) == ("Head", "Body.")
     assert stamp == "none"  # a verdict nobody could parse is not an audit
     assert "unparseable" in errs[0]
@@ -280,7 +280,7 @@ def test_audit_empty_revision_ships_original(monkeypatch):
     monkeypatch.setattr(pulse, "_auditor", auditor)
     monkeypatch.setattr(pulse, "_vera", vera)
     errs = []
-    h, b, stamp = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
+    h, b, stamp, _info = _run(pulse.audit_claims("Head", "Body.", _srcs(), errs, "T"))
     assert (h, b) == ("Head", "Body.")
     assert stamp == "cross-model (m)"  # the audit DID run; only the revision failed
     assert "revision empty" in errs[0]
@@ -344,7 +344,7 @@ def _research_with_synthesis(monkeypatch, synthesis, defer_audit=False):
 
     async def audit_passthrough(headline, body, sources, errs, title):
         seen["order"].append("audit")
-        return headline, body, "cross-model (m)"
+        return headline, body, "cross-model (m)", {"verdict": "clean", "unsupported": 0, "auditor": "coder"}
 
     async def vera(messages, temperature=0.4):
         sys_p = messages[0]["content"]

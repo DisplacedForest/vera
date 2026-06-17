@@ -701,9 +701,10 @@ def _parse_audit(raw):
 async def audit_claims(headline, body, sources, errs, title):
     """Cross-model claim validation: the auditor checks the body against its own corpus;
     unsupported claims go back to the main model for ONE surgical revision (re-audited for the
-    record only — the revision ships regardless). Returns (headline, body, audit_stamp), the
-    text possibly revised; the stamp is 'none' when no effective audit happened. Machinery
-    failure ships the original: the feed never starves on audit plumbing."""
+    record only — the revision ships regardless). Returns (headline, body, audit_stamp, info), the
+    text possibly revised; the stamp is 'none' when no effective audit happened, and info is
+    {verdict (clean|revised|unavailable), unsupported (count), auditor}. Machinery failure ships
+    the original: the feed never starves on audit plumbing."""
     corpus = _numbered_corpus(sources)
 
     async def verdict():
@@ -716,10 +717,10 @@ async def audit_claims(headline, body, sources, errs, title):
         unsupported, auditor, stamp = await verdict()
         if unsupported is None:
             errs.append(f"claim audit: {title} — audit unavailable (unparseable verdict from {auditor})")
-            return headline, body, "none"
+            return headline, body, "none", {"verdict": "unavailable", "unsupported": 0, "auditor": auditor}
         if not unsupported:
             errs.append(f"claim audit: {title} — clean ({auditor})")
-            return headline, body, stamp
+            return headline, body, stamp, {"verdict": "clean", "unsupported": 0, "auditor": auditor}
         revised = (await _vera(
             [{"role": "system", "content": REVISE_SYS},
              {"role": "user", "content": ("Unsupported claims:\n- " + "\n- ".join(unsupported)
@@ -727,9 +728,10 @@ async def audit_claims(headline, body, sources, errs, title):
             temperature=0.2,
         )).strip()
         new_headline, new_body = _split_headline(revised)
+        info = {"verdict": "revised", "unsupported": len(unsupported), "auditor": auditor}
         if not new_body:
             errs.append(f"claim audit: {title} — {len(unsupported)} unsupported, revision empty; shipped original")
-            return headline, body, stamp
+            return headline, body, stamp, info
         record = f"claim audit: {title} — {len(unsupported)} unsupported, revised ({auditor})"
         try:
             body = new_body  # re-audit the revision for the record only
@@ -739,14 +741,14 @@ async def audit_claims(headline, body, sources, errs, title):
         except Exception:
             pass
         errs.append(record)
-        return (new_headline or headline), new_body, stamp
+        return (new_headline or headline), new_body, stamp, info
     except Exception as e:
         errs.append(f"claim audit: {title} — audit unavailable ({e})")
-        return headline, body, "none"
+        return headline, body, "none", {"verdict": "unavailable", "unsupported": 0, "auditor": None}
 
 
 async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", errors=None,
-                         defer_audit=False):
+                         defer_audit=False, outcome=None):
     """The per-topic deep-research pipeline: broad search -> thread extraction ->
     follow-up searches -> real imagery -> first-person synthesis -> summary -> cover art -> inject.
 
@@ -758,14 +760,20 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     `defer_audit=True` skips the inline claim audit and hands the full source corpus back on
     the returned card's ephemeral `_corpus` key (never persisted), so the run loop can audit
     the whole batch at end-of-run against one model wake. The card lands stamped
-    `audit: none` until that phase overwrites it."""
+    `audit: none` until that phase overwrites it.
+
+    `outcome`, if given, is a dict this fills with the structured result the run record keeps:
+    on a gate kill `{gate, reason, detail}` (the same evidence the `errs` prose carries, kept
+    as fields), and on a shipped card `{cover_generated}`. It mirrors the `errs` accumulator."""
     errs = errors if errors is not None else []
+    oc = outcome if outcome is not None else {}
 
     # Dedup gate — if she's already produced a card for this, skip before spending any
     # research/image/synthesis on it. Catches the heartbeat AND scheduled paths (both land here).
     dup = await already_covered(topic, user_id)
     if dup:
         errs.append(f"skipped (already covered): {topic.get('title')} ≈ {dup['title']}")
+        oc.update({"gate": "dedup", "reason": "already covered", "detail": dup.get("title")})
         return None
 
     # Numbered, deduped master source list accumulated across all searches.
@@ -793,6 +801,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     newest = _newest_published(sources)
     if await is_stale_news(topic, newest):
         errs.append(f"skipped (stale news): {topic.get('title')} — newest source {newest or 'undated'}")
+        oc.update({"gate": "freshness", "reason": "stale news", "detail": newest or "undated"})
         return None
 
     # Coherence gate — a corpus that drifted to a different subject skips the same way;
@@ -800,6 +809,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     off, found = await is_off_topic(topic, sources)
     if off:
         errs.append(f"skipped (off-topic corpus): {topic.get('title')} — corpus about {found}")
+        oc.update({"gate": "coherence", "reason": "off-topic corpus", "detail": found})
         return None
 
     # thread extraction — what's worth deepening (may be empty)
@@ -858,6 +868,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     headline, body = _split_headline(body)
     if not body:
         errs.append(f"skipped (empty synthesis): {topic.get('title')}")
+        oc.update({"gate": "empty", "reason": "empty synthesis", "detail": None})
         return None  # nothing synthesized — don't inject an empty card
 
     # Cross-model claim validation — the coder audits the body against its own corpus and
@@ -866,7 +877,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     # one audit-model wake across every card in the run.
     audit_stamp = "none"
     if not defer_audit:
-        headline, body, audit_stamp = await audit_claims(headline, body, sources, errs, topic.get("title"))
+        headline, body, audit_stamp, _audit_info = await audit_claims(headline, body, sources, errs, topic.get("title"))
 
     # Short, complete preview blurb (so the card face never truncates mid-word). Generated
     # before cover art so the image prompt can be built from the synthesis.
@@ -883,6 +894,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     # Cover art: Vera writes a vibe-matching prompt from the card's own synthesis (headline +
     # summary + story), not the triage working title; style rotates for a fresh feed.
     image_url = tint = None
+    cover_generated = False
     try:
         img_usr = (f"Headline: {headline or topic.get('title')}\n"
                    f"Summary: {summary or ''}\n"
@@ -896,12 +908,14 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
             )
         ).strip().strip('"')
         image_url, tint = await _gen_image(img_prompt, STYLE_PALETTE[idx % len(STYLE_PALETTE)], idx)
+        cover_generated = image_url is not None
     except Exception as e:
         errs.append(f"cover {topic.get('title')}: {e}")
     # Fallback: if generation failed (image service offline/contended), promote the best real
     # image we already gathered to the cover so cards are never imageless.
     if not image_url and inline_images:
         image_url = inline_images[0]["url"]
+    oc["cover_generated"] = cover_generated
 
     card = {
         "id": str(uuid.uuid4()),
@@ -994,12 +1008,15 @@ async def _audit_hook(url):
                 return {}
 
 
-async def _audit_phase(pending, errs):
+async def _audit_phase(pending, errs, items_by_card=None):
     """The batched end-of-run claim audit: one optional model wake amortized across every card
     injected this run. `pending` is [(card, full_sources)]. Each card is audited with the same
     audit_claims machinery as the inline path; revisions and the provenance stamp are applied
     to the stored card. The release hook fires only if this run's wake actually started the
-    model — a model that was already up belongs to whoever started it."""
+    model — a model that was already up belongs to whoever started it.
+
+    `items_by_card`, if given, maps card id -> the run record's structured item, and each card's
+    audit verdict is written onto its item so the drill-in can show per-card audit detail."""
     if not pending:
         return
     woke = False
@@ -1013,9 +1030,11 @@ async def _audit_phase(pending, errs):
     try:
         for card, sources in pending:
             try:
-                headline, body, stamp = await audit_claims(
+                headline, body, stamp, info = await audit_claims(
                     card["title"], card["body"], sources, errs, card["title"])
                 store.apply_audit(card["id"], headline or card["title"], body, stamp)
+                if items_by_card and card["id"] in items_by_card:
+                    items_by_card[card["id"]]["audit"] = info
             except Exception as e:
                 errs.append(f"claim audit: {card.get('title')} — audit phase error ({e})")
     finally:
@@ -1076,6 +1095,8 @@ async def _do_run(req: PulseRequest):
     exclusions = [c["title"] for c in _recent_for_user(user_id)]
     target = min(req.max_cards or PULSE_MAX_CARDS, PULSE_MAX_CARDS)
     out["rounds"] = []
+    out["items"] = []  # structured per-candidate outcomes for the drill-in (additive to rounds/gates)
+    items_by_card = {}  # card id -> its item, so the audit phase can stamp per-card verdicts
     attempt = 0  # running per-topic index across rounds (rotates cover-art styles)
     gates = {"dedup": 0, "freshness": 0, "coherence": 0, "empty": 0, "interest_cap": 0}
     shipped_per_interest = {}  # lowercased interest -> cards shipped this run
@@ -1101,22 +1122,33 @@ async def _do_run(req: PulseRequest):
                 if len(out["injected"]) >= target:
                     break
                 interest = (t.get("interest") or "").strip()
+                item = {"round": rnd + 1, "title": t.get("title"), "angle": t.get("angle"),
+                        "interest": interest or None}
                 if interest and shipped_per_interest.get(interest.lower(), 0) >= PULSE_MAX_PER_INTEREST:
                     gates["interest_cap"] += 1
                     out["errors"].append(
                         f"skipped (interest cap): {t.get('title')} — '{interest}' already shipped this run")
                     out["skipped"].append(t.get("title"))
                     record["skipped"].append(t.get("title"))
+                    item.update({"status": "cap", "gate": "interest_cap", "reason": "interest cap",
+                                 "detail": interest})
+                    out["items"].append(item)
                     continue
                 before = len(out["errors"])
+                oc = {}
                 try:
                     card = await research_topic(t, who=who, user_id=user_id, idx=attempt,
                                                 provenance="scheduled", errors=out["errors"],
-                                                defer_audit=True)
+                                                defer_audit=True, outcome=oc)
                     if card:
                         pending_audit.append((card, card.pop("_corpus", [])))
                         out["injected"].append(card["title"])
                         record["injected"].append(card["title"])
+                        item.update({"title": card["title"], "status": "injected",
+                                     "card_id": card["id"],
+                                     "cover_generated": oc.get("cover_generated", False),
+                                     "audit": None})  # filled by the audit phase below
+                        items_by_card[card["id"]] = item
                         if interest:
                             shipped_per_interest[interest.lower()] = \
                                 shipped_per_interest.get(interest.lower(), 0) + 1
@@ -1125,13 +1157,18 @@ async def _do_run(req: PulseRequest):
                         gates[_gate_kind(out["errors"][before:])] += 1
                         out["skipped"].append(t.get("title"))  # a gate fired or synthesis was empty
                         record["skipped"].append(t.get("title"))
+                        item.update({"status": "killed", "gate": oc.get("gate"),
+                                     "reason": oc.get("reason"), "detail": oc.get("detail")})
+                    out["items"].append(item)
                 except Exception as e:
                     out["errors"].append(f"{t.get('title')}: {e}")
+                    item.update({"status": "error", "reason": str(e)})
+                    out["items"].append(item)
                 attempt += 1
             out["rounds"].append(record)
         # Batched claim audit, strictly after the cover loop and before vision resumes: the
         # image model is done, so the (possibly woken) audit model never runs alongside it.
-        await _audit_phase(pending_audit, out["errors"])
+        await _audit_phase(pending_audit, out["errors"], items_by_card)
     finally:
         await _vision(pause=False)  # bring the vision model back up after the image batch
 
@@ -1180,7 +1217,8 @@ async def _runner(fn, req, run_id, kind):
         store.set_run_status({"run_id": run_id, "state": "ok", "kind": kind, "started_at": started,
                               "finished_at": int(time.time()), "topics": topics,
                               "injected": injected, "errors": errors, "gates": gates,
-                              "rounds": out.get("rounds", []) if kind != "run_all" else []})
+                              "rounds": out.get("rounds", []) if kind != "run_all" else [],
+                              "items": out.get("items", []) if kind != "run_all" else []})
     except Exception as e:
         store.set_run_status({"run_id": run_id, "state": "error", "kind": kind, "started_at": started,
                               "finished_at": int(time.time()), "topics": [], "injected": [],

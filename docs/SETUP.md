@@ -8,8 +8,8 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 |---|---|---|
 | An OpenAI-compatible LLM server | llama.cpp / llama-swap / vLLM / Ollama / a hosted API — anything serving `/v1` | Yes |
 | [Open WebUI](https://github.com/open-webui/open-webui) | Conversations, memory, tool execution | Yes |
-| **vera-api** (this repo) | One FastAPI container holding every server-side capability | Yes |
-| **Vera.app** (this repo) | The native macOS client | Recommended |
+| **Vera.app** (this repo) | The native macOS client; complete pointed at Open WebUI alone | Recommended |
+| **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse veins, signals, weather, kitchen, research, heartbeat, scheduler, actions) | Optional |
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG) | Each unlocks a capability | No |
 | Satellite services (voice, image, vision, coder) | Reference implementations of documented HTTP contracts | No |
 

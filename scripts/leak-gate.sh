@@ -5,7 +5,7 @@
 # a key set in a local .env), so a fork without secrets still gets the static checks.
 #
 # Exempt a known-good hit by adding a POSIX-extended regex line to scripts/leak-allow.txt.
-set -eu
+set -euf
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -33,12 +33,13 @@ allow_filter() {
     fi
 }
 
-# scan <label> <extended-regex>
+# scan <label> <extended-regex> [extra git pathspec excludes ...]
 scan() {
-    _hits=$(git grep -nIE -e "$2" -- . ':!scripts/leak-gate.sh' ':!scripts/leak-allow.txt' 2>/dev/null \
+    _label="$1"; _pattern="$2"; shift 2
+    _hits=$(git grep -nIE -e "$_pattern" -- . ':!scripts/leak-gate.sh' ':!scripts/leak-allow.txt' "$@" 2>/dev/null \
         | allow_filter || true)
     if [ -n "$_hits" ]; then
-        printf 'LEAK [%s]:\n%s\n\n' "$1" "$_hits" >&2
+        printf 'LEAK [%s]:\n%s\n\n' "$_label" "$_hits" >&2
         fail=1
     fi
 }
@@ -51,6 +52,14 @@ scan "ser-ref-comment" '(#|//|/\*|--).*SER-[0-9]'
 scan "owui-key"        'sk-[A-Za-z0-9]{20,}'
 scan "jwt"             'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
 scan "private-key"     'BEGIN [A-Z ]*PRIVATE KEY'
+
+# High-entropy key shapes (generic long hex / base64). Generated, vendored, and lockfile
+# paths legitimately carry long hex and base64 (dependency hashes, minified bundles), so
+# they are excluded from these two checks only.
+scan "key-hex"    '[0-9a-fA-F]{32,}' \
+    ':!apps/vera-mac/Package.resolved' ':!apps/vera-mac/Sources/Vera/Resources/**' ':!*.min.js' ':!*.min.css'
+scan "key-base64" '["`=][[:space:]]*[A-Za-z0-9+/]{40,}={0,2}' \
+    ':!apps/vera-mac/Package.resolved' ':!apps/vera-mac/Sources/Vera/Resources/**' ':!*.min.js' ':!*.min.css'
 
 for _var in VERA_OWNER_NAME HOME_LOCATION_NAME WEATHER_LAT WEATHER_LON; do
     _val=$(resolve "$_var")

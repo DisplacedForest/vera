@@ -34,13 +34,17 @@ SEED_FACTS = [
 def test_migration_seeds_typed_nodes_with_facts():
     mig.migrate(interests=INTERESTS, journal_entries=JOURNAL, seed_facts=SEED_FACTS)
     by_label = {n["label"]: n for n in pg.all_nodes()}
-    assert by_label["Nottingham Forest"]["type"] == "interest"
-    assert "English football club" in by_label["Nottingham Forest"]["facts"]
+    forest = by_label["Nottingham Forest"]
+    assert forest["type"] == "interest"
+    gloss = forest["facts"][0]
+    assert gloss["text"] == "English football club"        # gloss became a provenance-bearing fact
+    assert gloss["source"] == "migration:interest"
     assert by_label["Lumber Prices and Construction Costs"]["type"] == "watch"
     assert by_label["Lumber Prices and Construction Costs"]["state"] == "active"
     franklin = by_label["Franklin"]
     assert franklin["type"] == "location"
     assert len(franklin["facts"]) == 3
+    assert all(f["source"] == "migration:seed" for f in franklin["facts"])
 
 
 def test_migration_is_idempotent():

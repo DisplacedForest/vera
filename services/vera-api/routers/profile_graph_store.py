@@ -79,6 +79,26 @@ def init():
         )
 
 
+def make_fact(text, source, observed_at=None):
+    """A durable fact with provenance: its text, where it came from (e.g. 'owui-memory',
+    'chat:<id>', 'extraction:<conv>', 'migration:<store>'), and when it was observed."""
+    return {"text": text, "source": source,
+            "observed_at": int(time.time()) if observed_at is None else observed_at}
+
+
+def _merge_facts(existing, new):
+    """Union two fact lists, deduped by `text` — the first occurrence's provenance survives,
+    so a fact re-observed from a different source keeps its original attribution."""
+    out, seen = [], set()
+    for f in list(existing or []) + list(new or []):
+        t = f.get("text") if isinstance(f, dict) else f
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append(f)
+    return out
+
+
 def _row(r):
     return {
         "id": r["id"], "type": r["type"], "label": r["label"],
@@ -145,7 +165,7 @@ def upsert_by_label(*, type, label, facts=None, engagement=None, state=None,
     same input is a no-op. Returns the node id."""
     existing = node_by_label(type, label)
     if existing:
-        merged_facts = list(dict.fromkeys(existing["facts"] + (facts or [])))
+        merged_facts = _merge_facts(existing["facts"], facts)
         return upsert_node(
             id=existing["id"], type=type, label=label, aliases=existing["aliases"],
             facts=merged_facts,
@@ -272,7 +292,7 @@ def merge_or_create(*, type, label, embedding, facts=None, now=None, tiebreak=No
             or (cos >= DEDUP_NEW and tiebreak is not None and tiebreak(label, cand)))) else None
     if match:
         aliases = list(dict.fromkeys(match["aliases"] + [label]))
-        merged_facts = list(dict.fromkeys(match["facts"] + facts))
+        merged_facts = _merge_facts(match["facts"], facts)
         upsert_node(id=match["id"], type=type, label=match["label"], aliases=aliases,
                     facts=merged_facts, engagement=match["engagement"],
                     last_engaged=match["last_engaged"], state=match["state"] or state,

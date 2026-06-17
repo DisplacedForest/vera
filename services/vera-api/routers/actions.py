@@ -175,7 +175,19 @@ async def _x_overseerr(args):
         return {"ok": False, "error": str(getattr(e, "detail", e))}
 
 
+async def _x_skill_upsert(args):
+    """Apply a confirmed OWUI-skill write: snapshot the revision, then upsert the skill. The
+    only sanctioned path by which the model's skill text reaches OWUI."""
+    from . import authoring
+    sid = (args.get("id") or "").strip() or authoring._slug(args.get("name") or "")
+    content = args.get("content") or ""
+    authoring.store.snapshot(f"skill:{sid}", content, note=args.get("name") or sid)
+    await authoring._skill_upsert(sid, args.get("name"), args.get("description"), content)
+    return {"ok": True, "id": sid}
+
+
 EXECUTORS = {
+    "owui.skill_upsert": _x_skill_upsert,
     "ha.service": _x_ha,
     "knowledge.set": _x_knowledge_set,
     "knowledge.delete": _x_knowledge_delete,

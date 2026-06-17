@@ -18,25 +18,26 @@ class Tools:
     async def author_skill(self, name: str, content: str, description: str = "",
                            __event_emitter__=None) -> str:
         """
-        Author or refine one of YOUR OWN skills/protocols (a reusable, markdown playbook for a
-        domain — e.g. a grow-tent protocol, a winemaking checklist). Free — no confirmation; it's
-        your own knowledge. Re-authoring the same skill name refines it (versioned, revertible).
-        `name` is the human title; `content` is the markdown body.
+        Propose one of YOUR OWN skills/protocols (a reusable, markdown playbook for a domain, e.g.
+        a grow-tent protocol or a winemaking checklist). A skill is durable, always-active config,
+        so it is GATED: this stages a proposal for the owner to confirm; it does not write until
+        confirmed. `name` is the human title; `content` is the markdown body.
         """
         async def emit(d, done=False):
             if __event_emitter__:
                 await __event_emitter__({"type": "status", "data": {"description": d, "done": done}})
 
-        await emit("Writing the skill...")
+        await emit("Proposing the skill...")
         try:
             r = requests.post(f"{self.valves.vera_api_url}/authoring/skill",
                               json={"name": name, "content": content, "description": description},
                               timeout=30).json()
         except Exception as e:
             await emit("Authoring service unreachable", True)
-            return f"Could not write the skill: {e}"
-        await emit("Skill saved", True)
-        return f"Saved skill '{name}' ({r.get('id')}). It's versioned — say so if you want to revert."
+            return f"Could not propose the skill: {e}"
+        await emit("Proposed, awaiting confirmation", True)
+        return (f"Proposed skill '{name}' for confirmation. It will not take effect until the "
+                f"owner confirms it in the activity feed.")
 
     async def update_heartbeat(self, content: str, __event_emitter__=None) -> str:
         """

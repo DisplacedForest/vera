@@ -231,6 +231,79 @@ def running_jobs() -> set[str]:
     return set(_running)
 
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def summarize_outcome(job_id: str, result) -> str:
+    """One or two plain-English sentences for a run's detail line: what ran, the outcome,
+    the headline numbers. The raw run record is never serialized here; the structured
+    payload stays available through the activity event, not this line."""
+    if isinstance(result, str):
+        return result.strip()[:300] or "Completed."
+    if not isinstance(result, dict):
+        return "Completed."
+    r = result
+    label = REGISTRY[job_id][0] if job_id in REGISTRY else job_id
+    if r.get("disabled"):
+        why = (r.get("detail") or "").strip()
+        return f"Skipped: {why}" if why else "Skipped: the controlling vein or feature is off."
+
+    if job_id == "pulse":
+        state = r.get("state") or "done"
+        cards = len(r.get("injected") or [])
+        killed = sum(int(v) for v in (r.get("gates") or {}).values())
+        warnings = r.get("warnings") or []
+        line = f"Pulse run {state}: shipped {_plural(cards, 'card')}"
+        if killed:
+            line += f", {_plural(killed, 'candidate')} cut by gates"
+        line += "."
+        if warnings:
+            line += f" {_plural(len(warnings), 'warning')}."
+        return line
+
+    if job_id == "signals":
+        trips = r.get("trips") or []
+        if not trips:
+            return "Signals checked: quiet, nothing tripped."
+        sev = r.get("severity")
+        posted = "a card was posted" if r.get("injected") else "no card posted"
+        sev_part = f" (severity {sev})" if sev else ""
+        return f"Signals checked: {_plural(len(trips), 'situation')} tripped{sev_part}, {posted}."
+
+    if job_id == "heartbeat":
+        bits = []
+        learned = r.get("learned") or []
+        if learned:
+            bits.append(f"learned {_plural(len(learned), 'thing')}")
+        if r.get("refined"):
+            bits.append("refined her instructions")
+        if r.get("proposed"):
+            bits.append("proposed an action")
+        return "Heartbeat tick: " + (", ".join(bits) if bits else "nothing to do this cycle") + "."
+
+    if job_id == "updates":
+        total = int(r.get("total") or 0)
+        checked = f"Checked {_plural(total, 'component')}"
+        if r.get("posted"):
+            return f"{checked}; posted an updates card."
+        cleared = int(r.get("cleared") or 0)
+        if cleared:
+            return f"{checked}; cleared {_plural(cleared, 'resolved card')}."
+        return f"{checked}; all current."
+
+    if job_id == "healthcheck":
+        down = r.get("down") or []
+        if not down:
+            return "Service health probe: all services up."
+        return f"Service health probe: {_plural(len(down), 'service')} down ({', '.join(down)})."
+
+    if r.get("ok") is False:
+        why = (r.get("detail") or r.get("error") or "").strip()
+        return f"{label} did not complete" + (f": {why}." if why else ".")
+    return f"{label} completed."
+
+
 async def _fire(job_id: str, manual: bool = False):
     if job_id in _running:
         store.record_outcome(job_id, False, "skipped: previous run still in progress")
@@ -243,7 +316,7 @@ async def _fire(job_id: str, manual: bool = False):
             return
         handler = REGISTRY[job_id][2]
         result = await handler()
-        store.record_outcome(job_id, True, str(result)[:500])
+        store.record_outcome(job_id, True, summarize_outcome(job_id, result))
         log.info("job %s ok%s", job_id, " (manual)" if manual else "")
     except Exception as e:  # noqa: BLE001 — one bad job must never kill the loop
         store.record_outcome(job_id, False, f"{type(e).__name__}: {e}")

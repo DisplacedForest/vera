@@ -743,10 +743,12 @@ struct AgenticDetailShot: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             if variant == "agentic-inspector", let flow = graph.flow("pulse") {
+                let events = Array(ActivityEvent.mock().prefix(4))
                 InspectorContent(flow: flow, job: jobs["pulse"], sched: SchedulerStore(),
-                                 events: Array(ActivityEvent.mock().prefix(4)),
+                                 events: events,
                                  onEditSchedule: { _ in }, onDrill: {}, onClose: {},
-                                 liveControls: false)
+                                 liveControls: false,
+                                 initialExpandedEventID: events.dropFirst().first?.id)
                     .frame(width: 332, alignment: .top)
                     .frame(maxHeight: .infinity, alignment: .top)
                     .background(Color(red: 0.118, green: 0.122, blue: 0.129))

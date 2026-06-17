@@ -12,8 +12,6 @@ import time
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from .persona import owner
-
 router = APIRouter()
 
 JOURNAL_PATH = os.environ.get("VERA_JOURNAL_PATH", "/data/journal/JOURNAL.md")
@@ -74,16 +72,11 @@ def parse_document(doc):
             dates = [d for d in dates if d]
             if dates:
                 next_check = max(dates) + 86400
-        origin_line = re.search(r"(?im)^\s*Origin:\s*(.+)$", text)
-        # Origin lines are in her words, so classification stays lenient: any owner/user
-        # phrasing (or the configured owner's name) reads as a requested commitment.
-        o = origin_line.group(1) if origin_line else ""
-        requested = bool(origin_line and (
-            re.search(r"\b(ask|request|owner|user)", o, re.I)
-            or owner().lower() in o.lower()))
+        # The legacy document carries no structured origin, so the fallback never claims
+        # "requested": trustworthy provenance comes only from the graph's stamped
+        # journal:origin fact (read by editor._origin).
         entries.append({"heading": heading, "slug": _slug(heading), "text": text,
-                        "next_check": next_check,
-                        "origin": "requested" if requested else "self"})
+                        "next_check": next_check, "origin": "self"})
     return entries
 
 

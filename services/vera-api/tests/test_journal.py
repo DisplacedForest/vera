@@ -53,33 +53,15 @@ def test_next_check_parses_date_and_datetime():
     assert fresh["next_check"] is None
 
 
-def test_origin_classification_is_lenient():
-    entries = journal.parse_document(DOC)
-    assert entries[0]["origin"] == "self"        # signals-born
-    assert entries[1]["origin"] == "requested"   # "asked"
-    assert entries[2]["origin"] == "self"        # no Origin line
-
-
-def test_origin_survives_her_paraphrase():
-    # She rewrites Origin lines in her own words; owner/user phrasings still classify
-    # as requested, while signals- and migration-born wordings stay self.
+def test_legacy_origin_never_over_claims():
+    # The legacy document carries no structured origin, so the fallback always under-claims to
+    # self; trustworthy "requested" provenance comes only from the graph's stamped journal:origin
+    # fact (editor._origin). No prose — owner names, "asked", "user-provided" — reads as requested.
+    assert all(e["origin"] == "self" for e in journal.parse_document(DOC))
     doc = ("## A\nOrigin: New commitment based on user-provided watch list.\n\n"
            "## B\nOrigin: the owner wanted this tracked.\n\n"
-           "## C\nOrigin: carried over from watches: Hormuz traffic.\n\n"
-           "## D\nOrigin: signals situation, helicopter incident.\n")
-    a, b, c, d = journal.parse_document(doc)
-    assert a["origin"] == "requested"
-    assert b["origin"] == "requested"
-    assert c["origin"] == "self"
-    assert d["origin"] == "self"
-
-
-def test_origin_matches_configured_owner_name(monkeypatch):
-    monkeypatch.setattr(journal, "owner", lambda: "Alex")
-    doc = "## A\nOrigin: Alex, 2026-06-11.\n\n## B\nOrigin: routine self check.\n"
-    a, b = journal.parse_document(doc)
-    assert a["origin"] == "requested"
-    assert b["origin"] == "self"
+           "## C\nOrigin: Alex asked, 2026-06-11.\n")
+    assert all(e["origin"] == "self" for e in journal.parse_document(doc))
 
 
 def test_slug_is_stable_and_kebab():

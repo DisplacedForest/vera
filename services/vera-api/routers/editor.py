@@ -6,11 +6,14 @@ research-topic mapping, and the journal-as-view rendering plus its resolve/fold 
 heavy LLM work (deep research, first-person synthesis) stays in pulse.py's `research_topic`;
 this module supplies the math and graph reads around it.
 """
+import logging
 import os
 import re
 from datetime import datetime, timezone
 
 from . import profile_graph_store as pg
+
+log = logging.getLogger(__name__)
 
 
 def _envf(name, default):
@@ -38,6 +41,23 @@ def _to_day(date_str):
         return datetime.strptime(str(date_str)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc).date()
     except (ValueError, TypeError):
         return None
+
+
+_DATE_TOKEN = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+
+
+def future_dated(text, today):
+    """True when `text` narrates a date strictly after `today` — a material fact is an
+    observation, so a future date in its body is fabricated history. Genuine future dates live
+    in the structured `resolve_condition` / `next_check` fields, never here."""
+    today_d = _to_day(today)
+    if today_d is None:
+        return False
+    for tok in _DATE_TOKEN.findall(text or ""):
+        d = _to_day(tok)
+        if d and d > today_d:
+            return True
+    return False
 
 
 def stale_current_claims(body, sources, today, max_age_days=None):
@@ -230,12 +250,16 @@ async def author_watch(label, *, facts=None, resolve_condition=None, next_check=
     so the runaway-accretion failure cannot recur. Returns the node id."""
     import time
     now = int(time.time()) if now is None else now
+    today = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d")
     fl = []
     for f in facts or []:
-        if isinstance(f, dict) and f.get("text"):
-            fl.append(f)
-        elif isinstance(f, str) and f.strip():
-            fl.append(pg.make_fact(f.strip(), source="journal:material", observed_at=now))
+        text = f.get("text") if isinstance(f, dict) else f
+        if not (isinstance(text, str) and text.strip()):
+            continue
+        if future_dated(text, today):
+            log.warning("dropped future-dated journal material for %r: %s", label, text.strip()[:120])
+            continue
+        fl.append(f if isinstance(f, dict) else pg.make_fact(text.strip(), source="journal:material", observed_at=now))
     fl.append(pg.make_fact(origin, source="journal:origin", observed_at=now))
     emb = embedding if embedding is not None else await pg.embed(label)
     return pg.merge_or_create(type="watch", label=label, embedding=emb, facts=fl, now=now,

@@ -223,6 +223,62 @@ def test_run_is_a_noop_when_nothing_is_new(monkeypatch):
     assert len(pg.all_nodes()) == 1             # no re-merge, no duplication
 
 
+def test_extract_returns_empty_when_vera_raises(monkeypatch):
+    async def boom(messages, temperature=0.2):
+        raise RuntimeError("llm endpoint down")
+
+    monkeypatch.setattr(ce, "_vera", boom)
+    assert asyncio.run(ce.extract("x")) == {"nodes": [], "edges": [], "threads": []}
+
+
+def test_run_isolates_a_failing_conversation_and_advances_cursor(monkeypatch):
+    convs = [
+        {"conv_id": "good1", "text": "a", "ts": 1_717_000_000, "source": "chatgpt"},
+        {"conv_id": "bad", "text": "b", "ts": 1_717_100_000, "source": "chatgpt"},
+        {"conv_id": "good2", "text": "c", "ts": 1_717_200_000, "source": "chatgpt"},
+    ]
+    _wire_run(monkeypatch, convs)
+    real_merge = ce.merge_conversation
+
+    async def maybe_fail(conv, extracted, now=None):
+        if conv["conv_id"] == "bad":
+            raise RuntimeError("merge blew up")
+        return await real_merge(conv, extracted, now=now)
+
+    monkeypatch.setattr(ce, "merge_conversation", maybe_fail)
+    counts = asyncio.run(ce.run())
+    assert counts["conversations"] == 2 and counts["failed"] == 1   # the bad one skipped, run continued
+    from routers import extract_store as es
+    assert es.get_cursor("chatgpt")["last_ts"] == 1_717_200_000     # advanced past the failure
+
+
+def test_run_checkpoints_cursor_per_conversation(monkeypatch):
+    # A run that aborts midway (after the second conversation) still leaves the cursor at the
+    # last conversation it finished, so a resume does not reprocess from zero.
+    convs = [
+        {"conv_id": "c1", "text": "a", "ts": 1_717_000_000, "source": "chatgpt"},
+        {"conv_id": "c2", "text": "b", "ts": 1_717_100_000, "source": "chatgpt"},
+        {"conv_id": "c3", "text": "c", "ts": 1_717_200_000, "source": "chatgpt"},
+    ]
+    _wire_run(monkeypatch, convs)
+    real_merge = ce.merge_conversation
+    seen = []
+
+    async def stop_after_two(conv, extracted, now=None):
+        if len(seen) >= 2:
+            raise KeyboardInterrupt   # simulate the process dying mid-run
+        seen.append(conv["conv_id"])
+        return await real_merge(conv, extracted, now=now)
+
+    monkeypatch.setattr(ce, "merge_conversation", stop_after_two)
+    try:
+        asyncio.run(ce.run())
+    except KeyboardInterrupt:
+        pass
+    from routers import extract_store as es
+    assert es.get_cursor("chatgpt")["last_ts"] == 1_717_100_000     # checkpointed at the 2nd, not 0
+
+
 def test_extraction_job_registered_in_scheduler():
     from routers import scheduler
     assert "conversation_extract" in scheduler.REGISTRY

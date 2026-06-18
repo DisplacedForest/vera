@@ -9,6 +9,7 @@ this module supplies the math and graph reads around it.
 import logging
 import os
 import re
+import time
 from datetime import datetime, timezone
 
 from . import profile_graph_store as pg
@@ -26,6 +27,7 @@ def _envf(name, default):
 STALE_CLAIM_DAYS = _envf("PULSE_STALE_CLAIM_DAYS", "120")   # a season; older sourcing fails a current claim
 LINK_ENGAGEMENT_FLOOR = _envf("PULSE_LINK_ENGAGEMENT_FLOOR", "0.5")  # an active neighbour worth surfacing
 LINK_LIMIT = int(_envf("PULSE_LINK_LIMIT", "4"))
+JOURNAL_ENGAGEMENT_FLOOR = _envf("JOURNAL_ENGAGEMENT_FLOOR", "0.5")  # a self-directed project worth a journal slot
 
 
 # --------------------------------------------------------------------------- date-aware staleness
@@ -190,18 +192,28 @@ def _archive(resolved_nodes):
     return [{"month": m, "text": "\n\n".join(by_month[m])} for m in sorted(by_month, reverse=True)]
 
 
+def _in_active_journal(node, now):
+    """Whether a non-resolved, non-dormant node belongs in the active journal: a watch always
+    does (a deliberate standing commitment); a project does only while its decayed engagement
+    clears JOURNAL_ENGAGEMENT_FLOOR."""
+    if node.get("type") == "watch":
+        return True
+    return pg.engagement_now(node, now) >= JOURNAL_ENGAGEMENT_FLOOR
+
+
 def journal_view(now=None):
     """The journal rendered from the Profile Graph's watch/project nodes — the node is the
     source of truth, the document is a view. Active nodes become entries (never-checked first,
     then soonest due); resolved nodes go to the archive. Returns the Swift contract:
     `{ok, entries:[{heading, slug, text, next_check, origin}], raw, archive}`."""
+    now = int(time.time()) if now is None else now
     active, resolved = [], []
     for t in _VIEW_TYPES:
         for n in pg.all_nodes(type=t):
             st = n.get("state")
             if st == "resolved":
                 resolved.append(n)
-            elif st not in _DORMANT:
+            elif st not in _DORMANT and _in_active_journal(n, now):
                 active.append(n)
     active.sort(key=lambda n: (n.get("next_check") is not None, n.get("next_check") or 0))
     entries = [{"heading": n["label"], "slug": _slug(n["label"]), "text": _entry_text(n),

@@ -13,6 +13,7 @@ pipeline tests offline.
 """
 import glob
 import json
+import logging
 import os
 import time
 from datetime import datetime, timezone
@@ -22,6 +23,8 @@ import aiohttp
 from . import extract_store as es
 from . import profile_graph_store as pg
 from .pulse import OWUI_BASE, _headers, _vera
+
+log = logging.getLogger(__name__)
 
 DUMP_ROOT = os.environ.get("CONVERSATION_DUMP_DIR", "")          # watched dir for ChatGPT/Claude.ai exports
 
@@ -195,10 +198,13 @@ def _parse_json(txt):
 
 async def extract(text):
     """The one irreducibly-LLM step: a conversation -> structured nodes/edges/threads. Returns
-    the empty shape on any parse failure, so a bad extraction skips its conversation and the run
-    continues."""
-    raw = await _vera([{"role": "system", "content": EXTRACT_SYS},
-                       {"role": "user", "content": text}], temperature=0.2)
+    the empty shape on any LLM or parse failure, so a bad extraction skips its conversation and
+    the run continues."""
+    try:
+        raw = await _vera([{"role": "system", "content": EXTRACT_SYS},
+                           {"role": "user", "content": text}], temperature=0.2)
+    except Exception:
+        return dict(_EMPTY)
     parsed = _parse_json(raw)
     if not isinstance(parsed, dict):
         return dict(_EMPTY)
@@ -275,21 +281,31 @@ async def _gather():
     return convs
 
 
+def _advance_cursor(src, ts):
+    """Move a source's cursor forward to `ts` (never backward), checkpointing progress."""
+    es.set_cursor(src, max(es.get_cursor(src)["last_ts"], ts or 0))
+
+
 async def run():
-    """Ingest every new conversation: extract -> merge -> advance the per-source cursors.
+    """Ingest every new conversation: extract -> merge -> checkpoint the source cursor.
     Oldest-first so a thread opened in one conversation can be resolved by a later one in the
-    same run. Returns aggregate counts."""
-    out = {"conversations": 0, "nodes": 0, "edges": 0, "threads": 0}
-    max_ts = {}
+    same run. Each conversation is isolated: a failure is logged, counted, and its cursor
+    advanced so a resume skips it; the cursor checkpoints per conversation so a crash or restart
+    resumes where it stopped. Returns aggregate counts."""
+    out = {"conversations": 0, "nodes": 0, "edges": 0, "threads": 0, "failed": 0}
     for conv in sorted(await _gather(), key=lambda c: c.get("ts") or 0):
-        extracted = await extract(conv["text"])
-        m = await merge_conversation(conv, extracted)
+        src = conv["source"]
+        try:
+            extracted = await extract(conv["text"])
+            m = await merge_conversation(conv, extracted)
+        except Exception:
+            log.exception("extract/merge failed for %s:%s", src, conv.get("conv_id"))
+            out["failed"] += 1
+            _advance_cursor(src, conv.get("ts"))
+            continue
         out["conversations"] += 1
         out["nodes"] += m["nodes"]
         out["edges"] += m["edges"]
         out["threads"] += m["threads"]
-        src = conv["source"]
-        max_ts[src] = max(max_ts.get(src, 0), conv.get("ts") or 0)
-    for src, ts in max_ts.items():
-        es.set_cursor(src, ts)
+        _advance_cursor(src, conv.get("ts"))
     return out

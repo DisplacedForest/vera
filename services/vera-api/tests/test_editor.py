@@ -209,6 +209,32 @@ def test_journal_view_resolved_node_goes_to_archive():
     assert any("Old thing" in a["text"] for a in v["archive"])
 
 
+def _project(nid, *, label=None, engagement=1.0, last_engaged=NOW, state="active"):
+    pg.upsert_node(id=nid, type="project", label=label or nid, state=state,
+                   engagement=engagement, last_engaged=last_engaged)
+
+
+def test_journal_view_drops_decayed_self_directed_project():
+    _project("dead", label="ESParser", engagement=5.0, last_engaged=NOW - 700 * 86400)
+    v = editor.journal_view(now=NOW)
+    assert all(e["heading"] != "ESParser" for e in v["entries"])   # decayed below floor, hidden
+
+
+def test_journal_view_keeps_engaged_project():
+    _project("live", label="Pulse v2", engagement=5.0, last_engaged=NOW)
+    v = editor.journal_view(now=NOW)
+    assert any(e["heading"] == "Pulse v2" for e in v["entries"])    # recently engaged, kept
+
+
+def test_journal_view_keeps_watch_despite_low_engagement():
+    _watch("w", label="Strait of Hormuz", origin="requested", next_check=NOW)
+    pg.upsert_node(id="w", type="watch", label="Strait of Hormuz", state="active",
+                   engagement=0.0, last_engaged=NOW - 700 * 86400,
+                   facts=[pg.make_fact("requested", source="journal:origin")])
+    v = editor.journal_view(now=NOW)
+    assert any(e["heading"] == "Strait of Hormuz" for e in v["entries"])   # commitment, kept
+
+
 def test_resolve_due_requires_both_condition_and_date():
     _watch("ready", resolve_condition="strait reopens", next_check=NOW - 10, satisfied=True)
     _watch("future", resolve_condition="x", next_check=NOW + 100000, satisfied=True)

@@ -104,8 +104,7 @@ class Tools:
         conversation ("keep an eye on lumber prices", "consolidate the Hormuz entry", "stop
         watching that"). Free — no confirmation; it's your own knowledge. You decide what the
         material means for the journal: it folds into the entry covering the same real-world
-        situation, becomes a new entry, or is skipped if it doesn't deserve a standing
-        commitment. ALWAYS read_journal first when the user references an existing entry, and
+        situation, or becomes a new entry. ALWAYS read_journal first when the user references an existing entry, and
         pass the relevant instruction/material here — never store journal-shaped material in
         memory or knowledge instead. `origin` is where the commitment came from; leave it empty
         when the user asked for it.
@@ -125,9 +124,5 @@ class Tools:
             await emit("Journal unreachable", True)
             return (f"Could not write to my journal right now ({type(e).__name__}); "
                     "is vera-api reachable?")
-        if r.get("skipped"):
-            await emit("Nothing committed", True)
-            return ("I judged this not worth a standing commitment, so the journal is "
-                    "unchanged. Commit it again with more context if you disagree.")
         await emit("Journal updated", True)
         return f"Journal updated: the entry '{r.get('heading')}' now carries this."

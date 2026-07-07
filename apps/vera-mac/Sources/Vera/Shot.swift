@@ -5,7 +5,11 @@ import AppKit
 /// permission needed. Used for design review (shots dropped into iCloud).
 @MainActor
 enum Shot {
-    static func render(view: String, to path: String) {
+    static func render(view: String, to path: String, appearance: String = "dark") {
+        // Both color systems must agree headlessly: NSApp.appearance resolves the dynamic
+        // NSColor brand tokens, the SwiftUI environment resolves the semantic colors.
+        let scheme: ColorScheme = appearance == "light" ? .light : .dark
+        NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let store = ChatStore()
         let size = CGSize(width: 1180, height: 760)
 
@@ -187,7 +191,7 @@ enum Shot {
             )
         }
 
-        let renderer = ImageRenderer(content: content)
+        let renderer = ImageRenderer(content: content.environment(\.colorScheme, scheme))
         renderer.scale = 2.0
         guard let nsImage = renderer.nsImage,
               let tiff = nsImage.tiffRepresentation,

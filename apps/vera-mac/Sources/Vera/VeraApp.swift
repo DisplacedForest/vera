@@ -51,7 +51,6 @@ struct VeraApp: App {
                 .environmentObject(config)
                 .environmentObject(updates)
                 .frame(minWidth: 920, minHeight: 600)
-                .preferredColorScheme(.dark)
                 .task { updates.start() }
         }
         .defaultSize(width: 1180, height: 760)
@@ -72,20 +71,4 @@ struct VeraApp: App {
                 .environmentObject(updates)
         }
     }
-}
-
-/// Grabs the hosting NSWindow once and gives it a transparent, full-size-content title bar so
-/// the full-height surfaces sit *under* a hidden title bar instead of being clipped by it.
-struct WindowConfigurator: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let v = NSView()
-        DispatchQueue.main.async {
-            guard let w = v.window else { return }
-            w.titlebarAppearsTransparent = true
-            w.titleVisibility = .hidden
-            w.styleMask.insert(.fullSizeContentView)
-        }
-        return v
-    }
-    func updateNSView(_ nsView: NSView, context: Context) {}
 }

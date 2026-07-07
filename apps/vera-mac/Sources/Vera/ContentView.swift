@@ -1,34 +1,59 @@
 import SwiftUI
 
+/// The sidebar's selectable destinations — nav surfaces, one conversation, or an Agentic pane.
+enum SidebarItem: Hashable {
+    case pulse, journal, memory
+    case convo(String)
+    case canvas, activity
+}
+
 struct ContentView: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var tools: ToolsStore
     @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
+    @State private var search = ""
+
+    /// The toolbar modality picker's view of `store.section`: any non-agentic surface reads
+    /// as Chat; picking a mode routes to that mode's home surface.
+    private var mode: Binding<AppSection> {
+        Binding(get: { store.section == .agentic ? .agentic : .chat },
+                set: { store.section = $0 == .agentic ? .agentic : .chat })
+    }
 
     var body: some View {
         ZStack {
-            HStack(spacing: 0) {
-                Sidebar().frame(width: 268).background(Theme.sidebar)
-                Rectangle().fill(Theme.hairline).frame(width: 1)
-                Group {
-                    switch store.section {
-                    case .chat: ChatPane().background(Theme.bg)
-                    case .pulse: PulseView()
-                    case .journal: JournalView()
-                    case .memory: MemoryView()
-                    case .agentic: AgenticView()
+            NavigationSplitView {
+                Sidebar(search: $search)
+                    .navigationSplitViewColumnWidth(min: 210, ideal: 248, max: 320)
+            } detail: {
+                HStack(spacing: 0) {
+                    Group {
+                        switch store.section {
+                        case .chat: ChatPane()
+                        case .pulse: PulseView()
+                        case .journal: JournalView()
+                        case .memory: MemoryView()
+                        case .agentic: AgenticView()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if store.showCanvas {
+                        Divider()
+                        CanvasPanel().frame(width: 480)
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if store.showCanvas {
-                    Rectangle().fill(Theme.hairline).frame(width: 1)
-                    CanvasPanel().frame(width: 480)
+                .background(Theme.ink)
+                .toolbar {
+                    ToolbarItem(placement: .navigation) {
+                        Picker("Mode", selection: mode) {
+                            Text("Chat").tag(AppSection.chat)
+                            Text("Agentic").tag(AppSection.agentic)
+                        }
+                        .pickerStyle(.segmented)
+                    }
                 }
             }
-            .ignoresSafeArea()
-            .background(WindowConfigurator())
-            .foregroundStyle(Theme.textPrimary)
             .task { await store.connect() }
             .task { await tools.load() }
             .task { await tools.start() }   // long-lived: consume the live tool-invocation feed
@@ -60,177 +85,94 @@ struct Placeholder: View {
 
 private struct Sidebar: View {
     @EnvironmentObject var store: ChatStore
-    @State private var search = ""
+    @Binding var search: String
 
     private var agenticTab: Bool { store.section == .agentic }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            // Brand + modality tabs
-            VStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    VeraMark(size: 18)
-                    Text("Vera").font(.system(size: 14, weight: .semibold))
-                    Spacer()
+    /// Bridges native list selection to the store's section / conversation / pane state.
+    private var selection: Binding<SidebarItem?> {
+        Binding(
+            get: {
+                switch store.section {
+                case .pulse: return .pulse
+                case .journal: return .journal
+                case .memory: return .memory
+                case .agentic: return store.agenticPane == .canvas ? .canvas : .activity
+                case .chat: return store.selectedID.map(SidebarItem.convo)
                 }
-                ModalityTabs(agenticActive: agenticTab,
-                             onChat: { store.section = .chat },
-                             onAgentic: { store.section = .agentic })
-            }
-            .padding(.horizontal, 12).padding(.top, 36).padding(.bottom, 10)
-
-            if agenticTab {
-                agenticNav
-            } else {
-                chatNav
-            }
-
-            Spacer(minLength: 0)
-            UpdateBanner()
-            AccountRow()
-        }
+            },
+            set: { item in
+                switch item {
+                case .pulse: store.goToPulse()
+                case .journal: store.section = .journal
+                case .memory: store.section = .memory
+                case .canvas: store.section = .agentic; store.agenticPane = .canvas
+                case .activity: store.section = .agentic; store.agenticPane = .activity
+                case .convo(let id): store.select(id)
+                case nil: break
+                }
+            })
     }
 
-    private var chatNav: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 1) {
-                navRow("New chat", "square.and.pencil", active: false, action: store.newConversation)
-                navRow("Pulse", "newspaper", active: store.section == .pulse) { store.goToPulse() }
-                navRow("Journal", "book.closed", active: store.section == .journal) { store.section = .journal }
-                navRow("Memory", "tray.full", active: store.section == .memory) { store.section = .memory }
-            }
-            .padding(.horizontal, 8)
-
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                TextField("Search", text: $search).textFieldStyle(.plain).font(.system(size: 13))
-            }
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal, 8).padding(.top, 8).padding(.bottom, 2)
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(store.sidebarGroups(search: search)) { group in
-                        Text(group.title.uppercased())
-                            .font(.system(size: 10, weight: .semibold)).tracking(0.5)
-                            .foregroundStyle(Theme.textSecondary.opacity(0.7))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 4)
+    var body: some View {
+        List(selection: selection) {
+            if agenticTab {
+                Section {
+                    Label("Canvas", systemImage: "point.3.connected.trianglepath.dotted")
+                        .tag(SidebarItem.canvas)
+                    Label("Activity", systemImage: "bolt").tag(SidebarItem.activity)
+                }
+            } else {
+                Section {
+                    Label("Pulse", systemImage: "newspaper").tag(SidebarItem.pulse)
+                    Label("Journal", systemImage: "book.closed").tag(SidebarItem.journal)
+                    Label("Memory", systemImage: "tray.full").tag(SidebarItem.memory)
+                }
+                ForEach(store.sidebarGroups(search: search)) { group in
+                    Section(group.title) {
                         ForEach(group.convos) { convo in
                             SidebarRow(convo: convo,
-                                       selected: store.section == .chat && convo.id == store.selectedID,
-                                       onSelect: { store.select(convo.id) },
                                        onPin: { store.togglePin(convo.id) },
                                        onDelete: { store.deleteConversation(convo.id) })
+                                .tag(SidebarItem.convo(convo.id))
                         }
                     }
                 }
-                .padding(.horizontal, 8).padding(.bottom, 10)
             }
         }
-    }
-
-    private var agenticNav: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 1) {
-                navRow("Canvas", "point.3.connected.trianglepath.dotted",
-                       active: store.agenticPane == .canvas) { store.agenticPane = .canvas }
-                navRow("Activity", "bolt",
-                       active: store.agenticPane == .activity) { store.agenticPane = .activity }
-            }
-            .padding(.horizontal, 8)
-            Spacer()
-        }
-    }
-
-    private func navRow(_ title: String, _ icon: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: icon).font(.system(size: 14)).frame(width: 18)
-                Text(title).font(.system(size: 13, weight: .medium))
+        .listStyle(.sidebar)
+        .searchable(text: $search, placement: .sidebar, prompt: "Search")
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 8) {
+                VeraMark(size: 18)
+                Text("Vera").font(.system(size: 14, weight: .semibold))
                 Spacer()
             }
-            .foregroundStyle(active ? Theme.textPrimary : Theme.textPrimary.opacity(0.82))
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(active ? Theme.surfaceHover : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .contentShape(Rectangle())
+            .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 6)
         }
-        .buttonStyle(.plain)
-    }
-}
-
-/// Top-of-sidebar modality tabs (Chat / Agentic), built to take a 3rd later.
-private struct ModalityTabs: View {
-    let agenticActive: Bool
-    var onChat: () -> Void
-    var onAgentic: () -> Void
-    var body: some View {
-        HStack(spacing: 3) {
-            tab("Chat", "message", active: !agenticActive, action: onChat)
-            tab("Agentic", "slider.horizontal.3", active: agenticActive, action: onAgentic)
-        }
-        .padding(3)
-        .background(Theme.bg)
-        .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
-    }
-    private func tab(_ title: String, _ icon: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 12, weight: .medium))
-                Text(title).font(.system(size: 12, weight: .medium))
-            }
-            .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
-            .frame(maxWidth: .infinity).padding(.vertical, 5)
-            .background(active ? Theme.surfaceHover : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// Bottom-of-sidebar account row — name from config, with the Settings affordance.
-private struct AccountRow: View {
-    @EnvironmentObject var config: ConfigStore
-    var body: some View {
-        let name = config.ownerName
-        HStack(spacing: 8) {
-            Circle().fill(Theme.accent).frame(width: 22, height: 22)
-                .overlay {
-                    if let initial = name?.first {
-                        Text(String(initial).uppercased())
-                            .font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
-                    } else {
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 10)).foregroundStyle(.white)
-                    }
+        .safeAreaInset(edge: .bottom, spacing: 0) { UpdateBanner() }
+        .toolbar {
+            ToolbarItem {
+                Button(action: store.newConversation) {
+                    Label("New chat", systemImage: "square.and.pencil")
                 }
-            Text(name ?? "Account").font(.system(size: 13, weight: .medium))
-            Spacer()
-            SettingsLink {
-                Image(systemName: "gearshape").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                .help("New chat")
             }
-            .buttonStyle(.plain).help("Settings (⌘,)")
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .overlay(Rectangle().fill(Theme.hairline).frame(height: 1), alignment: .top)
     }
 }
 
 struct SidebarRow: View {
     let convo: Conversation
-    let selected: Bool
-    var onSelect: () -> Void = {}
     var onPin: () -> Void = {}
     var onDelete: () -> Void = {}
     @State private var hovering = false
     var body: some View {
         HStack(spacing: 8) {
-            Text(convo.title).font(.system(size: 13)).lineLimit(1).foregroundStyle(Theme.textPrimary)
+            Text(convo.title).lineLimit(1)
             Spacer(minLength: 0)
+            // Hover only reveals the ⋯ menu — no hover background, since macOS drops
+            // onHover-exit events and would leave rows stuck looking selected.
             if hovering {
                 Menu {
                     Button(convo.pinned ? "Unpin" : "Pin", action: onPin)
@@ -245,14 +187,6 @@ struct SidebarRow: View {
                     .foregroundStyle(Theme.textSecondary).rotationEffect(.degrees(45))
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        // Only the active chat gets a fill, and it's accent-tinted so it clearly reads as selected
-        // (a faint grey was easy to miss). Hover only reveals the ⋯ menu — no hover background, since
-        // macOS drops onHover-exit events and would leave rows stuck looking selected.
-        .background(selected ? Theme.accent.opacity(0.20) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
         .onHover { hovering = $0 }
         .contextMenu {
             Button(convo.pinned ? "Unpin" : "Pin", action: onPin)
@@ -285,9 +219,7 @@ private struct ChatPane: View {
                                 .padding(.top, 2)
                             Color.clear.frame(height: 1).id("bottom")
                         }
-                        // 36 top clearance — the thread scrolls under the hidden title bar,
-                        // which otherwise clips the first message.
-                        .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 26)
+                        .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 26)
                         .frame(maxWidth: 760, alignment: .leading)
                         .frame(maxWidth: .infinity)
                     }
@@ -330,7 +262,7 @@ private struct ChatLoadingSkeleton: View {
             }
             Spacer()
         }
-        .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 26)
+        .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 26)
         .frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
         .opacity(on ? 0.45 : 0.9)
         .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { on = true } }

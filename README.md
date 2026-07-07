@@ -141,7 +141,7 @@ docker compose up -d
 docker compose logs vera-api | head -60    # the config report — what's wired, what's not
 ```
 
-**App** (macOS 14+): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, drag to Applications. The app is ad-hoc signed, so the first launch needs right-click → Open.
+**App** (macOS 26+; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, drag to Applications. The app is ad-hoc signed, so the first launch needs right-click → Open.
 
 Building either from source instead:
 

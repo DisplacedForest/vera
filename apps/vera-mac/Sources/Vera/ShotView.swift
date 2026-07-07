@@ -23,7 +23,6 @@ struct ShotView: View {
         }
         .frame(width: 1180, height: 760)
         .foregroundStyle(Theme.textPrimary)
-        .environment(\.colorScheme, .dark)
     }
 
     private var windowBody: some View {

@@ -112,11 +112,36 @@ def _normalize(values):
     return [v / top for v in values]
 
 
-def relevance_scores(seed_ids, now):
+def relevance_scores(seed_ids, now, similarities=None):
     """The per-candidate relevance term: spreading-activation relevance seeded at each
-    candidate's node, max-normalized across the run so the strongest candidate is 1.0."""
+    candidate's node, scaled by the candidate's content similarity when provided, then
+    max-normalized across the run so the strongest candidate is 1.0."""
     raw = [pg.relevance([sid], now) if sid else 0.0 for sid in seed_ids]
+    if similarities is not None:
+        raw = [r * s for r, s in zip(raw, similarities)]
     return _normalize(raw)
+
+
+def content_similarity(finding_emb, node_emb):
+    """cosine(finding, seed node) clamped to [0,1]; 1.0 when either embedding is missing
+    (relevance falls back to the seed node's graph relevance alone)."""
+    if not finding_emb or not node_emb:
+        return 1.0
+    return _clamp01(pg._cosine(finding_emb, node_emb))
+
+
+async def _node_embedding(nid, cache):
+    """The seed node's embedding for the similarity term: the persisted vector when the
+    node carries one, else computed and persisted via embed_node when embeddings are
+    wired; None otherwise. Cached per run."""
+    if nid in cache:
+        return cache[nid]
+    node = pg.get_node(nid) if nid else None
+    vec = (node or {}).get("embedding")
+    if vec is None and node is not None and pg.embeddings_configured():
+        vec = await pg.embed_node(nid)
+    cache[nid] = vec
+    return vec
 
 
 # --------------------------------------------------------------------------- opportunity
@@ -303,10 +328,13 @@ async def rank(candidates, *, now=None, recent_card_texts=None, classify=None, e
         if nov < NOVELTY_FLOOR:
             floored.append((c, nov))
             continue
-        scored.append({"cand": c, "novelty": nov})
+        scored.append({"cand": c, "novelty": nov, "emb": emb_v})
 
     wr, wn, wo, wu, ws = _weights()
-    rel = relevance_scores([s["cand"]["seed_node_id"] for s in scored], now)
+    node_embs = {}
+    sims = [content_similarity(s["emb"], await _node_embedding(s["cand"]["seed_node_id"], node_embs))
+            for s in scored]
+    rel = relevance_scores([s["cand"]["seed_node_id"] for s in scored], now, similarities=sims)
     for i, s in enumerate(scored):
         s["relevance"] = rel[i]
         cls = await classify(s["cand"]["finding_text"]) or {}

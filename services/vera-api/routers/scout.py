@@ -28,14 +28,19 @@ def _envi(name, default):
 
 ENGAGEMENT_FLOOR = _envf("SCOUT_ENGAGEMENT_FLOOR", "0.5")  # decayed engagement to count an interest live
 MAX_NODES = _envi("SCOUT_MAX_NODES", "12")                 # cap on nodes scouted per run
+EXCLUDED_TYPES = {t.strip() for t in                       # node types never scouted
+                  os.environ.get("SCOUT_EXCLUDED_TYPES", "person").split(",") if t.strip()}
 
 _DORMANT = {"dormant", "resolved"}
 
 
 def _is_live(node, now):
-    """Whether a node earns a scout this run, by graph math alone. A dormant or resolved node
-    is excluded; otherwise a node qualifies on its type's open/due condition (watch/project/
+    """Whether a node earns a scout this run, by graph math alone. Types in EXCLUDED_TYPES
+    (people are conversation context, not searchable topics) and dormant or resolved nodes
+    are excluded; otherwise a node qualifies on its type's open/due condition (watch/project/
     thread) or, for any other type, on decayed engagement clearing ENGAGEMENT_FLOOR."""
+    if node.get("type") in EXCLUDED_TYPES:
+        return False
     state = node.get("state")
     if state in _DORMANT:
         return False
@@ -271,7 +276,7 @@ class _RedditAdapter:
             return []
         data = await (fetch or _reddit_oauth_get)(
             token, f"{REDDIT_OAUTH}/search",
-            {"q": query, "sort": "new", "limit": REDDIT_MAX, "t": "month", "raw_json": 1})
+            {"q": query, "sort": "relevance", "limit": REDDIT_MAX, "t": "month", "raw_json": 1})
         out = []
         for ch in ((data.get("data") or {}).get("children") or [])[:REDDIT_MAX]:
             d = ch.get("data") or {}

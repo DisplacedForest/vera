@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from routers import actions, agentic, authoring, config_report, dreaming, feedback, groom_session, health, heartbeat, home, home_events, home_model, home_reconcile, images, integrations, journal, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, memory, overseerr, pulse, pulse_veins, research, scheduler, signals, updates, user_profile, vera_memory, vera_memory_groom, weather, websearch
+from routers import actions, agentic, authoring, config_report, dreaming, feedback, groom_session, health, heartbeat, home, home_events, home_model, home_reconcile, images, integrations, journal, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, memory, overseerr, pulse, pulse_veins, reminders, research, scheduler, signals, updates, user_profile, vera_memory, vera_memory_groom, weather, websearch
 
 # vera-api: ONE container, many capabilities.
 # To add a capability: create routers/<name>.py exposing `router` (an APIRouter
@@ -76,6 +76,7 @@ CAPABILITIES = {
     "actions": actions.router,
     "agentic": agentic.router,
     "overseerr": overseerr.router,
+    "reminders": reminders.router,
     "media_curation": media_curation.router,
     "research": research.router,
     "health": health.router,

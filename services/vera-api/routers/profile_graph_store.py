@@ -354,10 +354,18 @@ def relevance(seed_ids, now=None):
 # --------------------------------------------------------------------------- embeddings
 
 
+def _embeddings_cfg():
+    """The enabled embeddings integration's field values (url, model), or None. Resolution
+    (env wins, store carries runtime edits) lives in the integration registry."""
+    from . import integrations
+    return integrations.integration("embeddings")
+
+
 def embeddings_configured():
     """True when an embeddings endpoint is wired. The dedup/novelty math is sharper with
     one; unconfigured, callers fall back to an LLM canonicalization tie-break."""
-    return bool(os.environ.get("VERA_EMBED_URL", "").strip())
+    cfg = _embeddings_cfg()
+    return bool(cfg and cfg.get("url"))
 
 
 async def _embeddings_post(url, payload):
@@ -371,15 +379,15 @@ async def _embeddings_post(url, payload):
 
 
 async def embed(text):
-    """Embed `text` via the configured OpenAI-compatible /v1/embeddings endpoint, or return
-    None when no endpoint is set (graceful degradation, no LAN default). Read at call time so
-    a deployment can wire the endpoint without a restart."""
-    base = os.environ.get("VERA_EMBED_URL", "").strip().rstrip("/")
-    if not base:
+    """Embed `text` via the embeddings integration's OpenAI-compatible /v1/embeddings
+    endpoint, or return None when the integration is off (graceful degradation, no LAN
+    default). Resolved at call time so wiring the endpoint takes effect without a restart."""
+    cfg = _embeddings_cfg()
+    if not cfg or not cfg.get("url"):
         return None
-    model = os.environ.get("VERA_EMBED_MODEL", "").strip()
     try:
-        d = await _embeddings_post(f"{base}/embeddings", {"model": model, "input": text})
+        d = await _embeddings_post(f"{cfg['url']}/embeddings",
+                                   {"model": cfg.get("model", ""), "input": text})
         return (d.get("data") or [{}])[0].get("embedding")
     except Exception:
         return None

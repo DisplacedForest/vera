@@ -10,7 +10,7 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 | [Open WebUI](https://github.com/open-webui/open-webui) | Conversations, memory, tool execution | Yes |
 | **Vera.app** (this repo) | The native macOS client; complete pointed at Open WebUI alone | Recommended |
 | **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse veins, signals, weather, kitchen, research, heartbeat, scheduler, actions) | Optional |
-| Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG) | Each unlocks a capability | No |
+| Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
 | Satellite services (voice, image, vision, coder) | Reference implementations of documented HTTP contracts | No |
 
 ## 1. Prerequisites
@@ -101,6 +101,7 @@ Each integration unlocks its capability when its test passes; each degrades to "
 | Overseerr | Media requests from chat, availability checks; the Media vein's weekly curation digest (experimental, consent-gated) | |
 | Unraid | Confirm-gated container updates, host actuation, update digests | Official Unraid API (GraphQL) with an API key |
 | SearXNG | Web search for chat, research, Pulse, signals | Strongly recommended; run it next to vera-api |
+| Embeddings | Pulse novelty ranking and the duplicate-finding floor, profile-graph node embeddings for dedup-merge | Any OpenAI-compatible `POST {base}/v1/embeddings` endpoint; the model id is only needed for multi-model servers (llama-swap, hosted APIs). The LLM server can serve this too |
 
 ## 6. Satellite services (all optional)
 

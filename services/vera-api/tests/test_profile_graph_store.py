@@ -168,9 +168,32 @@ def test_embed_returns_none_when_unconfigured(monkeypatch):
 
 def test_embeddings_configured_flag(monkeypatch):
     monkeypatch.delenv("VERA_EMBED_URL", raising=False)
+    monkeypatch.delenv("VERA_EMBED_MODEL", raising=False)
     assert pg.embeddings_configured() is False
     monkeypatch.setenv("VERA_EMBED_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("VERA_EMBED_MODEL", "emb-model")
     assert pg.embeddings_configured() is True
+
+
+def test_embed_resolves_through_integration_store(monkeypatch, tmp_path):
+    from routers import integrations_store as ist
+    monkeypatch.setattr(ist, "PATH", str(tmp_path / "integrations.json"))
+    monkeypatch.delenv("VERA_EMBED_URL", raising=False)
+    monkeypatch.delenv("VERA_EMBED_MODEL", raising=False)
+    ist.update("embeddings", fields={"url": "https://host/v1", "model": "emb"})
+
+    captured = {}
+
+    async def fake_post(url, payload):
+        captured["url"] = url
+        captured["payload"] = payload
+        return {"data": [{"embedding": [0.5, 0.5]}]}
+
+    monkeypatch.setattr(pg, "_embeddings_post", fake_post)
+    assert pg.embeddings_configured() is True
+    assert asyncio.run(pg.embed("hello")) == [0.5, 0.5]
+    assert captured["url"] == "https://host/v1/embeddings"
+    assert captured["payload"] == {"model": "emb", "input": "hello"}
 
 
 def test_embed_posts_and_parses_when_configured(monkeypatch):

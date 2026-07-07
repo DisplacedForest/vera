@@ -24,16 +24,16 @@ enum VeraResources {
     }
 }
 
-/// The Vera flame mark — the bare flame on a transparent background (`vera-flame.png`),
-/// used inside the app. The dock / app icon is the full tiled `vera-logo.png`, generated
-/// into `Vera.icns` by `scripts/package.sh`. Falls back to the accent circle so headless
-/// renders / missing-resource builds never break.
+/// The Vera astrolabe mark — a copper navigation star in a graduated ring on a transparent
+/// background (`vera-mark.png`), used inside the app. The dock / app icon is the full ink
+/// tile `vera-icon.png`, generated into `Vera.icns` by `scripts/package.sh`. Falls back to
+/// the accent circle so headless renders / missing-resource builds never break.
 enum Brand {
-    /// The bare flame on transparency — used inside the app UI.
-    static let flame: NSImage? = load("vera-flame")
-    /// The full tiled app icon (dark background baked in) — used as the Dock icon when running
-    /// unbundled (`swift run`); the packaged `.app` uses `Vera.icns` instead.
-    static let icon: NSImage? = load("vera-logo")
+    /// The bare mark on transparency — used inside the app UI.
+    static let glyph: NSImage? = load("vera-mark")
+    /// The full ink-tile app icon — used as the Dock icon when running unbundled
+    /// (`swift run`); the packaged `.app` uses `Vera.icns` instead.
+    static let icon: NSImage? = load("vera-icon")
 
     private static func load(_ name: String) -> NSImage? {
         guard let url = VeraResources.url(name, ext: "png"),
@@ -55,7 +55,7 @@ enum Brand {
     }
 }
 
-/// The Vera flame mark at a given size — no background tile, so it sits directly on the UI.
+/// The Vera astrolabe mark at a given size — no background tile, so it sits directly on the UI.
 /// Falls back to a filled accent circle. When `animated` is true it breathes in place — scale +
 /// opacity + a soft accent glow only, never rotation or layout movement. The loop is a
 /// phaseAnimator that exists only on the animated branch, so it is structurally incapable of
@@ -67,8 +67,8 @@ struct VeraMark: View {
 
     private var glyph: some View {
         Group {
-            if let flame = Brand.flame {
-                Image(nsImage: Brand.mark(flame, size: size)).frame(width: size, height: size)
+            if let glyph = Brand.glyph {
+                Image(nsImage: Brand.mark(glyph, size: size)).frame(width: size, height: size)
             } else {
                 Circle().fill(Theme.accent).frame(width: size, height: size)
             }
@@ -83,7 +83,7 @@ struct VeraMark: View {
                     view
                         .scaleEffect(phase ? 1.06 : 0.94)
                         .opacity(phase ? 1.0 : 0.7)
-                        .shadow(color: Theme.accent.opacity(phase ? 0.55 : 0.15), radius: 7)
+                        .shadow(color: Theme.accentGlow.opacity(phase ? 0.55 : 0.15), radius: 7)
                 } animation: { _ in .easeInOut(duration: 0.85) }
         } else {
             glyph

@@ -31,7 +31,7 @@ struct VeraAskCard: View {
                 Button(action: submit) {
                     Text("Send").font(.system(size: 13, weight: .semibold))
                         .padding(.horizontal, 16).padding(.vertical, 7)
-                        .background(canSubmit ? Theme.accent : Theme.surfaceHover)
+                        .background(canSubmit ? Theme.accent : Theme.surface)
                         .foregroundStyle(canSubmit ? .white : Theme.textSecondary)
                         .clipShape(Capsule())
                 }
@@ -64,7 +64,7 @@ struct VeraAskCard: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(on ? Theme.accent.opacity(0.12) : Theme.surfaceHover)
+            .background(on ? Theme.accent.opacity(0.12) : Theme.surface)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(on ? Theme.accent.opacity(0.5) : Color.clear, lineWidth: 1))
         }

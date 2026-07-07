@@ -37,9 +37,9 @@ struct AuthedAsyncImage: View {
                 Image(nsImage: image).resizable()
                     .aspectRatio(contentMode: natural ? .fit : contentMode)
             } else if natural {
-                Theme.surfaceHover.frame(height: placeholderHeight)
+                Theme.surface.frame(height: placeholderHeight)
             } else {
-                Theme.surfaceHover
+                Theme.surface
             }
         }
         .task(id: url) { await load() }

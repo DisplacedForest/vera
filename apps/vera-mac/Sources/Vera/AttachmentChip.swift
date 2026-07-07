@@ -80,12 +80,12 @@ struct AttachmentChipView: View {
                 Text(att.status == .failed ? "FAILED" : att.ext)
                     .font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 4))
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
             }
         }
         .padding(10)
         .frame(width: 152, height: 76, alignment: .topLeading)
-        .background(Theme.bg)
+        .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
     }
@@ -108,7 +108,7 @@ struct SentAttachmentsBar: View {
                             .foregroundStyle(Theme.textPrimary).lineLimit(2)
                         Text(a.ext).font(.system(size: 8, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                             .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 4))
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
                     }
                     .padding(8).frame(width: 130, height: 64, alignment: .topLeading)
                     .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
@@ -124,7 +124,7 @@ struct Skeleton: View {
     @State private var phase: CGFloat = -1
     var body: some View {
         RoundedRectangle(cornerRadius: 6)
-            .fill(Theme.surfaceHover)
+            .fill(Color.primary.opacity(0.08))
             .overlay(
                 GeometryReader { geo in
                     LinearGradient(colors: [.clear, Color.white.opacity(0.12), .clear],

@@ -268,7 +268,7 @@ private struct ChatLoadingSkeleton: View {
         .onAppear { withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { on = true } }
     }
     private func bar(_ w: CGFloat?) -> some View {
-        RoundedRectangle(cornerRadius: 6).fill(Theme.surfaceHover).frame(height: 12)
+        RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)).frame(height: 12)
             .frame(maxWidth: w ?? .infinity, alignment: .leading)
     }
 }
@@ -359,9 +359,10 @@ struct MessageRow: View {
                     if !message.text.isEmpty {
                         Text(message.text)
                             .font(.system(size: 14)).textSelection(.enabled)
+                            .foregroundStyle(.white)
                             .padding(.horizontal, 14).padding(.vertical, 10)
                             .background(Theme.userBubble)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                 }
             }
@@ -430,7 +431,7 @@ struct ComposerField: View {
                     Image(systemName: "plus").font(.system(size: 14, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(width: 28, height: 28)
-                        .background(Theme.surfaceHover).clipShape(Circle())
+                        .background(.quaternary, in: Circle())
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Add files or photos (⌘U)")
@@ -440,14 +441,15 @@ struct ComposerField: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                         .frame(width: 28, height: 28)
-                        .background(Theme.surfaceHover).clipShape(Circle())
+                        .background(.quaternary, in: Circle())
                 }
                 .buttonStyle(.plain)
                 .help("Voice mode")
                 Button(action: store.send) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 26))
-                        .foregroundStyle(canSend ? Theme.accent : Theme.textSecondary)
+                        .foregroundStyle(store.generating ? Theme.accentGlow
+                                         : (canSend ? Theme.accent : Theme.textSecondary))
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSend)
@@ -457,10 +459,9 @@ struct ComposerField: View {
                 .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16)
-            .stroke(dropTargeted ? Theme.accent : Theme.hairline, lineWidth: dropTargeted ? 2 : 1))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .stroke(dropTargeted ? Theme.accent : .clear, lineWidth: 2))
         .onAppear { focused = true }
         .onChange(of: store.focusTick) { _, _ in focused = true }
         .dropDestination(for: URL.self) { urls, _ in

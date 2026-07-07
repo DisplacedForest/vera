@@ -85,7 +85,8 @@ struct ProseMarkdown: View {
     var body: some View {
         Markdown(SourceFormatter.apply(text))
             .markdownTextStyle { ForegroundColor(Theme.textPrimary); FontSize(14) }
-            .markdownTextStyle(\.code) { FontFamilyVariant(.monospaced); BackgroundColor(Theme.surfaceHover) }
+            .markdownTextStyle(\.code) { FontFamilyVariant(.monospaced); BackgroundColor(Theme.surface) }
+            .markdownTextStyle(\.link) { ForegroundColor(Theme.accent) }
             .textSelection(.enabled)
     }
 }
@@ -180,7 +181,7 @@ struct ToolGroupChip: View {
                 }
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 9).padding(.vertical, 4)
-                .background(Theme.surfaceHover).clipShape(Capsule())
+                .background(.quaternary, in: Capsule())
             }
             .buttonStyle(.plain)
             if open {

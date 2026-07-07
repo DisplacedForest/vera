@@ -1,0 +1,3 @@
+fastapi
+uvicorn
+pyobjc-framework-EventKit

@@ -80,6 +80,25 @@ def test_abandoned_open_project_decayed_out_is_not_live():
     assert scout.select_live_nodes(nodes=nodes, now=NOW) == []
 
 
+def test_person_nodes_never_scouted():
+    nodes = [
+        _node(id="partner", type="person", engagement=9.0, last_engaged=NOW),
+        _node(id="hobby", engagement=2.0, last_engaged=NOW),
+    ]
+    picked = [n["id"] for n in scout.select_live_nodes(nodes=nodes, now=NOW)]
+    assert picked == ["hobby"]
+
+
+def test_excluded_types_env_honored(monkeypatch):
+    monkeypatch.setattr(scout, "EXCLUDED_TYPES", {"person", "location"})
+    nodes = [
+        _node(id="evansville", type="location", engagement=3.0, last_engaged=NOW),
+        _node(id="hobby", engagement=2.0, last_engaged=NOW),
+    ]
+    picked = [n["id"] for n in scout.select_live_nodes(nodes=nodes, now=NOW)]
+    assert picked == ["hobby"]
+
+
 def test_ranked_by_decayed_engagement_and_capped(monkeypatch):
     monkeypatch.setattr(scout, "MAX_NODES", 2)
     nodes = [
@@ -170,6 +189,25 @@ def test_reddit_oauth_adapter_parses(monkeypatch):
     assert c["title"] == "Growing hazelnuts in zone 6"
     assert c["url"].endswith("/r/permaculture/comments/x1/")
     assert c["published_date"] == "2024-05-29"
+
+
+def test_reddit_searches_by_relevance(monkeypatch):
+    from routers import integrations
+    monkeypatch.setattr(integrations, "integration",
+                        lambda iid: {"client_id": "cid", "client_secret": "sec"} if iid == "reddit" else None)
+
+    async def token_fn(cid, sec):
+        return "tok"
+
+    seen = {}
+
+    async def fetch(token, url, params):
+        seen["params"] = params
+        return {"data": {"children": []}}
+
+    _run(scout.adapters["reddit"].search("q", SEED, NOW, token_fn=token_fn, fetch=fetch))
+    assert seen["params"]["sort"] == "relevance"
+    assert seen["params"]["t"] == "month"
 
 
 def test_reddit_skipped_without_creds(monkeypatch):

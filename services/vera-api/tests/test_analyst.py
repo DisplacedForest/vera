@@ -195,6 +195,35 @@ def _cand(finding, url, seed, published=None):
             "published_date": published, "source": "news", "seed_node_id": seed}
 
 
+def test_content_similarity_clamps_and_degrades():
+    assert analyst.content_similarity(None, [1.0]) == 1.0
+    assert analyst.content_similarity([1.0], None) == 1.0
+    assert analyst.content_similarity([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+    assert analyst.content_similarity([1.0, 0.0], [-1.0, 0.0]) == 0.0
+
+
+def test_rank_relevance_scaled_by_content_similarity():
+    pg.upsert_node(id="n", type="interest", label="n", engagement=2.0,
+                   last_engaged=NOW, embedding=[1.0, 0.0])
+    embed = _emb({"near": [1.0, 0.0], "far": [0.0, 1.0]})
+    cands = [_cand("near", "un", "n"), _cand("far", "uf", "n")]
+    out = _run(analyst.rank(cands, now=NOW, recent_card_texts=[], embed=embed,
+                            classify=_classify({}), max_per_interest=5))
+    scores = {c["url"]: c["scores"]["relevance"] for c in out["considered"]}
+    assert scores["un"] > scores["uf"]
+    assert scores["un"] == pytest.approx(1.0)
+
+
+def test_rank_relevance_falls_back_when_node_unembedded():
+    _seed_node("n", 2.0)
+    embed = _emb({"near": [1.0, 0.0], "far": [0.0, 1.0]})
+    cands = [_cand("near", "un", "n"), _cand("far", "uf", "n")]
+    out = _run(analyst.rank(cands, now=NOW, recent_card_texts=[], embed=embed,
+                            classify=_classify({}), max_per_interest=5))
+    scores = {c["url"]: c["scores"]["relevance"] for c in out["considered"]}
+    assert scores["un"] == scores["uf"]
+
+
 def test_rank_floors_near_duplicate_before_classify():
     _seed_node("n", 1.0)
     seen = []

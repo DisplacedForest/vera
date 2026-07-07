@@ -119,6 +119,7 @@ Every external dependency is a configuration slot with defined behavior when emp
 | Grocy / Mealie | Kitchen inventory, expiry, recipes (pairing unlocks suggestions) | Kitchen tools off |
 | Overseerr | Media requests, weekly curation digest (consent-gated) | Media vein unavailable |
 | Unraid | Container updates, host actuation | Those update sources drop from System |
+| Apple Reminders | Reminders lists read/write from chat, shared lists included (EventKit bridge on a Mac signed into iCloud) | Reminders tools off |
 | FRED / EIA keys | Credit-spread and grid-stress signals | Those collectors skip cleanly |
 
 <details>
@@ -126,7 +127,7 @@ Every external dependency is a configuration slot with defined behavior when emp
 
 <br>
 
-One Linux server runs Open WebUI, vera-api, SearXNG, and an RTX 3090 serving the main model via llama-swap. A Mac Studio runs the MLX satellite services (image generation, vision, the dream/coder model) on demand, and a Mac mini runs voice. A single capable machine can run the entire stack, and any component can be replaced by a hosted equivalent by changing one URL.
+One Linux server runs Open WebUI, vera-api, SearXNG, and an RTX 3090 serving the main model via llama-swap. A Mac Studio runs the MLX satellite services (image generation, vision, the dream/coder model) on demand, and a Mac mini runs voice and the Apple Reminders bridge. A single capable machine can run the entire stack, and any component can be replaced by a hosted equivalent by changing one URL.
 
 </details>
 

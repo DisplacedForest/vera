@@ -157,6 +157,15 @@ REGISTRY: dict[str, dict] = {
         ],
         "unlocks": ["Reddit as a Pulse research source (reddit-native search via the official API)"],
     },
+    "apple_reminders": {
+        "display_name": "Apple Reminders",
+        "fields": [
+            {"id": "url", "env": "VERA_REMINDERS_URL", "label": "Bridge URL", "secret": False,
+             "hint": "the vera-reminders bridge on a Mac signed into iCloud "
+                     "(services/vera-reminders, default port 8132)"},
+        ],
+        "unlocks": ["read and write Reminders lists from chat, shared lists included"],
+    },
 }
 
 # Legacy kill-switches: these env vars can force a feature OFF (back-compat with
@@ -368,6 +377,15 @@ async def _probe(iid: str, v: dict) -> dict:
                     vec = (((body or {}).get("data") or [{}])[0] or {}).get("embedding")
                     ok = r.status == 200 and isinstance(vec, list) and len(vec) > 0
                     return {"ok": ok, "detail": f"embedding dim {len(vec)}" if ok else f"HTTP {r.status}"}
+            if iid == "apple_reminders":
+                async with s.get(f"{url}/health") as r:
+                    body = await r.json(content_type=None)
+                    granted = bool((body or {}).get("reminders_access"))
+                    ok = r.status == 200 and granted
+                    detail = ("bridge up, Reminders access granted" if ok else
+                              "bridge up, Reminders access NOT granted" if r.status == 200
+                              else f"HTTP {r.status}")
+                    return {"ok": ok, "detail": detail}
             if iid == "reddit":
                 async with s.post("https://www.reddit.com/api/v1/access_token",
                                   auth=aiohttp.BasicAuth(v.get("client_id", ""), v.get("client_secret", "")),

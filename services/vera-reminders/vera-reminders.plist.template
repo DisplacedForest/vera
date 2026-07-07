@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd agent for vera-reminders: starts the bridge at login and keeps it alive.
+     IMPORTANT: launchd cannot read ~/Desktop (TCC-protected), so the runtime is DEPLOYED
+     out of the repo to ~/vera-reminders (holds the source, the .venv, and the built
+     VeraReminders.app). The service launches through the .app so macOS attributes the
+     Reminders permission to com.vera.reminders and shows the prompt. Repo is source.
+     Deploy + install on the bridge host: scripts/deploy-vera-reminders.sh -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.vera.reminders</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@HOME@/vera-reminders/dist/VeraReminders.app/Contents/MacOS/VeraReminders</string>
+  </array>
+  <key>WorkingDirectory</key><string>@HOME@/vera-reminders</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>@HOME@/Library/Logs/vera-reminders.log</string>
+  <key>StandardErrorPath</key><string>@HOME@/Library/Logs/vera-reminders.err</string>
+</dict>
+</plist>

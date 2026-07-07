@@ -60,6 +60,12 @@
       "summary": "Describe and read attached images and PDFs (Qwen3-VL vision model).",
       "use_when": "The user attaches an image or document and asks about it.",
       "avoid_when": "No image/doc attached. Runs on the on-demand vision worker - unavailable when it is offline."
+    },
+    {
+      "tool": "reminders", "node": "api->bridge",
+      "summary": "Apple Reminders read/write through the EventKit bridge (shared lists included).",
+      "use_when": "The user asks what is on a reminders or shopping list, wants an item added, or wants one checked off.",
+      "avoid_when": "Kitchen inventory or Grocy stock questions (use kitchen_status), or the reminders integration is unconfigured."
     }
   ]
 }

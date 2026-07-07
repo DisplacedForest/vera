@@ -102,6 +102,7 @@ Each integration unlocks its capability when its test passes; each degrades to "
 | Unraid | Confirm-gated container updates, host actuation, update digests | Official Unraid API (GraphQL) with an API key |
 | SearXNG | Web search for chat, research, Pulse, signals | Strongly recommended; run it next to vera-api |
 | Embeddings | Pulse novelty ranking and the duplicate-finding floor, profile-graph node embeddings for dedup-merge | Any OpenAI-compatible `POST {base}/v1/embeddings` endpoint; the model id is only needed for multi-model servers (llama-swap, hosted APIs). The LLM server can serve this too |
+| Apple Reminders | Reminders lists read/write from chat, shared lists included | URL of the `vera-reminders` bridge (see satellite services below) |
 
 ## 6. Satellite services (all optional)
 
@@ -113,6 +114,17 @@ These are **documented HTTP contracts** with reference implementations in this r
 | Vision | OpenAI chat completions with `image_url` content parts | Any MLX/vLLM-served VLM; see `services/vera-vision` for the launchd template |
 | Dream/coder | OpenAI `/v1` with tool calling (`DREAM_TOOL_PROTOCOL=mlx` for servers that don't emit `tool_calls`) | `services/vera-coder` |
 | Voice | Wyoming protocol (ASR + TTS) plus a small batch HTTP API | `services/vera-voice`; install with `scripts/deploy-vera-voice.sh` |
+| Reminders | Small HTTP API over EventKit: `/health`, `/lists`, `/reminders` | `services/vera-reminders`; install with `scripts/deploy-vera-reminders.sh` |
+
+The Reminders bridge is the one slot that must run on a **Mac signed into the iCloud
+account whose lists Vera should see** — EventKit is Apple's only supported door into
+Reminders, and it sees shared lists, so items added by Siri on any household device
+appear and Vera's writes sync back to everyone. Bring-up: run the deploy script on that
+Mac, approve the one-time Reminders permission prompt in a GUI session (Screen Sharing
+works), verify `/health` reports `reminders_access: true`, then enable the Apple
+Reminders integration with the bridge URL. For chat access, install
+`services/owui-tools/reminders.py` as an Open WebUI tool and set its default-list valve
+to the list Vera should assume (your shopping list, say) when none is named.
 
 Every satellite env var (models, ports, voices, paths) is documented in `.env.example`'s
 companion-services section; voice installs with one command (`scripts/deploy-vera-voice.sh` —

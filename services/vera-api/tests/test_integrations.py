@@ -19,7 +19,7 @@ from routers import integrations_store as ist  # noqa: E402
 _ENV_VARS = ["GROCY_URL", "GROCY_API_KEY", "MEALIE_URL", "MEALIE_API_KEY",
              "HOME_ASSISTANT_URL", "HOME_ASSISTANT_TOKEN", "OVERSEERR_URL",
              "OVERSEERR_API_KEY", "UNRAID_API_URL", "UNRAID_API_KEY", "SEARXNG_URL",
-             "VERA_EMBED_URL", "VERA_EMBED_MODEL",
+             "VERA_EMBED_URL", "VERA_EMBED_MODEL", "VERA_REMINDERS_URL",
              "HOME_EVENTS_ENABLED", "MEDIA_CURATION_ENABLED", "HOME_STATE"]
 
 
@@ -209,6 +209,18 @@ def test_scheduler_manual_run_refused_when_gated():
     with pytest.raises(Exception) as e:
         asyncio.run(sch.run_job("media_curate"))
     assert getattr(e.value, "status_code", None) == 409
+
+
+# --- apple_reminders -----------------------------------------------------------------------
+
+def test_apple_reminders_unconfigured_off():
+    assert ig.integration("apple_reminders") is None
+    assert _entry("apple_reminders")["status"] == "unconfigured"
+
+
+def test_apple_reminders_env_enabled(monkeypatch):
+    monkeypatch.setenv("VERA_REMINDERS_URL", "http://bridge.example/")
+    assert ig.integration("apple_reminders") == {"url": "http://bridge.example"}
 
 
 # --- audit fix: FEMA skip ------------------------------------------------------------------

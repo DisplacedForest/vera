@@ -1,15 +1,50 @@
 import SwiftUI
+import AppKit
 
-/// ChatGPT-desktop-inspired dark palette. Kept in one place so every surface stays consistent.
+extension Color {
+    /// A dynamic color that resolves per the effective NSAppearance (window or NSApp),
+    /// so brand values adapt wherever the view renders — packaged app or headless shots.
+    init(light: String, dark: String) {
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            let hex = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(hex: hex)
+        })
+    }
+}
+
+extension NSColor {
+    /// `#RRGGBB` to an sRGB color.
+    convenience init(hex: String) {
+        let s = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        var v: UInt64 = 0
+        Scanner(string: s).scanHexInt64(&v)
+        self.init(srgbRed: CGFloat((v >> 16) & 0xFF) / 255,
+                  green: CGFloat((v >> 8) & 0xFF) / 255,
+                  blue: CGFloat(v & 0xFF) / 255, alpha: 1)
+    }
+}
+
+/// The Astrolabe palette — midnight ink structure, copper instrument accent, parchment
+/// reading surface in light mode. Brand values are dynamic (dark/light); text and rules
+/// defer to system semantics so vibrancy and accessibility behave natively.
 enum Theme {
-    static let bg = Color(red: 0.13, green: 0.13, blue: 0.14)          // app background
-    static let sidebar = Color(red: 0.10, green: 0.10, blue: 0.11)     // left rail
-    static let surface = Color(red: 0.17, green: 0.17, blue: 0.19)     // cards / composer
-    static let surfaceHover = Color(red: 0.22, green: 0.22, blue: 0.24)
-    static let assistantBubble = Color(red: 0.17, green: 0.17, blue: 0.19)
-    static let userBubble = Color(red: 0.20, green: 0.31, blue: 0.55)
-    static let accent = Color(red: 0.40, green: 0.55, blue: 0.95)
-    static let textPrimary = Color(red: 0.93, green: 0.93, blue: 0.94)
-    static let textSecondary = Color(red: 0.62, green: 0.62, blue: 0.66)
-    static let hairline = Color.white.opacity(0.07)
+    /// Window ground: midnight ink / warm parchment.
+    static let ink = Color(light: "#FAF5EA", dark: "#101623")
+    /// Cards and wells: vellum / bezel. Prefer `.regularMaterial` where the surface sits over glass.
+    static let surface = Color(light: "#F0E8D8", dark: "#1D2433")
+    /// A slightly elevated surface for hover and selection fills.
+    static let surfaceHover = Color(light: "#E8DEC9", dark: "#273044")
+    /// Copper: selection, buttons, send, links.
+    static let accent = Color(light: "#A05A2C", dark: "#C77B4A")
+    /// Burnish: the generation shimmer and "new" badges.
+    static let accentGlow = Color(light: "#C77B4A", dark: "#E8A97E")
+    /// The one filled message container.
+    static let userBubble = Color(light: "#A05A2C", dark: "#8A5230")
+    static let textPrimary = Color.primary
+    static let textSecondary = Color(light: "#75695A", dark: "#96A2B3")
+    static let hairline = Color(nsColor: .separatorColor)
+
+    static let bg = ink
+    static let sidebar = ink
+    static let assistantBubble = surface
 }

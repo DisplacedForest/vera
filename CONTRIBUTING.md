@@ -81,6 +81,7 @@ For UI work, render any view headlessly and inspect it:
 
 ```sh
 .build/debug/Vera --shot /tmp/view.png --view pulse   # chat | pulse | memory | plugins | agentic | voice | onboarding | settings …
+.build/debug/Vera --shot /tmp/view-light.png --view pulse --appearance light   # render either appearance (default dark)
 ```
 
 Run all of the above before opening a PR. CI runs the same suites on every PR and must be green to merge.

@@ -6,7 +6,8 @@ let arguments = CommandLine.arguments
 if let idx = arguments.firstIndex(of: "--shot"), idx + 1 < arguments.count {
     let path = arguments[idx + 1]
     let view = arguments.firstIndex(of: "--view").map { arguments[$0 + 1] } ?? "chat"
-    await Shot.render(view: view, to: path)
+    let appearance = arguments.firstIndex(of: "--appearance").map { arguments[$0 + 1] } ?? "dark"
+    await Shot.render(view: view, to: path, appearance: appearance)
 } else if let idx = arguments.firstIndex(of: "--voice-e2e"), idx + 1 < arguments.count {
     // DEBUG-ONLY: stream a sample wav through the real Wyoming servers, print transcript.
     await SelfTest.voiceE2E(wavPath: arguments[idx + 1])

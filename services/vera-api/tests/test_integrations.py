@@ -19,6 +19,7 @@ from routers import integrations_store as ist  # noqa: E402
 _ENV_VARS = ["GROCY_URL", "GROCY_API_KEY", "MEALIE_URL", "MEALIE_API_KEY",
              "HOME_ASSISTANT_URL", "HOME_ASSISTANT_TOKEN", "OVERSEERR_URL",
              "OVERSEERR_API_KEY", "UNRAID_API_URL", "UNRAID_API_KEY", "SEARXNG_URL",
+             "VERA_EMBED_URL", "VERA_EMBED_MODEL",
              "HOME_EVENTS_ENABLED", "MEDIA_CURATION_ENABLED", "HOME_STATE"]
 
 
@@ -65,6 +66,24 @@ def test_env_beats_store(monkeypatch):
 def test_store_configured_works_without_env():
     _put("grocy", fields={"url": "http://runtime", "api_key": "k"})
     assert ig.integration("grocy")["url"] == "http://runtime"
+
+
+def test_embeddings_store_configured_resolves():
+    ist.update("embeddings", fields={"url": "http://emb.example/v1/", "model": "m1"})
+    assert ig.integration("embeddings") == {"url": "http://emb.example/v1", "model": "m1"}
+
+
+def test_embeddings_unconfigured_is_none():
+    assert ig.integration("embeddings") is None
+    assert _entry("embeddings")["status"] == "unconfigured"
+
+
+def test_embeddings_env_configured_means_enabled(monkeypatch):
+    monkeypatch.setenv("VERA_EMBED_URL", "http://llm.example/v1")
+    monkeypatch.setenv("VERA_EMBED_MODEL", "qwen3-embedding")
+    assert ig.integration("embeddings") == {"url": "http://llm.example/v1",
+                                            "model": "qwen3-embedding"}
+    assert _entry("embeddings")["status"] == "enabled"
 
 
 def test_runtime_disable_wins_over_configured(monkeypatch):

@@ -133,6 +133,19 @@ REGISTRY: dict[str, dict] = {
         ],
         "unlocks": ["web search for chat, research, Pulse, and signals news"],
     },
+    "embeddings": {
+        "display_name": "Embeddings",
+        "fields": [
+            {"id": "url", "env": "VERA_EMBED_URL", "label": "OpenAI-compatible /v1 base URL", "secret": False,
+             "hint": "any /v1 endpoint serving POST /v1/embeddings (llama.cpp, vLLM, llama-swap, "
+                     "or a hosted API)"},
+            {"id": "model", "env": "VERA_EMBED_MODEL", "label": "Embedding model id", "secret": False,
+             "optional": True, "hint": "required by multi-model servers (llama-swap, hosted APIs); "
+                                       "single-model servers ignore it"},
+        ],
+        "unlocks": ["Pulse novelty ranking and the duplicate-finding floor",
+                    "profile-graph node embeddings for dedup-merge"],
+    },
     "reddit": {
         "display_name": "Reddit",
         "fields": [
@@ -348,6 +361,13 @@ async def _probe(iid: str, v: dict) -> dict:
                 async with s.get(url, params={"q": "connection test", "format": "json"}) as r:
                     ok = r.status == 200
                     return {"ok": ok, "detail": "search responding" if ok else f"HTTP {r.status}"}
+            if iid == "embeddings":
+                payload = {"model": v.get("model", ""), "input": "vera connection probe"}
+                async with s.post(f"{url}/embeddings", json=payload) as r:
+                    body = await r.json(content_type=None)
+                    vec = (((body or {}).get("data") or [{}])[0] or {}).get("embedding")
+                    ok = r.status == 200 and isinstance(vec, list) and len(vec) > 0
+                    return {"ok": ok, "detail": f"embedding dim {len(vec)}" if ok else f"HTTP {r.status}"}
             if iid == "reddit":
                 async with s.post("https://www.reddit.com/api/v1/access_token",
                                   auth=aiohttp.BasicAuth(v.get("client_id", ""), v.get("client_secret", "")),

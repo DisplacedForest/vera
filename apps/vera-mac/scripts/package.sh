@@ -8,7 +8,7 @@ cd "$APP_ROOT"
 
 NAME="Vera"
 BUNDLE_ID="app.vera.mac"
-LOGO="Sources/Vera/Resources/vera-logo.png"
+LOGO="Sources/Vera/Resources/vera-icon.png"
 BUILD_DIR="build"
 APP="$BUILD_DIR/$NAME.app"
 # Single repo-wide version: prefer the root VERSION file, fall back to the app-local one.
@@ -17,7 +17,7 @@ BUILD_NUM="$(git rev-parse --short HEAD 2>/dev/null || echo 0)"
 
 echo "==> Vera $VERSION ($BUILD_NUM)"
 
-# 1. Icon: vera-logo.png -> Vera.icns
+# 1. Icon: vera-icon.png -> Vera.icns
 echo "==> Icon"
 ICONSET="$BUILD_DIR/Vera.iconset"
 rm -rf "$ICONSET" && mkdir -p "$ICONSET"
@@ -55,7 +55,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$BUILD_NUM</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSMicrophoneUsageDescription</key><string>Vera listens to your voice for hands-free conversation.</string>

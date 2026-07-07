@@ -325,11 +325,11 @@ enum SelfTest {
             // Resource bundle must resolve in THIS layout (packaged .app or .build binary) —
             // the generated Bundle.module accessor varies by toolchain and has shipped builds
             // that only resolve on the machine that built them.
-            guard VeraResources.bundle != nil, Brand.flame != nil,
+            guard VeraResources.bundle != nil, Brand.glyph != nil,
                   VeraResources.url("mermaid.min", ext: "js") != nil else {
-                print("SELFTEST ERROR: resource bundle unresolved (flame/mermaid missing)"); exit(1)
+                print("SELFTEST ERROR: resource bundle unresolved (mark/mermaid missing)"); exit(1)
             }
-            print("  resources OK (bundle resolved, flame + mermaid present)")
+            print("  resources OK (bundle resolved, mark + mermaid present)")
 
             // Chat history graph: automation-written chats store turns only in
             // history.messages (id-keyed, parent-linked); the thread follows currentId.

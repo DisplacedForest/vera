@@ -59,8 +59,7 @@ struct PulseDetailView: View {
                 }
                 detailBtn("xmark", action: onClose)
             }
-            // 36 top — the overlay sits under the hidden title bar, which clips anything closer.
-            .padding(.top, 36).padding(.horizontal, 16).padding(.bottom, 16)
+            .padding(.top, 16).padding(.horizontal, 16).padding(.bottom, 16)
         }
         .onAppear { store.markPulseRead(card) }   // opening the detail IS the read event
     }
@@ -193,7 +192,7 @@ struct PulseParagraph: View {
         VStack(alignment: .leading, spacing: 8) {
             Markdown(SourceFormatter.apply(text))
                 .markdownTextStyle { ForegroundColor(Theme.textPrimary); FontSize(15) }
-                .markdownTextStyle(\.code) { FontFamilyVariant(.monospaced); BackgroundColor(Theme.surfaceHover) }
+                .markdownTextStyle(\.code) { FontFamilyVariant(.monospaced); BackgroundColor(Theme.surface) }
                 .textSelection(.enabled)
             let chips = refs.compactMap { n in sources.first { $0.n == n } }
             if !chips.isEmpty {
@@ -304,7 +303,7 @@ struct GroomChangeSetView: View {
             }
         }
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     /// The concrete summary line(s) shown un-expanded: the result for promote/archive/codify, the
@@ -385,7 +384,7 @@ struct GroomChangeSetView: View {
             }
         }
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     @ViewBuilder private func flaggedControls(_ item: PulseDigestItem, _ state: String) -> some View {
@@ -408,7 +407,7 @@ struct GroomChangeSetView: View {
             Text(label).font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(filled ? Color.white : Theme.textPrimary)
                 .padding(.horizontal, 10).padding(.vertical, 4)
-                .background(filled ? Theme.accent : Theme.surfaceHover).clipShape(Capsule())
+                .background(filled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.quaternary), in: Capsule())
         }
         .buttonStyle(.plain).pointerCursor()
     }
@@ -484,7 +483,7 @@ struct MediaDigestView: View {
             controls(item, state)
         }
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     @ViewBuilder private func poster(_ item: PulseDigestItem) -> some View {
@@ -497,7 +496,7 @@ struct MediaDigestView: View {
             }
         }
         .frame(width: 46, height: 69)
-        .background(Theme.surfaceHover)
+        .background(.quaternary)
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
@@ -530,7 +529,7 @@ struct MediaDigestView: View {
             }
             .foregroundStyle(filled ? Color.white : Theme.textPrimary)
             .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(filled ? Theme.accent : Theme.surfaceHover).clipShape(Capsule())
+            .background(filled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.quaternary), in: Capsule())
         }
         .buttonStyle(.plain).pointerCursor()
     }
@@ -613,7 +612,7 @@ struct UpdatesDigestView: View {
             controls(item, state)
         }
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     @ViewBuilder private func controls(_ item: PulseDigestItem, _ state: String) -> some View {

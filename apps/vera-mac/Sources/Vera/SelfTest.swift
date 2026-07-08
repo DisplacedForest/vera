@@ -412,6 +412,60 @@ enum SelfTest {
                 print("SELFTEST ERROR: vein draft tool stripping"); exit(1)
             }
             print("  vein builder OK (\(SchedulePreset.allCases.count) presets, draft round-trip, tool strip)")
+
+            let engineBaseCases: [(String?, String?, Int, String?)] = [
+                ("local", "http://remote:8089", 9000, "http://127.0.0.1:9000"),
+                ("off", "http://remote:8089", 8089, nil),
+                ("remote", "http://remote:8089", 8089, "http://remote:8089"),
+                (nil, "http://remote:8089", 8089, "http://remote:8089"),
+                (nil, "", 8089, nil),
+                (nil, nil, 8089, nil),
+            ]
+            for (m, r, p, want) in engineBaseCases {
+                let got = OWUIConfig.effectiveVeraAPIBase(mode: m, remote: r, port: p)?.absoluteString
+                guard got == want else {
+                    print("SELFTEST ERROR: effective base mode=\(m ?? "nil") remote=\(r ?? "nil") = \(got ?? "nil"), want \(want ?? "nil")")
+                    exit(1)
+                }
+            }
+
+            guard EngineManager.needsEngineUpdate(installed: nil, app: "0.3.0"),
+                  EngineManager.needsEngineUpdate(installed: "0.2.0", app: "0.3.0"),
+                  !EngineManager.needsEngineUpdate(installed: "0.3.0", app: "0.3.0") else {
+                print("SELFTEST ERROR: engine version-compare decision"); exit(1)
+            }
+
+            guard EngineManager.versionsToPrune(["0.1.0", "0.2.0", "0.3.0", "0.0.9"]).sorted() == ["0.0.9", "0.1.0"],
+                  EngineManager.versionsToPrune(["0.2.0", "0.3.0"]).isEmpty else {
+                print("SELFTEST ERROR: engine version prune selection"); exit(1)
+            }
+
+            guard EngineManager.sha256Hex(Data("abc".utf8)) ==
+                    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" else {
+                print("SELFTEST ERROR: engine sha256"); exit(1)
+            }
+            let goodSha = String(repeating: "a", count: 64) + "  vera-api-macos-arm64.zip\n"
+            guard EngineManager.expectedSha(fromAsset: goodSha) == String(repeating: "a", count: 64),
+                  EngineManager.expectedSha(fromAsset: "not a hash") == nil else {
+                print("SELFTEST ERROR: engine sha asset parse"); exit(1)
+            }
+
+            guard let engineTpl = EngineManager.plistTemplate() else {
+                print("SELFTEST ERROR: engine plist template missing from bundle"); exit(1)
+            }
+            let fakeHome = "/home/tester"
+            let binPath = "\(fakeHome)/.vera/engine/0.3.0/vera-api/vera-api"
+            let renderedPlist = EngineManager.renderPlist(engineTpl, home: fakeHome,
+                                                          binaryPath: binPath, port: 8123)
+            guard renderedPlist.contains("<string>\(binPath)</string>"),
+                  renderedPlist.contains("<key>VERA_PORT</key><string>8123</string>"),
+                  renderedPlist.contains("<string>\(fakeHome)/.vera/data</string>"),
+                  renderedPlist.contains("<string>\(fakeHome)/.vera/engine/engine.log</string>"),
+                  renderedPlist.contains("<string>com.vera.engine</string>"),
+                  !renderedPlist.contains("@") else {
+                print("SELFTEST ERROR: engine plist render"); exit(1)
+            }
+            print("  local engine OK (\(engineBaseCases.count) base cases, version-compare, prune, sha256, plist render)")
         } catch {
             print("SELFTEST ERROR: \(error)")
             exit(1)

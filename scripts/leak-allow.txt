@@ -5,3 +5,7 @@
 # Synthetic UniFi gateway fixture in the knowledge-merge test. 10.0.0.1 is a generic
 # default-gateway example, not household infrastructure (the home LAN is a different range).
 ^services/vera-api/tests/test_knowledge_groom\.py:[0-9]+:.*10\.0\.0\.1
+
+# Published SHA-256 test vector for the string "abc" in the engine self-test. A fixed
+# standard checksum used to verify the hashing helper, not a credential.
+^apps/vera-mac/Sources/Vera/SelfTest\.swift:[0-9]+:.*ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad

@@ -146,6 +146,8 @@ docker compose logs vera-api | head -60    # the config report — what's wired,
 
 **Backend without Docker** (macOS arm64): each release also ships `vera-api-macos-arm64.zip`, a self-contained engine binary — verify the checksum, unzip, run; data lands in `~/.vera/data` (see `docs/SETUP.md`).
 
+**Backend on the Mac, app-managed** (macOS arm64): in the app, Settings, Services, Engine, **On this Mac** downloads and runs that same engine as a checksum-verified background service on `127.0.0.1`, points the app at it, and keeps it in step with app updates. No Docker and no terminal (see `docs/SETUP.md`).
+
 Building either from source instead:
 
 ```sh

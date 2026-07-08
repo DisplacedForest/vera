@@ -53,6 +53,17 @@ struct OWUIConfig: Sendable {
         return obj
     }
 
+    static func effectiveVeraAPIBase(mode: String?, remote: String?, port: Int) -> URL? {
+        let trimmedRemote = remote?.trimmingCharacters(in: .whitespaces)
+        let hasRemote = (trimmedRemote?.isEmpty == false)
+        let resolved = mode ?? (hasRemote ? "remote" : "off")
+        switch resolved {
+        case "local": return URL(string: "http://127.0.0.1:\(port)")
+        case "off": return nil
+        default: return hasRemote ? URL(string: trimmedRemote!) : nil
+        }
+    }
+
     static func load() -> OWUIConfig? {
         let env = ProcessInfo.processInfo.environment
         let file = ConfigFile.read()
@@ -69,13 +80,19 @@ struct OWUIConfig: Sendable {
         // OWUI proxies chat completions itself, so the raw path is derivable from the base.
         let compURL = value("VERA_COMPLETIONS_URL", "completions_url").flatMap(URL.init(string:))
             ?? u.appendingPathComponent("api/chat/completions")
+        let enginePort = (file["engine_port"] as? Int)
+            ?? Int((file["engine_port"] as? String)?.trimmingCharacters(in: .whitespaces) ?? "")
+            ?? 8089
+        let effectiveAPIBase = effectiveVeraAPIBase(mode: file["engine_mode"] as? String,
+                                                    remote: value("VERA_API_BASE", "vera_api_base"),
+                                                    port: enginePort)
         return OWUIConfig(baseURL: u, apiKey: k,
                           // No baked-in model id: unset stays empty and Settings/onboarding
                           // surface it as required.
                           model: value("VERA_MODEL", "model") ?? "",
                           completionsURL: compURL,
                           voiceBase: value("VERA_VOICE_BASE", "voice_base").flatMap(URL.init(string:)),
-                          veraAPIBase: value("VERA_API_BASE", "vera_api_base").flatMap(URL.init(string:)),
+                          veraAPIBase: effectiveAPIBase,
                           email: value("OWUI_EMAIL", "owui_email"),
                           password: value("OWUI_PASSWORD", "owui_password"),
                           ownerName: value("VERA_OWNER_NAME", "owner_name"),

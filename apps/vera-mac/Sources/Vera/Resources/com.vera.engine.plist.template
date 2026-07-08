@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.vera.engine</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@BINARY@</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VERA_DATA_DIR</key><string>@HOME@/.vera/data</string>
+    <key>VERA_BIND</key><string>127.0.0.1</string>
+    <key>VERA_PORT</key><string>@PORT@</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>@HOME@/.vera/engine/engine.log</string>
+  <key>StandardErrorPath</key><string>@HOME@/.vera/engine/engine.log</string>
+</dict>
+</plist>

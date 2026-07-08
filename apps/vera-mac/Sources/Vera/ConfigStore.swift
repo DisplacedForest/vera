@@ -68,6 +68,16 @@ final class ConfigStore: ObservableObject {
         Binding(get: { self[key] }, set: { self[key] = $0 })
     }
 
+    /// The app-wide appearance override from the `appearance` key: `"light"`/`"dark"` pin a
+    /// scheme, anything else follows the system (nil).
+    var colorSchemeOverride: ColorScheme? {
+        switch self["appearance"] {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
+    }
+
     /// The active environment override for a key, if one is set (it wins over the file value).
     func envOverride(_ key: String) -> String? {
         guard let name = Self.envNames[key] else { return nil }

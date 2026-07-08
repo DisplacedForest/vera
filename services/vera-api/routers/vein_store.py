@@ -73,6 +73,15 @@ def load() -> dict:
         return doc
 
 
+def remove(kind: str) -> None:
+    """Drop one vein's runtime state entirely."""
+    with _lock:
+        doc = _read()
+        if kind in doc:
+            del doc[kind]
+            _save(doc)
+
+
 def update(kind: str, *, enabled: bool | None = None, options: dict | None = None,
            providers: dict | None = None) -> None:
     """Merge one vein's runtime state."""

@@ -100,6 +100,14 @@ private struct IdentityTab: View {
                 ConfigField(label: "Your name", key: "owner_name", placeholder: "how Vera greets you",
                             tip: "Drives the greeting and the sidebar chip. Leave empty for a nameless greeting.")
             }
+            Section("Appearance") {
+                Picker("Appearance", selection: config.binding("appearance")) {
+                    Text("System").tag("")
+                    Text("Light").tag("light")
+                    Text("Dark").tag("dark")
+                }
+                .pickerStyle(.segmented)
+            }
             SaveSection()
         }
         .formStyle(.grouped)

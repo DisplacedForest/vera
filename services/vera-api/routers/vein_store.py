@@ -5,10 +5,6 @@ groups) lives in pulse_veins.py; this store holds only what a deployment chooses
 runtime: per-vein `enabled`, option values, and provider config. Nothing is enabled
 by default — an empty store means an empty chip row.
 
-One-time seeding: on the first load of a deployment whose producers are demonstrably
-configured (home coordinates set, integrations enabled), those veins seed enabled so
-an upgrade keeps its chip row; a genuinely fresh install seeds nothing.
-
 Writes are atomic (tmp file + rename) so a crash mid-save never corrupts the store.
 """
 
@@ -60,17 +56,8 @@ def _save(doc: dict) -> None:
 
 
 def load() -> dict:
-    """The whole document: {kind: {enabled: bool, options: {..}, providers: {..}},
-    "_seeded": true}. Runs the one-time seeding pass on first load."""
     with _lock:
-        doc = _read()
-        if not doc.get("_seeded"):
-            from . import pulse_veins
-            for kind, state in pulse_veins.seed_states().items():
-                doc.setdefault(kind, {}).update(state)
-            doc["_seeded"] = True
-            _save(doc)
-        return doc
+        return _read()
 
 
 def remove(kind: str) -> None:
@@ -94,5 +81,4 @@ def update(kind: str, *, enabled: bool | None = None, options: dict | None = Non
             row.setdefault("options", {}).update(options)
         if providers:
             row.setdefault("providers", {}).update(providers)
-        doc.setdefault("_seeded", True)  # an explicit edit is a configured deployment
         _save(doc)

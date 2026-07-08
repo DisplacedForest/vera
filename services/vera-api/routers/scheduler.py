@@ -398,10 +398,6 @@ async def _loop():
 
 async def start():
     global _task
-    # Settle the vein store's one-time seeding decision now, before any job runs —
-    # jobs write data artifacts that would otherwise read as a prior deployment.
-    from . import vein_store
-    vein_store.load()
     if ENABLED and _task is None:
         _task = asyncio.create_task(_loop())
         log.info("scheduler running (%d jobs, poll %ds, tz %s)", len(REGISTRY), _POLL_SECONDS, TZ)

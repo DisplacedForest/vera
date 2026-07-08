@@ -426,7 +426,7 @@ struct ShotView: View {
         let graph = AgenticGraph.mock()
         let jobs = Dictionary(uniqueKeysWithValues: SchedulerJob.mock().map { ($0.id, $0) })
         let pulses = [
-            CanvasPulse(id: "shot-weather", flowID: "weather", surfaceID: "veins",
+            CanvasPulse(id: "shot-rivergauge", flowID: "vein_rivergauge", surfaceID: "veins",
                         startedAt: Date().addingTimeInterval(-CanvasPulse.duration / 2)),
             CanvasPulse(id: "shot-heartbeat", flowID: "heartbeat", surfaceID: "memory",
                         startedAt: Date().addingTimeInterval(-CanvasPulse.duration / 2)),

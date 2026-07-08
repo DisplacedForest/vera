@@ -204,7 +204,7 @@ def test_scheduler_jobs_inherit_feature_gates(monkeypatch):
         assert sch._effective(ungated, None)["gated"] is None
 
 
-def test_scheduler_manual_run_refused_when_gated():
+def test_scheduler_manual_run_refused_when_gated(vein_shapes):
     from routers import scheduler as sch
     with pytest.raises(Exception) as e:
         asyncio.run(sch.run_job("vein_media"))

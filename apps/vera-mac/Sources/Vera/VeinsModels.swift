@@ -57,6 +57,8 @@ struct VeinEntry: Identifiable, Hashable, Sendable {
     var providers: [VeinProvider]
     var options: [VeinOptionGroup]
     var jobs: [VeinJob]
+    var exposed: Bool = true
+    var requiresUnmet: [VeinRequirement] = []
 
     /// Tolerant decode of one catalog entry. Unknown fields degrade to blanks, never fake data.
     static func parse(_ j: [String: Any]) -> VeinEntry? {
@@ -100,6 +102,11 @@ struct VeinEntry: Identifiable, Hashable, Sendable {
                            enabled: (jb["enabled"] as? Bool) ?? false,
                            gated: jb["gated"] as? String)
         }
+        let requiresUnmet: [VeinRequirement] = (j["requires_unmet"] as? [[String: Any]] ?? []).map { r in
+            let idv = r["id"] as? String
+            return VeinRequirement(label: (r["label"] as? String) ?? "", met: false, detail: "",
+                                   integration: (idv?.isEmpty == false) ? idv : nil)
+        }
         return VeinEntry(kind: kind,
                          label: (j["label"] as? String) ?? kind,
                          icon: (j["icon"] as? String) ?? "rectangle.dashed",
@@ -107,10 +114,10 @@ struct VeinEntry: Identifiable, Hashable, Sendable {
                          nominalLabel: (j["nominal_label"] as? String) ?? "quiet",
                          enabled: (j["enabled"] as? Bool) ?? false,
                          canEnable: (j["can_enable"] as? Bool) ?? false,
-                         requires: requires, providers: providers, options: options, jobs: jobs)
+                         requires: requires, providers: providers, options: options, jobs: jobs,
+                         exposed: (j["exposed"] as? Bool) ?? true, requiresUnmet: requiresUnmet)
     }
 
-    /// Demo entries for headless `--shot` renders (mixed states; mirrors the API shape).
     static func mock() -> [VeinEntry] {
         [
             VeinEntry(kind: "rivergauge", label: "River gauge", icon: "water.waves",
@@ -142,16 +149,18 @@ struct VeinEntry: Identifiable, Hashable, Sendable {
                       jobs: [VeinJob(id: "vein_geopolitics", label: "Geopolitics run",
                                      cron: "0 */6 * * *", enabled: false,
                                      gated: "the Geopolitics vein is off. Enable it in Veins.")]),
+        ]
+    }
+
+    static func browseMock() -> [VeinEntry] {
+        [
             VeinEntry(kind: "pantry", label: "Pantry", icon: "basket",
                       blurb: "a weekly restock digest from your inventory",
-                      nominalLabel: "stocked", enabled: false, canEnable: false,
-                      requires: [VeinRequirement(label: "inventory service", met: false,
-                                                 detail: "connect an inventory source in Plugins",
-                                                 integration: nil)],
+                      nominalLabel: "stocked", enabled: false, canEnable: false, requires: [],
                       providers: [], options: [],
-                      jobs: [VeinJob(id: "vein_pantry", label: "Pantry digest",
-                                     cron: "0 9 * * 0", enabled: false,
-                                     gated: "the Pantry vein is off. Enable it in Veins.")]),
+                      jobs: [], exposed: false,
+                      requiresUnmet: [VeinRequirement(label: "Grocy", met: false, detail: "",
+                                                      integration: "grocy")]),
         ]
     }
 }
@@ -166,8 +175,12 @@ struct VeinsClient: Sendable {
         case unreachable
     }
 
-    func fetch() async -> Fetch {
-        var req = URLRequest(url: base.appendingPathComponent("/pulse/veins/catalog"))
+    func fetch(all: Bool = false) async -> Fetch {
+        var comps = URLComponents(url: base.appendingPathComponent("/pulse/veins/catalog"),
+                                  resolvingAgainstBaseURL: false)
+        if all { comps?.queryItems = [URLQueryItem(name: "all", value: "true")] }
+        guard let url = comps?.url else { return .unreachable }
+        var req = URLRequest(url: url)
         req.timeoutInterval = 8
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               let code = (resp as? HTTPURLResponse)?.statusCode else { return .unreachable }

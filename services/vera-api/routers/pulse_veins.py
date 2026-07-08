@@ -19,7 +19,7 @@ dynamically as vein_<kind>, and POST /pulse/veins/{kind}/run executes it on dema
 import os
 
 import aiohttp
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from . import vein_defs, vein_schema, vein_store
@@ -163,6 +163,25 @@ def gate_reason(kind: str) -> str | None:
     return None
 
 
+def _is_shipped(kind: str) -> bool:
+    return any(l["kind"] == kind for l in VEINS)
+
+
+def _requires_unmet(spec: dict) -> list[dict]:
+    if not _is_shipped(spec["kind"]):
+        return []
+    out = []
+    for r in spec.get("requires", []):
+        st = _requirement_state(r)
+        if not st["met"]:
+            out.append({"kind": st["kind"], "id": st.get("integration", ""), "label": st["label"]})
+    return out
+
+
+def exposed(spec: dict) -> bool:
+    return not _is_shipped(spec["kind"]) or not _requires_unmet(spec)
+
+
 # --------------------------------------------------------------------- API
 
 class VeinUpdate(BaseModel):
@@ -203,9 +222,10 @@ def _entry(spec: dict, doc: dict) -> dict:
     out = {
         "kind": kind, "label": spec["label"], "icon": spec["icon"], "order": spec["order"],
         "nominal_label": spec["nominal_label"], "blurb": spec["blurb"],
-        "origin": "shipped" if any(l["kind"] == kind for l in VEINS) else "custom",
+        "origin": "shipped" if _is_shipped(kind) else "custom",
         "enabled": bool(state.get("enabled")),
         "requires": reqs, "can_enable": all(r["met"] for r in reqs),
+        "exposed": exposed(spec), "requires_unmet": _requires_unmet(spec),
         "providers": [{**{k: s.get(k, "") for k in ("id", "label", "hint", "default")},
                        "value": provs.get(s["id"], "")} for s in spec.get("providers", [])],
         "options": [{"group": g["group"],
@@ -222,11 +242,12 @@ def _entry(spec: dict, doc: dict) -> dict:
 
 
 @router.get("/pulse/veins/catalog", tags=["pulse"])
-async def catalog():
-    """Every vein definition merged with its runtime state — the Veins pane's feed."""
+async def catalog(all_: bool = Query(default=False, alias="all")):
     doc = vein_store.load()
-    return {"veins": [_entry(l, doc) for l in sorted(_defs().values(), key=lambda x: x["order"])],
-            "active": len(enabled_kinds()), "cap": MAX_ACTIVE,
+    entries = [_entry(l, doc) for l in sorted(_defs().values(), key=lambda x: x["order"])]
+    if not all_:
+        entries = [e for e in entries if e["exposed"]]
+    return {"veins": entries, "active": len(enabled_kinds()), "cap": MAX_ACTIVE,
             "load_report": vein_defs.load_report()}
 
 

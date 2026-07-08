@@ -57,6 +57,14 @@ final class VeinsStore: ObservableObject {
         guard let client else { return [("test", false, "vera-api isn't configured")] }
         return await client.test(kind: kind)
     }
+
+    func browse() async -> [VeinEntry] {
+        guard let client else { return [] }
+        if case .ok(let list, _, _) = await client.fetch(all: true) {
+            return list.filter { !$0.exposed }
+        }
+        return []
+    }
 }
 
 /// The Veins pane — which ambient watch veins run, each scoped and scheduled to taste.
@@ -67,7 +75,7 @@ struct VeinsView: View {
     @StateObject private var veins = VeinsStore()
     @State private var editing: VeinEntry?
     @State private var builderConfigured = false
-    @State private var builderModel: BuilderModel?
+    @State private var browsing = false
 
     // A vein's unmet requirement points at Plugins, now a Settings tab: select it, then open Settings.
     private func openPlugins() {
@@ -103,9 +111,9 @@ struct VeinsView: View {
             VeinSheet(entry: entry, veins: veins,
                       openPlugins: openPlugins)
         }
-        .sheet(item: $builderModel) { model in
-            VeinBuilderView(model: model,
-                            onCreated: { Task { await veins.refresh() } })
+        .sheet(isPresented: $browsing) {
+            VeinBrowseSheet(veins: veins, base: config.resolved?.veraAPIBase,
+                            builderConfigured: builderConfigured, openPlugins: openPlugins)
         }
     }
 
@@ -120,9 +128,9 @@ struct VeinsView: View {
                     .background(Theme.surface).clipShape(Capsule())
             }
             Spacer()
-            if builderConfigured, case .ready = veins.phase {
-                Button { builderModel = BuilderModel(base: config.resolved?.veraAPIBase) } label: {
-                    Label("Build a new vein", systemImage: "wand.and.stars")
+            if case .ready = veins.phase {
+                Button { browsing = true } label: {
+                    Label("Add vein", systemImage: "plus")
                         .font(.system(size: 13, weight: .medium))
                 }
                 .buttonStyle(.plain).foregroundStyle(Theme.accent)
@@ -490,6 +498,128 @@ struct VeinSheet: View {
     }
 }
 
+struct VeinBrowseSheet: View {
+    @ObservedObject var veins: VeinsStore
+    let base: URL?
+    let builderConfigured: Bool
+    var openPlugins: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var unexposed: [VeinEntry] = []
+    @State private var loading = true
+    @State private var builder: BuilderModel?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "plus.rectangle.on.rectangle").font(.system(size: 16))
+                Text("Add a vein").font(.system(size: 16, weight: .semibold))
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+            .padding(16)
+            Divider().overlay(Theme.hairline)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    startRow(icon: "wand.and.stars", title: "Build a new vein",
+                             note: "Describe a watch in your own words and Vera drafts it.",
+                             enabled: builderConfigured) { builder = BuilderModel(base: base) }
+                    startRow(icon: "square.and.arrow.down", title: "Import from file",
+                             note: "Add a vein someone shared with you. Coming soon.",
+                             enabled: false) {}
+
+                    if loading {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Checking what else this Vera can run…")
+                                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        }
+                        .padding(.top, 6)
+                    } else if !unexposed.isEmpty {
+                        Text("AVAILABLE WITH AN INTEGRATION")
+                            .font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                            .foregroundStyle(Theme.textSecondary).padding(.top, 6)
+                        ForEach(unexposed) { entry in unexposedRow(entry) }
+                    }
+                }
+                .padding(16)
+            }
+        }
+        .frame(width: 520)
+        .frame(minHeight: 320, maxHeight: 560)
+        .background(Theme.bg)
+        .task {
+            unexposed = await veins.browse()
+            loading = false
+        }
+        .sheet(item: $builder) { model in
+            VeinBuilderView(model: model, onCreated: {
+                Task { await veins.refresh() }
+                builder = nil
+                dismiss()
+            })
+        }
+    }
+
+    private func startRow(icon: String, title: String, note: String,
+                          enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).font(.system(size: 16)).frame(width: 24)
+                    .foregroundStyle(enabled ? Theme.accent : Theme.textSecondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(enabled ? Theme.textPrimary : Theme.textSecondary)
+                    Text(note).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+                Spacer(minLength: 0)
+                if enabled {
+                    Image(systemName: "chevron.right").font(.system(size: 11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain).disabled(!enabled)
+    }
+
+    private func unexposedRow(_ entry: VeinEntry) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            RoundedRectangle(cornerRadius: 8).fill(Theme.surfaceHover)
+                .overlay(Image(systemName: entry.icon).font(.system(size: 14))
+                    .foregroundStyle(Theme.textSecondary))
+                .frame(width: 34, height: 34)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.label).font(.system(size: 13, weight: .semibold))
+                Text(entry.blurb).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let req = entry.requiresUnmet.first {
+                    HStack(spacing: 6) {
+                        Image(systemName: "link").font(.system(size: 10))
+                        Text("Available if you connect \(req.label)")
+                            .font(.system(size: 11, weight: .medium))
+                        if req.integration != nil {
+                            Button("Open Plugins") { dismiss(); openPlugins() }
+                                .buttonStyle(.plain).font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                        }
+                    }
+                    .foregroundStyle(.orange).padding(.top, 2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+    }
+}
+
 // MARK: - Onboarding step
 
 /// The vein catalog as an onboarding pick-list — fully skippable (skip = an empty chip
@@ -504,7 +634,7 @@ struct VeinsOnboardingStep: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Pick your veins").font(.system(size: 18, weight: .semibold))
-                Text("Ambient watches pinned above the Pulse feed: weather, stack health, external signals. All optional; add them any time from the Veins pane.")
+                Text("Ambient watches pinned above the Pulse feed. All optional; build or import them any time from the Veins pane.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

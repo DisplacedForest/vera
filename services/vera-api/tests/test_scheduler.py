@@ -61,7 +61,8 @@ def test_env_beats_db(monkeypatch):
 
 def test_jobs_view_covers_registry_with_next_runs():
     view = sch.jobs_view()
-    assert {j["id"] for j in view} == set(sch.REGISTRY)
+    assert {j["id"] for j in view} == set(sch._registry())
+    assert set(sch.REGISTRY) <= {j["id"] for j in view}
     for j in view:
         if j["enabled"] and sch.ENABLED:
             assert j["next_run"] is not None
@@ -110,3 +111,52 @@ def test_fire_skips_overlapping_run(monkeypatch):
         assert "still in progress" in store.overrides()["weather"]["last_detail"]
     finally:
         sch._running.discard("weather")
+
+
+def _save_pipeline_vein(monkeypatch, tmp_path, kind="rivergauge"):
+    from routers import vein_defs
+    monkeypatch.setattr(vein_defs, "CUSTOM_DIR", str(tmp_path / "veins.d"))
+    vein_defs.save_custom({
+        "kind": kind, "label": "River gauge", "icon": "water.waves",
+        "pipeline": [
+            {"block": "http_fetch", "params": {"url": "https://g.example/x.json",
+                                               "extract": "level"}},
+            {"block": "trip_band", "params": {"hi": 21.5}},
+        ],
+        "schedule": "*/30 * * * *",
+    })
+    return kind
+
+
+def test_pipeline_definition_surfaces_as_dynamic_job(monkeypatch, tmp_path):
+    _save_pipeline_vein(monkeypatch, tmp_path)
+    view = {j["id"]: j for j in sch.jobs_view()}
+    job = view["vein_rivergauge"]
+    assert job["label"] == "River gauge vein run"
+    assert job["cron"] == "*/30 * * * *"
+    assert job["enabled"] is False
+    assert "vein is off" in (job["gated"] or "")
+
+
+def test_dynamic_job_env_pin_applies(monkeypatch, tmp_path):
+    _save_pipeline_vein(monkeypatch, tmp_path)
+    monkeypatch.setenv("SCHEDULE_VEIN_RIVERGAUGE", "0 9 * * *")
+    j = sch._effective("vein_rivergauge", None)
+    assert j["cron"] == "0 9 * * *"
+
+
+def test_dynamic_job_vanishes_with_its_definition(monkeypatch, tmp_path):
+    from routers import vein_defs
+    _save_pipeline_vein(monkeypatch, tmp_path)
+    assert "vein_rivergauge" in sch._registry()
+    vein_defs.delete_custom("rivergauge")
+    assert "vein_rivergauge" not in sch._registry()
+
+
+def test_fire_records_outcome_when_definition_is_gone(monkeypatch, tmp_path):
+    _save_pipeline_vein(monkeypatch, tmp_path)
+    monkeypatch.setattr(sch, "_gate_reason", lambda _id: None)
+    from routers import vein_defs
+    vein_defs.delete_custom("rivergauge")
+    asyncio.run(sch._fire("vein_rivergauge"))
+    assert "definition is gone" in store.overrides()["vein_rivergauge"]["last_detail"]

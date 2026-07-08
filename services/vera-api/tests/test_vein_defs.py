@@ -90,12 +90,12 @@ def _catalog():
     return asyncio.run(pulse_veins.catalog())
 
 
-def test_custom_vein_appears_in_catalog_engine_gated():
+def test_custom_vein_appears_in_catalog_with_engine_met():
     vein_defs.save_custom(_watcher())
     entry = next(l for l in _catalog()["veins"] if l["kind"] == "geopolitics")
     assert entry["origin"] == "custom"
-    assert entry["can_enable"] is False
-    assert any(r["kind"] == "engine" and not r["met"] for r in entry["requires"])
+    assert entry["can_enable"] is True
+    assert any(r["kind"] == "engine" and r["met"] for r in entry["requires"])
     assert [s["block"] for s in entry["pipeline"]] == ["web_search", "llm_judge", "llm_compose"]
     assert entry["schedule"] == "0 */6 * * *"
 
@@ -105,11 +105,10 @@ def test_shipped_entries_carry_origin():
                if l["kind"] in ("status", "weather", "signals", "media"))
 
 
-def test_engine_gated_vein_cannot_enable():
+def test_pipeline_vein_enables_through_the_engine_requirement():
     vein_defs.save_custom(_watcher())
-    with pytest.raises(HTTPException) as e:
-        asyncio.run(pulse_veins.update_vein("geopolitics", pulse_veins.VeinUpdate(enabled=True)))
-    assert e.value.status_code == 409
+    asyncio.run(pulse_veins.update_vein("geopolitics", pulse_veins.VeinUpdate(enabled=True)))
+    assert pulse_veins.is_enabled("geopolitics")
 
 
 def test_custom_vein_survives_rescan():

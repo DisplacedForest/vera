@@ -13,8 +13,8 @@ volume's `veins.d/`, one file per vein, managed through the definition CRUD belo
 The app hardcodes nothing and renders unknown veins/options generically. Option
 resolution per field: store value > env (when declared) > default — the store is
 the runtime authority; env acts as the seed/headless layer. A pipeline-bearing
-definition carries an `engine` requirement that is unmet until the vein engine
-ships, so it can be created, edited, and listed but not enabled."""
+definition runs on the vein engine (vein_engine.py): its scheduler job registers
+dynamically as vein_<kind>, and POST /pulse/veins/{kind}/run executes it on demand."""
 
 import os
 
@@ -133,8 +133,7 @@ def _requirement_state(req: dict) -> dict:
         return {"kind": "env", "label": req.get("label", ", ".join(req["names"])), "met": met,
                 "detail": "" if met else f"set {' and '.join(req['names'])}"}
     if req["kind"] == "engine":
-        return {"kind": "engine", "label": "vein engine", "met": False,
-                "detail": "the vein engine ships in a later release"}
+        return {"kind": "engine", "label": "vein engine", "met": True, "detail": ""}
     return {"kind": req.get("kind", ""), "label": str(req), "met": False,
             "detail": "unknown requirement"}
 
@@ -205,6 +204,20 @@ class VeinUpdate(BaseModel):
     cron: str | None = None  # schedule of the vein's primary producer job
 
 
+def _check_pipeline(defn: dict):
+    from fastapi import HTTPException
+    from . import vein_engine
+    errors = vein_engine.validate_pipeline(defn)
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+
+
+def _producer_job_ids(spec: dict) -> list[str]:
+    if spec.get("pipeline"):
+        return [f"vein_{spec['kind']}"]
+    return spec.get("producer_jobs") or []
+
+
 def _job_views(job_ids: list[str]) -> list[dict]:
     from . import scheduler
     rows = {j["id"]: j for j in scheduler.jobs_view()}
@@ -232,7 +245,7 @@ def _entry(spec: dict, doc: dict) -> dict:
                                  "value": opts.get(f["id"]), "default": f.get("default")}
                                 for f in g["fields"]]}
                     for g in spec.get("options", [])],
-        "jobs": _job_views(spec.get("producer_jobs") or []),
+        "jobs": _job_views(_producer_job_ids(spec)),
     }
     if spec.get("pipeline"):
         out["pipeline"] = spec["pipeline"]
@@ -261,6 +274,7 @@ async def create_vein(defn: dict):
     from fastapi import HTTPException
     if defn.get("kind") in _defs():
         raise HTTPException(status_code=409, detail=f"vein '{defn.get('kind')}' already exists")
+    _check_pipeline(defn)
     try:
         saved = vein_defs.save_custom(defn)
     except ValueError as e:
@@ -278,6 +292,7 @@ async def replace_definition(kind: str, defn: dict):
         raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
     if defn.get("kind") != kind:
         raise HTTPException(status_code=422, detail="definition `kind` must match the path")
+    _check_pipeline(defn)
     try:
         saved = vein_defs.save_custom(defn)
     except ValueError as e:
@@ -326,13 +341,29 @@ async def update_vein(kind: str, req: VeinUpdate):
                                 detail=f"vein cap reached ({MAX_ACTIVE} active). Disable one first.")
 
     vein_store.update(kind, enabled=req.enabled, options=req.options, providers=req.providers)
-    if req.cron is not None and spec.get("producer_jobs"):
+    job_ids = _producer_job_ids(spec)
+    if req.cron is not None and job_ids:
         from croniter import croniter
         if not croniter.is_valid(req.cron):
             raise HTTPException(status_code=422, detail=f"invalid cron expression '{req.cron}'")
         from . import scheduler_store
-        scheduler_store.set_override(spec["producer_jobs"][0], cron=req.cron)
+        scheduler_store.set_override(job_ids[0], cron=req.cron)
     return _entry(spec, vein_store.load())
+
+
+@router.post("/pulse/veins/{kind}/run", tags=["pulse"])
+async def run_vein_now(kind: str, dry_run: bool = False):
+    from fastapi import HTTPException
+    from . import vein_engine
+    spec = _defs().get(kind)
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
+    if not spec.get("pipeline"):
+        raise HTTPException(status_code=422, detail=f"vein '{kind}' has no pipeline")
+    reason = gate_reason(kind)
+    if reason and not dry_run:
+        raise HTTPException(status_code=409, detail=reason)
+    return await vein_engine.run_vein(kind, dry_run=dry_run, manual=True)
 
 
 @router.post("/pulse/veins/{kind}/test", tags=["pulse"])

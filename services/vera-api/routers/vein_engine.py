@@ -110,7 +110,12 @@ async def _run_http_fetch(items, params, ctx):
             "title": params.get("label") or url, "url": url}
     if path:
         try:
-            leaf = _walk(json.loads(text), path)
+            data = json.loads(text)
+        except ValueError:
+            raise BlockError("http_fetch",
+                             f"the response body is not JSON (starts: {text[:60]!r})")
+        try:
+            leaf = _walk(data, path)
         except ValueError as e:
             raise BlockError("http_fetch", str(e))
         v = _as_float(leaf)

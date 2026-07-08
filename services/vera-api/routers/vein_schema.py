@@ -76,7 +76,7 @@ class OptionGroup(BaseModel):
 
 class PipelineStep(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    block: Literal[*BLOCKS]
+    block: str = Field(pattern=r"^[a-z][a-z0-9_]*$", max_length=40)
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -118,4 +118,6 @@ def validate_definition(raw: dict) -> dict:
 
 
 def json_schema() -> dict:
-    return VeinDefinition.model_json_schema()
+    out = VeinDefinition.model_json_schema()
+    out["x_builtin_blocks"] = list(BLOCKS)
+    return out

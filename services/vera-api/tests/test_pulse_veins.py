@@ -214,3 +214,91 @@ def test_existing_vein_store_wins_over_legacy_file(monkeypatch, tmp_path):
                                          encoding="utf-8")
     assert pulse_veins.enabled_kinds() == {"weather"}
     assert (tmp_path / "lanes.json").exists()  # untouched when the vein store already exists
+
+
+# --------------------------------------------------------------------------- pipeline veins
+
+def _pipeline_env(monkeypatch, tmp_path):
+    from routers import pulse_store, scheduler_store, vein_defs, vein_engine_store
+    monkeypatch.setattr(vein_defs, "CUSTOM_DIR", str(tmp_path / "veins.d"))
+    monkeypatch.setattr(scheduler_store, "DB_PATH", str(tmp_path / "scheduler.db"))
+    monkeypatch.setattr(pulse_store, "DB_PATH", str(tmp_path / "pulse.db"))
+    monkeypatch.setattr(vein_engine_store, "DB_PATH", str(tmp_path / "engine.db"))
+
+
+def _pipeline_defn(kind="rivergauge"):
+    return {
+        "kind": kind, "label": "River gauge", "icon": "water.waves",
+        "pipeline": [
+            {"block": "http_fetch", "params": {"url": "https://g.example/x.json",
+                                               "extract": "level"}},
+            {"block": "trip_band", "params": {"hi": 21.5}},
+        ],
+        "schedule": "*/30 * * * *",
+    }
+
+
+def test_pipeline_vein_is_enableable(monkeypatch, tmp_path):
+    _pipeline_env(monkeypatch, tmp_path)
+    entry = asyncio.run(pulse_veins.create_vein(_pipeline_defn()))
+    assert entry["can_enable"] is True
+    assert all(r["met"] for r in entry["requires"])
+    _put("rivergauge", enabled=True)
+    assert pulse_veins.is_enabled("rivergauge")
+
+
+def test_create_rejects_unknown_block_naming_the_step(monkeypatch, tmp_path):
+    _pipeline_env(monkeypatch, tmp_path)
+    bad = _pipeline_defn()
+    bad["pipeline"][1] = {"block": "teleport"}
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(pulse_veins.create_vein(bad))
+    assert e.value.status_code == 422
+    assert "step 1" in e.value.detail and "teleport" in e.value.detail
+
+
+def test_pipeline_cron_override_maps_to_dynamic_job(monkeypatch, tmp_path):
+    from routers import scheduler_store
+    _pipeline_env(monkeypatch, tmp_path)
+    asyncio.run(pulse_veins.create_vein(_pipeline_defn()))
+    _put("rivergauge", cron="0 9 * * *")
+    assert scheduler_store.overrides()["vein_rivergauge"]["cron"] == "0 9 * * *"
+
+
+def test_pipeline_entry_lists_dynamic_job(monkeypatch, tmp_path):
+    _pipeline_env(monkeypatch, tmp_path)
+    entry = asyncio.run(pulse_veins.create_vein(_pipeline_defn()))
+    assert [j["id"] for j in entry["jobs"]] == ["vein_rivergauge"]
+    assert entry["jobs"][0]["cron"] == "*/30 * * * *"
+
+
+def test_run_endpoint_statuses(monkeypatch, tmp_path):
+    _pipeline_env(monkeypatch, tmp_path)
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(pulse_veins.run_vein_now("nope"))
+    assert e.value.status_code == 404
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(pulse_veins.run_vein_now("weather"))
+    assert e.value.status_code == 422
+    asyncio.run(pulse_veins.create_vein(_pipeline_defn()))
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(pulse_veins.run_vein_now("rivergauge"))
+    assert e.value.status_code == 409
+
+
+def test_run_endpoint_dry_run_returns_cards_without_posting(monkeypatch, tmp_path):
+    import json as _json
+    from routers import pulse_store, vein_engine
+    _pipeline_env(monkeypatch, tmp_path)
+    asyncio.run(pulse_veins.create_vein(_pipeline_defn()))
+
+    async def fake_get(url):
+        return 200, _json.dumps({"level": 25})
+    monkeypatch.setattr(vein_engine, "_get", fake_get)
+    out = asyncio.run(pulse_veins.run_vein_now("rivergauge", dry_run=True))
+    assert out["dry_run"] and out["situations"] == 1
+    assert pulse_store.list_cards() == []
+    _put("rivergauge", enabled=True)
+    posted = asyncio.run(pulse_veins.run_vein_now("rivergauge"))
+    assert posted == {"ok": True, "situations": 1, "cards": 1}
+    assert len(pulse_store.list_cards()) == 1

@@ -61,10 +61,15 @@ def test_producer_jobs_definition_validates():
     assert "pipeline" not in out
 
 
-def test_unknown_block_rejected():
-    bad = _watcher(pipeline=[{"block": "teleport"}])
+def test_registered_style_block_name_validates_structurally():
+    out = vein_schema.validate_definition(_watcher(pipeline=[{"block": "signals_financial"},
+                                                             {"block": "llm_compose"}]))
+    assert out["pipeline"][0]["block"] == "signals_financial"
+
+
+def test_block_name_pattern_enforced():
     with pytest.raises(ValueError):
-        vein_schema.validate_definition(bad)
+        vein_schema.validate_definition(_watcher(pipeline=[{"block": "Not-A-Block"}]))
 
 
 def test_both_production_shapes_rejected():

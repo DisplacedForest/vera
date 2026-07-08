@@ -78,6 +78,8 @@ def init():
             # multi-item action card (digest) — json list of per-row items, each with its own
             # staged action token + state (pending|approved|skipped). Drives the approve/skip card UI.
             c.execute("ALTER TABLE cards ADD COLUMN items TEXT")
+        if "situation_key" not in cols:
+            c.execute("ALTER TABLE cards ADD COLUMN situation_key TEXT")
         # Per-event read receipts — separate from the card, because ambient vein events are
         # one shared mind but read independently per person. Composite PK = idempotent writes.
         c.execute(
@@ -98,8 +100,8 @@ def insert_card(card: dict):
     with _conn() as c:
         c.execute(
             """INSERT OR REPLACE INTO cards
-               (id, created_at, day, status, title, summary, body, image_url, tint, sources, inline_images, promoted_chat_id, action, kind, severity, user_id, provenance, category, change_set, items, audit)
-               VALUES (:id,:created_at,:day,:status,:title,:summary,:body,:image_url,:tint,:sources,:inline_images,:promoted_chat_id,:action,:kind,:severity,:user_id,:provenance,:category,:change_set,:items,:audit)""",
+               (id, created_at, day, status, title, summary, body, image_url, tint, sources, inline_images, promoted_chat_id, action, kind, severity, user_id, provenance, category, change_set, items, audit, situation_key)
+               VALUES (:id,:created_at,:day,:status,:title,:summary,:body,:image_url,:tint,:sources,:inline_images,:promoted_chat_id,:action,:kind,:severity,:user_id,:provenance,:category,:change_set,:items,:audit,:situation_key)""",
             {
                 "id": card["id"],
                 "created_at": card.get("created_at") or int(time.time()),
@@ -122,6 +124,7 @@ def insert_card(card: dict):
                 "change_set": json.dumps(card["change_set"]) if card.get("change_set") else None,
                 "items": json.dumps(card["items"]) if card.get("items") else None,
                 "audit": card.get("audit"),
+                "situation_key": card.get("situation_key"),
             },
         )
 
@@ -149,6 +152,7 @@ def _row_to_card(r: sqlite3.Row) -> dict:
         "change_set": json.loads(r["change_set"]) if ("change_set" in r.keys() and r["change_set"]) else [],
         "items": json.loads(r["items"]) if ("items" in r.keys() and r["items"]) else [],
         "audit": r["audit"] if "audit" in r.keys() else None,
+        "situation_key": r["situation_key"] if "situation_key" in r.keys() else None,
     }
 
 

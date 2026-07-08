@@ -91,3 +91,22 @@ def test_generic_fallback_never_dumps_dict():
 def test_non_dict_results_are_safe():
     assert summarize_outcome("weather", "all clear, 3 zones").startswith("all clear")
     assert summarize_outcome("weather", None) == "Completed."
+
+
+def test_vein_run_quiet_and_posted():
+    quiet = summarize_outcome("vein_rivergauge", {"ok": True, "situations": 0, "cards": 0})
+    assert quiet == "Vein checked: quiet, nothing cleared the bar."
+    posted = summarize_outcome("vein_rivergauge", {"ok": True, "situations": 2, "cards": 2})
+    assert "2 situations" in posted and "2 cards" in posted
+    _no_record_markers(posted)
+
+
+def test_vein_run_floor_skip_and_failure():
+    skip = summarize_outcome("vein_newswatch", {
+        "ok": True, "skipped": "schedule floor",
+        "detail": "last run 5m ago; the floor for LLM pipelines is 30m"})
+    assert skip.startswith("Skipped:") and "floor" in skip
+    fail = summarize_outcome("vein_newswatch", {
+        "ok": False, "block": "http_fetch", "detail": "HTTP 500 from https://x"})
+    assert "failed at http_fetch" in fail
+    _no_record_markers(skip)

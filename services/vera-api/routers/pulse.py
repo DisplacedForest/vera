@@ -201,7 +201,8 @@ async def _create_owui_chat(card):
 
 async def _inject(title, body, folder_id=None, image_url=None, tint=None, sources=None,
                   summary=None, inline_images=None, action=None, kind="research", severity=None,
-                  user_id=None, provenance="scheduled", category=None, change_set=None, items=None):
+                  user_id=None, provenance="scheduled", category=None, change_set=None, items=None,
+                  situation_key=None):
     """Store a Pulse card. Compat shim for the helper routers (health/signals/kitchen/weather/
     heartbeat) that surface cards. `folder_id` is ignored — Pulse is store-backed.
     `kind`/`severity` place the card in an ambient vein; default is the research feed.
@@ -220,6 +221,7 @@ async def _inject(title, body, folder_id=None, image_url=None, tint=None, source
         "promoted_chat_id": None, "action": action, "kind": kind, "severity": severity,
         "user_id": user_id or store.DEFAULT_USER, "provenance": provenance,
         "category": category, "change_set": change_set, "items": items,
+        "situation_key": situation_key,
     })
     return {"ok": True, "id": cid}
 

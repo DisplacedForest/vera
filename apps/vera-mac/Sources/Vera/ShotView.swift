@@ -10,7 +10,7 @@ struct ShotView: View {
     var chrome: ShotChrome = .window
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
-    enum ShotChrome: Equatable { case window, veinsSheet, veinBrowse, settings(SettingsTab) }
+    enum ShotChrome: Equatable { case window, veinsSheet, veinBrowse, veinImport, settings(SettingsTab) }
 
     var body: some View {
         Group {
@@ -18,6 +18,7 @@ struct ShotView: View {
             case .window: windowBody
             case .veinsSheet: veinsSheetShot
             case .veinBrowse: veinBrowseShot
+            case .veinImport: veinImportShot
             case .settings(let tab): settingsShot(tab)
             }
         }
@@ -89,7 +90,8 @@ struct ShotView: View {
                     shotStartRow(icon: "wand.and.stars", title: "Build a new vein",
                                  note: "Describe a watch in your own words and Vera drafts it.", enabled: true)
                     shotStartRow(icon: "square.and.arrow.down", title: "Import from file",
-                                 note: "Add a vein someone shared with you. Coming soon.", enabled: false)
+                                 note: "Add a vein someone shared with you. It lands disabled for review.",
+                                 enabled: true)
                     Text("AVAILABLE WITH AN INTEGRATION")
                         .font(.system(size: 10, weight: .semibold)).tracking(0.6)
                         .foregroundStyle(Theme.textSecondary).padding(.top, 6)
@@ -153,6 +155,70 @@ struct ShotView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    private var veinImportShot: some View {
+        ZStack {
+            windowBodyForPulse.opacity(0.5)
+            Color.black.opacity(0.35)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 10) {
+                    Image(systemName: "square.and.arrow.down").font(.system(size: 16))
+                    Text("Review import").font(.system(size: 16, weight: .semibold))
+                    Spacer()
+                }
+                .padding(16)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("River gauge").font(.system(size: 15, weight: .semibold))
+                        Text("watches the river level and speaks up past flood stage")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    }
+                    shotImportField("SCHEDULE", "*/30 * * * *")
+                    shotImportField("PIPELINE", "http_fetch -> trip_band")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("WARNINGS").font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                            .foregroundStyle(Theme.textSecondary)
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
+                            Text("Needs Grocy").font(.system(size: 12))
+                            Text("Open Plugins").font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                        }.foregroundStyle(.orange)
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
+                            Text("Unknown block moon_phase. It stays inert until this Vera has it.")
+                                .font(.system(size: 12))
+                        }.foregroundStyle(.orange)
+                    }
+                    Text("This vein was added disabled. Review its settings, then enable it when you're ready.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                }
+                .padding(16)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                HStack {
+                    Spacer()
+                    Text("Done").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
+                }
+                .padding(12)
+                Spacer(minLength: 0)
+            }
+            .frame(width: 460, height: 470)
+            .background(Theme.bg)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+    }
+
+    private func shotImportField(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                .foregroundStyle(Theme.textSecondary)
+            Text(value).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+        }
     }
 
     /// A Settings tab (Plugins or MCP) — the Settings window chrome (tab bar) over the moved board.

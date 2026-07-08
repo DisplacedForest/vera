@@ -1,0 +1,9 @@
+# Secret-shaped string patterns shared by scripts/leak-gate.sh and the vein export sanitizer.
+# One entry per line: <name><TAB><POSIX-ERE shape>. Shapes avoid POSIX bracket classes so both
+# git grep (ERE) and Python re accept them verbatim; scan-context guards and path excludes live
+# in the gate, not here. Blank lines and lines starting with # are ignored.
+owui-key	sk-[A-Za-z0-9]{20,}
+jwt	eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}
+private-key	BEGIN [A-Z ]*PRIVATE KEY
+key-hex	[0-9a-fA-F]{32,}
+key-base64	[A-Za-z0-9+/]{40,}={0,2}

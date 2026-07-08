@@ -36,7 +36,8 @@ allow_filter() {
 # scan <label> <extended-regex> [extra git pathspec excludes ...]
 scan() {
     _label="$1"; _pattern="$2"; shift 2
-    _hits=$(git grep -nIE -e "$_pattern" -- . ':!scripts/leak-gate.sh' ':!scripts/leak-allow.txt' "$@" 2>/dev/null \
+    _hits=$(git grep -nIE -e "$_pattern" -- . ':!scripts/leak-gate.sh' ':!scripts/leak-allow.txt' \
+        ':!services/vera-api/routers/leak_patterns.txt' "$@" 2>/dev/null \
         | allow_filter || true)
     if [ -n "$_hits" ]; then
         printf 'LEAK [%s]:\n%s\n\n' "$_label" "$_hits" >&2
@@ -49,17 +50,23 @@ scan "lan-ip"          '(^|[^0-9.])(192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{
 scan "lan-ip-10"       '(^|[^0-9.])10(\.[0-9]{1,3}){3}([^0-9]|$)'
 scan "home-abs-path"   '/Users/[A-Za-z0-9]'
 scan "ser-ref-comment" '(#|//|/\*|--).*SER-[0-9]'
-scan "owui-key"        'sk-[A-Za-z0-9]{20,}'
-scan "jwt"             'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
-scan "private-key"     'BEGIN [A-Z ]*PRIVATE KEY'
 
-# High-entropy key shapes (generic long hex / base64). Generated, vendored, and lockfile
-# paths legitimately carry long hex and base64 (dependency hashes, minified bundles), so
-# they are excluded from these two checks only.
-scan "key-hex"    '[0-9a-fA-F]{32,}' \
-    ':!apps/vera-mac/Package.resolved' ':!apps/vera-mac/Sources/Vera/Resources/**' ':!*.min.js' ':!*.min.css'
-scan "key-base64" '["`=][[:space:]]*[A-Za-z0-9+/]{40,}={0,2}' \
-    ':!apps/vera-mac/Package.resolved' ':!apps/vera-mac/Sources/Vera/Resources/**' ':!*.min.js' ':!*.min.css'
+# Secret-shaped strings. The shapes are the single source shared with the vein export
+# sanitizer (services/vera-api/routers/leak_patterns.txt), so the gate and the sanitizer
+# cannot drift. Generated, vendored, and lockfile paths legitimately carry long hex and
+# base64 (dependency hashes, minified bundles), so those two shapes exclude them; the
+# base64 shape also carries a scan-context guard here to skip prose runs.
+KEYPATTERNS="services/vera-api/routers/leak_patterns.txt"
+B64_GUARD='["`=][[:space:]]*'
+ENTROPY_EXCLUDES=":!apps/vera-mac/Package.resolved :!apps/vera-mac/Sources/Vera/Resources/** :!*.min.js :!*.min.css"
+while IFS="$(printf '\t')" read -r _name _shape; do
+    case "$_name" in ''|\#*) continue ;; esac
+    case "$_name" in
+        key-hex)    scan "$_name" "$_shape" $ENTROPY_EXCLUDES ;;
+        key-base64) scan "$_name" "$B64_GUARD$_shape" $ENTROPY_EXCLUDES ;;
+        *)          scan "$_name" "$_shape" ;;
+    esac
+done < "$KEYPATTERNS"
 
 for _var in VERA_OWNER_NAME HOME_LOCATION_NAME WEATHER_LAT WEATHER_LON; do
     _val=$(resolve "$_var")

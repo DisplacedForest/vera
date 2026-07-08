@@ -1,11 +1,14 @@
+import copy
 import json
 import logging
 import os
 import tempfile
 
-from . import vein_schema
+from . import leak_patterns, vein_schema
 
 log = logging.getLogger("vera.veins")
+
+FORMAT = 1
 
 SHIPPED_DIR = os.environ.get(
     "VEINS_SHIPPED_DIR",
@@ -92,6 +95,28 @@ def save_custom(raw: dict) -> dict:
             pass
         raise
     return d
+
+
+def _scrub(node):
+    if isinstance(node, dict):
+        return {k: _scrub(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_scrub(v) for v in node]
+    if isinstance(node, str) and leak_patterns.looks_secret(node):
+        return ""
+    return node
+
+
+def _sanitize(defn: dict) -> dict:
+    clean = copy.deepcopy(defn)
+    for p in clean.get("providers", []):
+        if "default" in p:
+            p["default"] = ""
+    for g in clean.get("options", []):
+        for f in g.get("fields", []):
+            if f.get("env"):
+                f["default"] = None
+    return _scrub(clean)
 
 
 def delete_custom(kind: str) -> bool:

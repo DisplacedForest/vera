@@ -271,6 +271,56 @@ async def create_vein(defn: dict):
     return _entry(saved, vein_store.load())
 
 
+@router.get("/pulse/veins/{kind}/export", tags=["pulse"])
+async def export_vein(kind: str):
+    from fastapi import HTTPException
+    from fastapi.responses import JSONResponse
+    spec = _defs().get(kind)
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
+    payload = {**vein_defs._sanitize(spec), "format": vein_defs.FORMAT}
+    return JSONResponse(content=payload,
+                        headers={"Content-Disposition": f'attachment; filename="{kind}.vein.json"'})
+
+
+@router.post("/pulse/veins/import", tags=["pulse"])
+async def import_vein(definition: dict):
+    from fastapi import HTTPException
+    from . import vein_engine
+    fmt = definition.get("format", vein_defs.FORMAT)
+    if isinstance(fmt, int) and fmt > vein_defs.FORMAT:
+        raise HTTPException(status_code=422,
+                            detail=f"this file is format {fmt}, newer than this deployment "
+                                   f"(format {vein_defs.FORMAT}). Update vera-api to import it.")
+    raw = {k: v for k, v in definition.items() if k != "format"}
+    try:
+        defn = vein_schema.validate_definition(raw)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    kind = defn["kind"]
+    if _is_shipped(kind):
+        raise HTTPException(status_code=409, detail=f"vein '{kind}' is shipped and read-only")
+    existing = vein_defs.customs().get(kind)
+    if existing:
+        raise HTTPException(status_code=409,
+                            detail=f"a custom vein '{kind}' ({existing['label']}) already exists")
+    warnings = []
+    seen_blocks = set()
+    for step in defn.get("pipeline") or []:
+        block = step.get("block", "")
+        if block not in vein_engine.BLOCKS and block not in seen_blocks:
+            seen_blocks.add(block)
+            warnings.append({"type": "block", "id": block, "label": block})
+    for r in defn.get("requires", []):
+        st = _requirement_state(r)
+        if not st["met"]:
+            warnings.append({"type": "requirement", "id": st.get("integration", ""),
+                             "label": st["label"]})
+    saved = vein_defs.save_custom(defn)
+    vein_store.update(saved["kind"], enabled=False)
+    return {"ok": True, "kind": saved["kind"], "warnings": warnings}
+
+
 @router.put("/pulse/veins/{kind}/definition", tags=["pulse"])
 async def replace_definition(kind: str, defn: dict):
     """Replace a custom vein's definition (shipped definitions are read-only)."""

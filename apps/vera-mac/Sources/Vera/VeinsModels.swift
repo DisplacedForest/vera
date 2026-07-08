@@ -165,6 +165,18 @@ struct VeinEntry: Identifiable, Hashable, Sendable {
     }
 }
 
+struct VeinImportWarning: Hashable, Sendable, Identifiable {
+    var id: String { "\(type):\(idValue):\(label)" }
+    let type: String
+    let idValue: String
+    let label: String
+}
+
+enum VeinImportResult: Sendable {
+    case ok(kind: String, warnings: [VeinImportWarning])
+    case failure(String)
+}
+
 /// Thin client for vera-api's vein endpoints.
 struct VeinsClient: Sendable {
     let base: URL
@@ -228,5 +240,33 @@ struct VeinsClient: Sendable {
         return arr.map { (($0["slot"] as? String) ?? "slot",
                           ($0["ok"] as? Bool) ?? false,
                           ($0["detail"] as? String) ?? "") }
+    }
+
+    func export(kind: String) async -> Data? {
+        var req = URLRequest(url: base.appendingPathComponent("/pulse/veins/\(kind)/export"))
+        req.timeoutInterval = 10
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (200..<300).contains((resp as? HTTPURLResponse)?.statusCode ?? 0) else { return nil }
+        return data
+    }
+
+    func importVein(_ fileBody: Data) async -> VeinImportResult {
+        var req = URLRequest(url: base.appendingPathComponent("/pulse/veins/import"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = fileBody
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let code = (resp as? HTTPURLResponse)?.statusCode else { return .failure("vera-api unreachable") }
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if (200..<300).contains(code) {
+            let warnings = ((json?["warnings"] as? [[String: Any]]) ?? []).map {
+                VeinImportWarning(type: ($0["type"] as? String) ?? "",
+                                  idValue: ($0["id"] as? String) ?? "",
+                                  label: ($0["label"] as? String) ?? "")
+            }
+            return .ok(kind: (json?["kind"] as? String) ?? "", warnings: warnings)
+        }
+        return .failure((json?["detail"] as? String) ?? "HTTP \(code)")
     }
 }

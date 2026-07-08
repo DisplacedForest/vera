@@ -397,10 +397,4 @@ async def test_vein(kind: str):
                         "detail": ", ".join(filter(None, ["Home Assistant" if ha else None,
                                                           "Unraid" if un else None])) or
                                   "no update sources connected. Connect Home Assistant or Unraid in Plugins"})
-    elif kind == "signals":
-        opts = option_values("signals")
-        on = [g.removeprefix("grp_") for g in
-              ("grp_financial", "grp_geophysical", "grp_civic", "grp_grid", "grp_news") if opts.get(g)]
-        results.append({"slot": "source groups", "ok": bool(on),
-                        "detail": ("watching: " + ", ".join(on)) if on else "every source group is off"})
     return {"results": results}

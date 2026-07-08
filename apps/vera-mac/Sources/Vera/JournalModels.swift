@@ -34,7 +34,7 @@ extension JournalEntry {
     static func mock() -> [JournalEntry] {
         [JournalEntry(id: "strait-shipping-disruption", heading: "Strait shipping disruption",
                       body: """
-                      Origin: signals
+                      Origin: watch
                       Why: tanker traffic through the strait is near a standstill, which moves fuel, \
                       fertilizer, and food prices for the household.
                       Resolve when: commercial traffic resumes.

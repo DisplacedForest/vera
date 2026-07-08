@@ -3,8 +3,7 @@
 Covers the contract: env-wins-per-field precedence (and env locking), the
 enabled-when-configured default (zero-migration for env-driven deployments),
 experimental-feature ack enforcement (400/409), kill-switch env vars,
-secret non-echo in the API view, scheduler gate inheritance, and the
-signals FEMA skip.
+secret non-echo in the API view, scheduler gate inheritance.
 """
 import asyncio
 import os
@@ -221,13 +220,3 @@ def test_apple_reminders_unconfigured_off():
 def test_apple_reminders_env_enabled(monkeypatch):
     monkeypatch.setenv("VERA_REMINDERS_URL", "http://bridge.example/")
     assert ig.integration("apple_reminders") == {"url": "http://bridge.example"}
-
-
-# --- audit fix: FEMA skip ------------------------------------------------------------------
-
-def test_fema_skips_without_home_state(monkeypatch):
-    from routers import signals
-    monkeypatch.setattr(signals, "HOME_STATE", "")
-    # session=None proves no network call happens on the skip path
-    result = asyncio.run(signals._collect_fema(session=None))
-    assert result == {"declarations": []}

@@ -62,9 +62,9 @@ def test_producer_jobs_definition_validates():
 
 
 def test_registered_style_block_name_validates_structurally():
-    out = vein_schema.validate_definition(_watcher(pipeline=[{"block": "signals_financial"},
+    out = vein_schema.validate_definition(_watcher(pipeline=[{"block": "tide_gauge"},
                                                              {"block": "llm_compose"}]))
-    assert out["pipeline"][0]["block"] == "signals_financial"
+    assert out["pipeline"][0]["block"] == "tide_gauge"
 
 
 def test_block_name_pattern_enforced():

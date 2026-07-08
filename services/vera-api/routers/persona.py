@@ -36,11 +36,11 @@ def location() -> str:
 
 
 def orientation() -> str:
-    """The household's watch orientation (SIGNALS_ORIENTATION) — the bar an external
-    event must clear to be worth surfacing. A fragment completing "would plausibly …",
-    shared by the signals news judge and the heartbeat watch judge. Neutral when
+    """The household's watch orientation — the bar an external event must clear to be
+    worth surfacing. A fragment completing "would plausibly …". Neutral when
     unconfigured; the silent-by-default calibration around it is product, not config."""
-    return os.environ.get("SIGNALS_ORIENTATION", "").strip() or (
+    from . import env_compat
+    return env_compat.read("WATCH_ORIENTATION") or (
         "change what a reasonable household should know or do this week")
 
 

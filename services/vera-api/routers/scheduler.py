@@ -47,11 +47,6 @@ async def _job_pulse():
     return await pulse.run_outcome(await pulse.run(pulse.PulseRequest()))
 
 
-async def _job_signals():
-    from . import signals
-    return await signals.check(signals.SignalsRequest())
-
-
 async def _job_memory_groom():
     from . import memory
     return await memory.groom()
@@ -91,7 +86,6 @@ async def _job_weight_fit():
 # id -> (label, default cron, handler). The shipped schedule; everything overridable.
 REGISTRY: dict[str, tuple[str, str, object]] = {
     "pulse":          ("Pulse briefing run",        "0 5 * * *",    _job_pulse),
-    "signals":        ("Signals check",             "0 6,18 * * *", _job_signals),
     "memory_groom":   ("Episodic memory groom",     "0 4 * * *",    _job_memory_groom),
     "home_model":     ("Home model refresh",        "30 3 * * *",   _job_home_model),
     "home_reconcile": ("Home map reconcile",        "0 3 * * *",    _job_home_reconcile),
@@ -130,7 +124,6 @@ GATES: dict[str, object] = {
     "home_model": _gate_home_modeling,
     "home_reconcile": _gate_home_modeling,
     "home_digest": _gate_home_modeling,
-    "signals": _vein_gate("signals"),
 }
 
 
@@ -252,14 +245,6 @@ def summarize_outcome(job_id: str, result) -> str:
             line += f" {_plural(len(warnings), 'warning')}."
         return line
 
-    if job_id == "signals":
-        trips = r.get("trips") or []
-        if not trips:
-            return "Signals checked: quiet, nothing tripped."
-        sev = r.get("severity")
-        posted = "a card was posted" if r.get("injected") else "no card posted"
-        sev_part = f" (severity {sev})" if sev else ""
-        return f"Signals checked: {_plural(len(trips), 'situation')} tripped{sev_part}, {posted}."
 
     if job_id == "heartbeat":
         bits = []

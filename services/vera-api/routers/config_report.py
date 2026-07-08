@@ -17,6 +17,7 @@ GROUPS: list[tuple[str, list[str]]] = [
     ("open-webui",    ["OWUI_BASE", "OWUI_KEY"]),
     ("web search",    ["SEARXNG_BASE", "PLAYWRIGHT_WS"]),
     ("dream/coder",   ["DREAM_BASE", "DREAM_MODEL", "DREAM_TOOL_PROTOCOL"]),
+    ("sandbox",       ["VERA_SANDBOX_URL", "VERA_SANDBOX_TOKEN", "VERA_SANDBOX_TIMEOUT_S"]),
     ("research",      ["RESEARCH_MAX_ITERATIONS"]),
     ("image gen",     ["VERA_IMAGE_BASE", "IMAGE_PROTOCOL"]),
     ("embeddings",    ["VERA_EMBED_URL", "VERA_EMBED_MODEL"]),

@@ -63,7 +63,7 @@ def test_openai_no_tool_is_final_answer(monkeypatch):
     assert answer == "done."
     assert len(requests) == 1
     messages, tools = requests[0]
-    assert tools == coder.TOOLS                       # the request advertises the tool
+    assert tools == tool_protocol.tool_schemas()      # the request advertises the tool
     assert messages[0] == {"role": "system", "content": "sys prompt"}  # no protocol text injected
 
 
@@ -133,7 +133,7 @@ def test_hermes_loop_uses_text_protocol(monkeypatch):
     assert answer == "text-protocol answer."
     first_messages, first_tools = requests[0]
     assert first_tools is None
-    assert first_messages[0]["content"].startswith(tool_protocol.render_tools(coder.TOOLS))
+    assert first_messages[0]["content"].startswith(tool_protocol.render_tools(tool_protocol.tool_schemas()))
     assert first_messages[0]["content"].endswith("sys prompt")
     follow = requests[1][0][-1]
     assert follow["role"] == "user" and "<tool_response>" in follow["content"]
@@ -152,7 +152,7 @@ def test_legacy_mlx_value_runs_the_openai_loop(monkeypatch):
         {"content": "done."},
     ], protocol="mlx")
     assert answer == "done."
-    assert requests[0][1] == coder.TOOLS
+    assert requests[0][1] == tool_protocol.tool_schemas()
     assert "results for <gamma>" in requests[1][0][-1]["content"]
 
 

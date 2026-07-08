@@ -107,6 +107,7 @@ Each integration unlocks its capability when its test passes; each degrades to "
 | SearXNG | Web search for chat, research, Pulse, signals | Strongly recommended; run it next to vera-api |
 | Embeddings | Pulse novelty ranking and the duplicate-finding floor, profile-graph node embeddings for dedup-merge | Any OpenAI-compatible `POST {base}/v1/embeddings` endpoint; the model id is only needed for multi-model servers (llama-swap, hosted APIs). The LLM server can serve this too |
 | Apple Reminders | Reminders lists read/write from chat, shared lists included | URL of the `vera-reminders` bridge (see satellite services below) |
+| Code sandbox | The `code_interpreter` tool: the model runs Python in an isolated kernel for tasks no named tool covers | Stand one up with `scripts/vera-sandbox-setup.sh` (egress-free, resource-capped); point `VERA_SANDBOX_URL`/`VERA_SANDBOX_TOKEN` at it |
 
 ## 6. Satellite services (all optional)
 
@@ -116,7 +117,7 @@ These are **documented HTTP contracts** with reference implementations in this r
 |---|---|---|
 | Image gen | OpenAI Images API: `POST {base}/v1/images/generations` | `services/vera-image` — serves the standard contract out of the box; `IMAGE_PROTOCOL=vera` adds deterministic seeds + the vision pause/resume extension |
 | Vision | OpenAI chat completions with `image_url` content parts | Any MLX/vLLM-served VLM; see `services/vera-vision` for the launchd template |
-| Dream/coder | OpenAI `/v1` with tool calling (`DREAM_TOOL_PROTOCOL=mlx` for servers that don't emit `tool_calls`) | `services/vera-coder` |
+| Dream/coder | OpenAI `/v1` with tool calling (`DREAM_TOOL_PROTOCOL=hermes` for servers that pass model text through untouched) | `services/vera-coder` |
 | Voice | Wyoming protocol (ASR + TTS) plus a small batch HTTP API | `services/vera-voice`; install with `scripts/deploy-vera-voice.sh` |
 | Reminders | Small HTTP API over EventKit: `/health`, `/lists`, `/reminders` | `services/vera-reminders`; install with `scripts/deploy-vera-reminders.sh` |
 

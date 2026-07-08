@@ -31,6 +31,7 @@ from . import authoring
 from . import authoring_store
 from . import heartbeat_store as hb
 from . import journal
+from . import structured
 from . import units
 from . import vera_memory_store as vm
 from . import user_profile_store as up
@@ -103,13 +104,6 @@ async def _ha_summary() -> str:
     if climate: parts.append("Climate: " + "; ".join(climate[:6]))
     if active:  parts.append("Open/active: " + "; ".join(active[:12]))
     return "\n".join(parts) or "(nothing notable in HA right now)"
-
-
-def _parse_json(txt):
-    try:
-        return json.loads(txt[txt.index("{"): txt.rindex("}") + 1])
-    except Exception:
-        return {}
 
 
 DECIDE_SYS = (
@@ -226,12 +220,12 @@ async def _ensure_glosses(uid, name, prof, interests):
     if not missing:
         return
     try:
-        out = _parse_json(await _vera(
-            [{"role": "system", "content": GLOSS_SYS.format(who=name)},
-             {"role": "user", "content": f"About {name}: {prof.get('persona') or '(unknown)'}\n"
-                                          f"Interests:\n- " + "\n- ".join(missing)}],
-            temperature=0.3, think="off"))
-        for topic, gloss in (out.get("glosses") or {}).items():
+        msgs = [{"role": "system", "content": GLOSS_SYS.format(who=name)},
+                {"role": "user", "content": f"About {name}: {prof.get('persona') or '(unknown)'}\n"
+                                             f"Interests:\n- " + "\n- ".join(missing)}]
+        out, _ = await structured.parsed(
+            structured.repairable(_vera, msgs, temperature=0.3, think="off"), structured.Glosses)
+        for topic, gloss in ((out or {}).get("glosses") or {}).items():
             if not isinstance(gloss, str) or not gloss.strip():
                 continue
             match = next((m for m in missing if m.lower() == topic.strip().lower()), None)
@@ -292,14 +286,17 @@ async def _for_you(now_str, recent):
     feed_titles = [c["title"] for c in _recent_for_user(uid)]
 
     # 1) candidate — is there anything worth surfacing right now?
-    decide = _parse_json(await _vera(
-        [{"role": "system", "content": FORYOU_CANDIDATE_SYS.format(who=name)},
-         {"role": "user", "content": f"About {name}: {prof.get('persona') or '(unknown)'}\n"
-                                      f"Interests you follow for them (with meaning):\n{interest_lines}\n\n"
-                                      f"Already in their feed (do NOT repeat):\n- "
-                                      + ("\n- ".join(feed_titles) if feed_titles else "(empty)")
-                                      + f"\n\nRecently surfaced to them (don't repeat): {recent_for or 'none'}"}],
-        temperature=0.4, think="off"))
+    cand_msgs = [
+        {"role": "system", "content": FORYOU_CANDIDATE_SYS.format(who=name)},
+        {"role": "user", "content": f"About {name}: {prof.get('persona') or '(unknown)'}\n"
+                                     f"Interests you follow for them (with meaning):\n{interest_lines}\n\n"
+                                     f"Already in their feed (do NOT repeat):\n- "
+                                     + ("\n- ".join(feed_titles) if feed_titles else "(empty)")
+                                     + f"\n\nRecently surfaced to them (don't repeat): {recent_for or 'none'}"}]
+    decide, _ = await structured.parsed(
+        structured.repairable(_vera, cand_msgs, temperature=0.4, think="off"),
+        structured.ForYouCandidate)
+    decide = decide or {}
     if not decide.get("surface") or not decide.get("query"):
         return None
     topic = (decide.get("topic") or "").strip()
@@ -317,19 +314,21 @@ async def _for_you(now_str, recent):
         interest_meaning = interest_name + (f" — {matched['gloss']}" if matched and matched.get("gloss") else "")
     else:
         interest_meaning = ", ".join(i["topic"] for i in interests)
-    rel = _parse_json(await _vera(
-        [{"role": "system", "content": RELEVANCE_SYS.format(who=name)},
-         {"role": "user", "content": f"Interest: {interest_meaning}\nCandidate topic: {topic}\nQuery: {query}"}],
-        temperature=0.2, think="off"))
-    if not rel.get("related"):
+    rel_msgs = [
+        {"role": "system", "content": RELEVANCE_SYS.format(who=name)},
+        {"role": "user", "content": f"Interest: {interest_meaning}\nCandidate topic: {topic}\nQuery: {query}"}]
+    rel, _ = await structured.parsed(
+        structured.repairable(_vera, rel_msgs, temperature=0.2, think="off"), structured.Relevance)
+    if not (rel or {}).get("related"):
         return None  # token-only match dies here — no research, no card
 
     # 3) substance gate — worth a full briefing, not just a mention
-    sub = _parse_json(await _vera(
-        [{"role": "system", "content": SUBSTANCE_SYS.format(who=name)},
-         {"role": "user", "content": f"Topic: {topic}\nWhy it may matter: {rel.get('link', '')}"}],
-        temperature=0.2, think="off"))
-    if not sub.get("briefing_worthy"):
+    sub_msgs = [
+        {"role": "system", "content": SUBSTANCE_SYS.format(who=name)},
+        {"role": "user", "content": f"Topic: {topic}\nWhy it may matter: {rel.get('link', '')}"}]
+    sub, _ = await structured.parsed(
+        structured.repairable(_vera, sub_msgs, temperature=0.2, think="off"), structured.Substance)
+    if not (sub or {}).get("briefing_worthy"):
         return None
 
     # 4) full research — the SAME pipeline as the morning briefing (one creation path)
@@ -469,9 +468,12 @@ async def tick(req: TickRequest):
         f"## What you know about {owner()} (memory)\n- " + ("\n- ".join(mems) if mems else "(none)") + "\n\n"
         f"## Recent outcomes (don't repeat these)\n{recent_txt}"
     )
-    decision = _parse_json(await _vera(
-        [{"role": "system", "content": DECIDE_SYS}, {"role": "user", "content": usr}],
-        temperature=0.5, think="off"))
+    decision, _ = await structured.parsed(
+        structured.repairable(_vera, [{"role": "system", "content": DECIDE_SYS},
+                                      {"role": "user", "content": usr}],
+                              temperature=0.5, think="off"),
+        structured.Decide)
+    decision = decision or {}
 
     out = {"ok": True, "now": now, "learned": [], "refined": False, "proposed": None, "errors": []}
 

@@ -117,10 +117,15 @@ def _save(r: Any) -> dict:
     return _norm(r)
 
 
+def _sentence_case(title: str) -> str:
+    t = title.strip()
+    return t[:1].upper() + t[1:] if t else t
+
+
 def create(list_name: str, title: str, notes: str | None = None, due: str | None = None) -> dict:
     cal = _find_calendar(list_name)
     r = EKReminder.reminderWithEventStore_(_store)
-    r.setTitle_(title)
+    r.setTitle_(_sentence_case(title))
     r.setCalendar_(cal)
     if notes:
         r.setNotes_(notes)

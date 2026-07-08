@@ -375,6 +375,43 @@ enum SelfTest {
                 print("SELFTEST ERROR: OWUI source mapping"); exit(1)
             }
             print("  source mapping OK (\(mapped.count) chips, unresolvable dropped)")
+
+            for preset in SchedulePreset.allCases {
+                guard SchedulePreset.match(preset.cron) == preset else {
+                    print("SELFTEST ERROR: schedule preset \(preset.rawValue) round-trip"); exit(1)
+                }
+            }
+            guard SchedulePreset.match("7 3 2 1 *") == nil else {
+                print("SELFTEST ERROR: unmatched cron should stay custom"); exit(1)
+            }
+
+            let draftJSON = """
+            {"kind": "river_gauge", "label": "River gauge", "icon": "water.waves",
+             "nominal_label": "normal", "blurb": "the local gauge", "schedule": "*/30 * * * *",
+             "providers": [{"id": "gauge_url", "label": "Gauge", "hint": "", "default": "https://g/x"}],
+             "options": [{"group": "Focus", "fields": [{"id": "f", "label": "F", "type": "text",
+                          "choices": [], "hint": "", "default": "x"}]}],
+             "pipeline": [{"block": "http_fetch", "params": {"url": "{providers.gauge_url}"}},
+                          {"block": "trip_band", "params": {"hi": 21.5}}]}
+            """
+            guard let dObj = try? JSONSerialization.jsonObject(with: Data(draftJSON.utf8)) as? [String: Any],
+                  var draft = VeinDraft.parse(dObj),
+                  draft.usedBlocks == ["http_fetch", "trip_band"],
+                  draft.hasBand, !draft.hasBar, draft.bandHi == "21.5" else {
+                print("SELFTEST ERROR: vein draft parse"); exit(1)
+            }
+            draft.bandLo = "5"
+            let enc = draft.encode()
+            guard let reparsed = VeinDraft.parse(enc), reparsed.bandLo == "5", reparsed.bandHi == "21.5",
+                  (enc["providers"] as? [[String: Any]])?.count == 1,
+                  (enc["options"] as? [[String: Any]])?.count == 1 else {
+                print("SELFTEST ERROR: vein draft encode round-trip"); exit(1)
+            }
+            let stripped = draft.stripping(["trip_band"])
+            guard stripped.usedBlocks == ["http_fetch"] else {
+                print("SELFTEST ERROR: vein draft tool stripping"); exit(1)
+            }
+            print("  vein builder OK (\(SchedulePreset.allCases.count) presets, draft round-trip, tool strip)")
         } catch {
             print("SELFTEST ERROR: \(error)")
             exit(1)

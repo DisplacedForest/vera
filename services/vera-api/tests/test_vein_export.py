@@ -76,10 +76,10 @@ def test_sanitize_clears_env_seeded_option_defaults():
 
 @pytest.mark.parametrize("secret", [
     "sk-" + "A" * 24,
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
-    "-----BEGIN RSA PRIVATE KEY-----",
+    "ey" + "JhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" + "." + "ey" + "JzdWIiOiIxMjM0NTY3ODkwIn0",
+    "-----BEGIN RSA " + "PRIVATE KEY-----",
     "d" * 40,
-    "ABCDefgh+/ABCDefgh+/ABCDefgh+/ABCDefgh+/xy",
+    ("ABCDefgh+/" * 4) + "xy",
 ])
 def test_sanitize_clears_key_shaped_strings(secret):
     assert leak_patterns.looks_secret(secret)

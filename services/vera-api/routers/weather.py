@@ -1,25 +1,19 @@
-"""Weather watch — proactive severe-weather pre-warnings as a Pulse card.
+"""Weather — the `weather_conditions` vein block plus the live current-conditions chip.
 
-Pulls the forecast from Open-Meteo (free, no key) in the configured TEMPERATURE_UNIT,
-flags severe conditions in the next few days, and if anything's worth warning about,
-has Vera write a short pre-warning card and injects it into the Pulse folder.
-Zero-floor: calm forecast = no card. The scheduler polls this a few times a day
-separately from the morning Pulse run, so big storms surface early.
+The block pulls the forecast from an Open-Meteo-compatible endpoint in the configured
+unit, flags severe conditions in the next few days, and emits at most one standing
+situation for the Weather vein; the engine composes the pre-warning card, updates it
+in place when the forecast shifts, and retires it when the forecast calms.
 """
 
-import hashlib
-import json
 import os
 import time
-from datetime import datetime
 
 import aiohttp
 from fastapi import APIRouter
-from pydantic import BaseModel
 
-from . import units
-from .pulse import DEFAULT_FOLDER, SUMMARY_SYS, TZ, _inject, _vera, store
-from .persona import home_region_is_us, location, owner, voiced
+from . import units, vein_engine
+from .persona import home_region_is_us, location
 
 router = APIRouter()
 
@@ -50,15 +44,19 @@ def _provider_url() -> str:
     return pulse_veins.provider_values("weather").get("forecast_url") or OPEN_METEO
 
 
-def _vein_unit() -> tuple[str, str]:
-    """(unit, label) for this run: the vein's unit option (store > TEMPERATURE_UNIT env >
-    fahrenheit)."""
-    from . import pulse_veins
-    u = str(pulse_veins.option_values("weather").get("unit") or "").strip().lower()
+def _unit_from(value) -> tuple[str, str]:
+    u = str(value or "").strip().lower()
     if not u.startswith("c") and not u.startswith("f"):
         u = units.unit()
     u = "celsius" if u.startswith("c") else "fahrenheit"
     return u, ("C" if u == "celsius" else "F")
+
+
+def _vein_unit() -> tuple[str, str]:
+    """(unit, label) for this run: the vein's unit option (store > TEMPERATURE_UNIT env >
+    fahrenheit)."""
+    from . import pulse_veins
+    return _unit_from(pulse_veins.option_values("weather").get("unit"))
 
 # Open-Meteo WMO weather codes worth a heads-up
 SEVERE_CODES = {
@@ -122,22 +120,6 @@ async def current_label(lat: float | None = None, lon: float | None = None) -> s
         return _current["label"]  # stale-but-real if we ever had one, else None -> N/A
 
 
-# Weather is a SINGLE living card. The visible forecast's signature is stored in the card's `category`
-# field so a re-poll of an unchanged forecast can skip regeneration and update in place, not duplicate.
-def _concerns_sig(concerns) -> str:
-    """Stable hash of the *displayed* forecast (rounded to what the card shows), so trivial
-    sub-degree drift between polls doesn't count as a change but a real shift does."""
-    norm = [{
-        "date": c.get("date"),
-        "flags": sorted(c.get("flags") or []),
-        "high": round(c["high"]) if c.get("high") is not None else None,
-        "low": round(c["low"]) if c.get("low") is not None else None,
-        "gust": round(c["gust_mph"]) if c.get("gust_mph") is not None else None,
-        "precip": round(c["precip_pct"]) if c.get("precip_pct") is not None else None,
-    } for c in concerns]
-    return hashlib.sha1(json.dumps(norm, sort_keys=True).encode()).hexdigest()[:12]
-
-
 def resolve_thresholds(unit: str, heat: float | None, freeze: float | None) -> tuple[float, float]:
     """The heat/freeze flag thresholds, interpreted in the configured TEMPERATURE_UNIT.
     Unset thresholds default to the same physical bar in either unit (100F/38C extreme heat,
@@ -148,18 +130,6 @@ def resolve_thresholds(unit: str, heat: float | None, freeze: float | None) -> t
     if freeze is None:
         freeze = -9.0 if celsius else 15.0
     return heat, freeze
-
-
-class WeatherRequest(BaseModel):
-    latitude: float | None = None
-    longitude: float | None = None
-    forecast_days: int = 3
-    # Threshold precedence: an explicit request value > the weather vein's stored option >
-    # the default (45 mph gusts; heat/freeze are unit-appropriate, see resolve_thresholds).
-    gust_mph_threshold: float | None = None
-    heat_threshold: float | None = None
-    freeze_threshold: float | None = None
-    pulse_folder_id: str | None = None
 
 
 def _forecast_sources(lat, lon):
@@ -173,48 +143,24 @@ def _forecast_sources(lat, lon):
     return []
 
 
-@router.post("/weather/check", tags=["weather"])
-async def check(req: WeatherRequest):
-    from . import pulse_veins
-    if not pulse_veins.is_enabled("weather"):
-        return {"ok": False, "disabled": True, "detail": pulse_veins.gate_reason("weather")}
-    vein_opts = pulse_veins.option_values("weather")
-    lat = req.latitude if req.latitude is not None else LAT
-    lon = req.longitude if req.longitude is not None else LON
-    if lat is None or lon is None:
-        return {"ok": False, "configured": False,
-                "error": "weather unconfigured. Set WEATHER_LAT and WEATHER_LON"}
-    folder = req.pulse_folder_id or DEFAULT_FOLDER
-    u, lbl = _vein_unit()
-    # explicit request values win; else the vein's stored thresholds; else unit-appropriate defaults
-    heat_threshold, freeze_threshold = resolve_thresholds(
-        u,
-        req.heat_threshold if req.heat_threshold is not None else vein_opts.get("heat_threshold"),
-        req.freeze_threshold if req.freeze_threshold is not None else vein_opts.get("freeze_threshold"))
-    gust_threshold = req.gust_mph_threshold if req.gust_mph_threshold is not None else (
-        vein_opts.get("gust_threshold") if vein_opts.get("gust_threshold") is not None else 45.0)
+async def _fetch_daily(provider: str, lat: float, lon: float, days: int, unit: str) -> dict:
     params = {
         "latitude": lat,
         "longitude": lon,
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max",
         "timezone": TZ_NAME,
-        "forecast_days": req.forecast_days,
-        "temperature_unit": u,
+        "forecast_days": days,
+        "temperature_unit": unit,
         "wind_speed_unit": "mph",
         "precipitation_unit": "inch",
     }
-    out = {"ok": True, "lat": lat, "lon": lon, "severe": False, "concerns": [], "injected": False}
+    async with aiohttp.ClientSession() as s:
+        async with s.get(provider, params=params, timeout=aiohttp.ClientTimeout(total=20)) as r:
+            return await r.json()
 
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(_provider_url(), params=params, timeout=aiohttp.ClientTimeout(total=20)) as r:
-                data = await r.json()
-    except Exception as e:
-        out["ok"] = False
-        out["error"] = f"Open-Meteo unreachable: {e}"
-        return out
 
-    daily = data.get("daily", {})
+def _concern_days(daily: dict, gust_threshold: float, heat_threshold: float,
+                  freeze_threshold: float, lbl: str) -> list[dict]:
     days = daily.get("time", []) or []
 
     def col(name):
@@ -223,7 +169,7 @@ async def check(req: WeatherRequest):
     codes, gusts = col("weather_code"), col("wind_gusts_10m_max")
     tmaxs, tmins = col("temperature_2m_max"), col("temperature_2m_min")
     pops = col("precipitation_probability_max")
-
+    concerns = []
     for i, d in enumerate(days):
         flags = []
         if codes[i] in SEVERE_CODES:
@@ -235,73 +181,48 @@ async def check(req: WeatherRequest):
         if tmins[i] is not None and tmins[i] <= freeze_threshold:
             flags.append(f"hard freeze {tmins[i]:.0f}{lbl}")
         if flags:
-            out["concerns"].append({
-                "date": d, "flags": flags,
-                "high": tmaxs[i], "low": tmins[i],
-                "gust_mph": gusts[i], "precip_pct": pops[i],
-            })
+            concerns.append({"date": d, "flags": flags, "high": tmaxs[i], "low": tmins[i],
+                             "gust_mph": gusts[i], "precip_pct": pops[i]})
+    return concerns
 
-    # Weather is ONE living card, not a new entry per poll. Find the active weather card(s).
-    existing = [c for c in store.list_cards()
-                if c.get("kind") == "weather" and c.get("status") in ("new", "seen")]
-    existing.sort(key=lambda c: c.get("created_at") or 0, reverse=True)
 
-    if not out["concerns"]:
-        for c in existing:
-            store.delete_card(c["id"])  # forecast cleared — retire the watch, don't leave it lingering
-        return out  # zero-floor: calm forecast, no card
+def _fmt(v) -> str:
+    return f"{v:.0f}" if v is not None else "?"
 
-    out["severe"] = True
-    current = existing[0] if existing else None
-    for c in existing[1:]:
-        store.delete_card(c["id"])  # collapse any legacy duplicates down to one
 
-    sig = _concerns_sig(out["concerns"])
-    today = datetime.now(TZ).date().isoformat()
-    title = "Weather watch · " + ", ".join(out["concerns"][0]["flags"][:2])
-    sources = _forecast_sources(lat, lon)
-
-    # Unchanged forecast: keep the one card, just resurface it (status -> new). No model call.
-    if current and current.get("category") == sig:
-        store.insert_card({**current, "status": "new", "day": today})
-        out["injected"] = True
-        out["title"] = current.get("title")
-        out["unchanged"] = True
-        return out
-
-    # New or changed forecast: (re)compose the card.
-    sys = (
-        f"Write a short severe-weather pre-warning card for {owner()}. "
-        "Lead with the headline risk and WHEN it hits, then 2-3 sentences on what to expect and one practical "
-        "prep nudge. GitHub-flavored markdown, no preamble."
-    )
-    usr = (
-        f"Forecast flags for the next {req.forecast_days} days near {location()}:\n"
-        + "\n".join(
-            f"- {c['date']}: {', '.join(c['flags'])} "
-            f"(high {c['high']}{lbl} / low {c['low']}{lbl}, gusts {c['gust_mph']} mph, precip {c['precip_pct']}%)"
-            for c in out["concerns"]
-        )
-    )
-    body = (await _vera([{"role": "system", "content": voiced(sys)}, {"role": "user", "content": usr}], temperature=0.4)).strip()
+async def _block_weather_conditions(items, params, ctx):
+    if LAT is None or LON is None:
+        raise vein_engine.BlockError(
+            "weather_conditions", "weather unconfigured. Set WEATHER_LAT and WEATHER_LON")
+    opts = ctx.get("options") or {}
+    u, lbl = _unit_from(opts.get("unit"))
+    heat_threshold, freeze_threshold = resolve_thresholds(
+        u, opts.get("heat_threshold"), opts.get("freeze_threshold"))
+    gust_threshold = (opts.get("gust_threshold")
+                      if opts.get("gust_threshold") is not None else 45.0)
+    provider = (ctx.get("providers") or {}).get("forecast_url") or OPEN_METEO
+    days = int(params.get("forecast_days", 3))
     try:
-        summary = (await _vera(
-            [{"role": "system", "content": SUMMARY_SYS}, {"role": "user", "content": body[:1500]}],
-            temperature=0.3,
-        )).strip().strip('"').replace("\n", " ")
-    except Exception:
-        summary = None
+        data = await _fetch_daily(provider, LAT, LON, days, u)
+    except Exception as e:
+        raise vein_engine.BlockError("weather_conditions", f"forecast unreachable: {e}")
+    concerns = _concern_days(data.get("daily", {}), gust_threshold,
+                             heat_threshold, freeze_threshold, lbl)
+    if not concerns:
+        return items
+    lines = "\n".join(
+        f"- {c['date']}: {', '.join(c['flags'])} "
+        f"(high {_fmt(c['high'])}{lbl} / low {_fmt(c['low'])}{lbl}, "
+        f"gusts {_fmt(c['gust_mph'])} mph, precip {_fmt(c['precip_pct'])}%)"
+        for c in concerns)
+    item = {"key": "weather:watch",
+            "title": "Weather watch · " + ", ".join(concerns[0]["flags"][:2]),
+            "content": f"forecast flags for the next {days} days near {location()}:\n{lines}",
+            "severity": "alert"}
+    sources = _forecast_sources(LAT, LON)
+    if sources:
+        item["sources"] = sources
+    return items + [item]
 
-    # Weather lives in its own chip, not the research feed. The forecast signature rides in `category`
-    # (off the visible body) so the next poll can detect an unchanged forecast.
-    if current:
-        # Edit the existing card in place — same id/created_at, refreshed content, resurfaced.
-        store.insert_card({**current, "status": "new", "day": today, "title": title,
-                           "summary": summary or "", "body": body, "sources": sources,
-                           "severity": "alert", "category": sig})
-    else:
-        await _inject(title, body, kind="weather", severity="alert", summary=summary,
-                      sources=sources, category=sig)
-    out["injected"] = True
-    out["title"] = title
-    return out
+
+vein_engine.register("weather_conditions", _block_weather_conditions, monitor=True)

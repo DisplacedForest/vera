@@ -1,9 +1,8 @@
-"""Available stack updates — a System-vein producer.
+"""Available stack updates — the `stack_updates` vein block for the System vein.
 
-Like `health`, this is a scheduled producer that folds into the System chip rather than owning its
-own vein: when updates are available across the stack it injects ONE `kind=status,
-category=update` card (renders under the System detail's Updates group); when everything
-is current it clears the card and posts nothing (zero-floor).
+The block emits ONE standing situation for the current pending set (`kind=status,
+category=update`, rendered under the System detail's Updates group); the engine
+updates the card when the set changes and retires it when everything is current.
 
 Two read-only sources, both already computed upstream:
 
@@ -13,11 +12,10 @@ Two read-only sources, both already computed upstream:
      we filter to infrastructure and group by source (platform is absent from /api/states).
   2. **Unraid container images** — `/var/lib/docker/unraid-update-status.json`, Unraid DockerMan's
      own per-image local-vs-remote digest comparison. vera-api can't read the host file from inside
-     its container: mount it read-only (UNRAID_UPDATE_STATUS_PATH), or have any host job POST the
-     JSON to this endpoint.
+     its container: mount it read-only (UNRAID_UPDATE_STATUS_PATH).
 
 Infra-only by design: per-device IoT firmware (shelly/zha/matter/…) is dropped so the card stays
-quiet and meaningful. This producer only reads — applying an update goes through the gated
+quiet and meaningful. The block only reads — applying an update goes through the gated
 confirm→apply action staged on each card row.
 """
 import asyncio
@@ -27,10 +25,9 @@ import uuid
 
 import aiohttp
 from fastapi import APIRouter
-from pydantic import BaseModel
 
+from . import vein_engine
 from . import pulse_store as store
-from .pulse import _inject
 
 router = APIRouter()
 
@@ -159,12 +156,6 @@ def _component_action(c: dict) -> tuple[str, dict] | None:
     return None
 
 
-def _signature(components: list[dict]) -> str:
-    """Stable, order-independent set of component ids — dedups runs so an unchanged set doesn't
-    re-alert, while a changed set (same count, different members) does."""
-    return ";".join(sorted(c["id"] for c in components))
-
-
 def _summary_body(components: list[dict]) -> str:
     """A short grouped text overview for the card body (the per-row apply affordance lives in
     `items`; this is the at-a-glance fallback)."""
@@ -224,19 +215,6 @@ async def _templated_names() -> set[str] | None:
         return None
 
 
-# ---- endpoint ----
-
-class UpdateCheck(BaseModel):
-    # The raw contents of Unraid's /var/lib/docker/unraid-update-status.json, posted by the docker
-    # host's cron (vera-api can't read the host file from inside its container). Empty = skip containers.
-    docker_status: dict = {}
-
-
-def _active_cards() -> list[dict]:
-    return [c for c in store.list_cards()
-            if c.get("kind") == "status" and c.get("category") == "update"]
-
-
 def _build_items(components: list[dict], templated: set[str] | None = None) -> list[dict]:
     """Shape each component into a card item, staging an apply action (token) for the actionable
     ones. Flag-only components (Unraid OS, or containers Unraid can't update) get no action
@@ -267,64 +245,43 @@ def _build_items(components: list[dict], templated: set[str] | None = None) -> l
     return items
 
 
-@router.post("/updates/check", tags=["updates"])
-async def check(req: UpdateCheck):
-    """Gather available updates from HA + the container source, and reconcile the single System
-    update card. Runs from the built-in scheduler (or any cron). Zero-floor + dedup: unchanged set
-    leaves the card in place (no re-incremented unread), a changed set replaces it, nothing pending
-    clears it. Each actionable row carries a Confirm-to-apply action."""
-    from . import pulse_veins
-    if not pulse_veins.is_enabled("status"):
-        return {"ok": False, "disabled": True, "detail": pulse_veins.gate_reason("status")}
-    sources = pulse_veins.option_values("status")
-    docker_status = req.docker_status
-    if not docker_status:
-        # Container-update visibility needs the host's update-status JSON. A caller (host cron)
-        # can POST it; otherwise read it from an optional read-only mount so the built-in
-        # scheduler gets the same data. Absent both, container checks are skipped cleanly.
-        path = os.environ.get("UNRAID_UPDATE_STATUS_PATH", "").strip()
-        if path:
-            try:
-                with open(path, encoding="utf-8") as f:
-                    docker_status = json.load(f)
-            except (OSError, ValueError):
-                docker_status = {}
-    components = _docker_pending(docker_status)
-    ha_detail = ""
+def _read_status_file() -> dict:
+    path = os.environ.get("UNRAID_UPDATE_STATUS_PATH", "").strip()
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+async def _gather_components(sources: dict) -> list[dict]:
+    components = _docker_pending(_read_status_file())
     if _ha()[1]:
         try:
             states, platforms = await asyncio.gather(_ha_states(), _ha_platforms())
             components += _ha_pending(states, platforms)
-        except Exception as e:  # HA unreachable — still report containers; note the gap.
-            ha_detail = f"HA unreachable: {str(e)[:70]}"
-    # The vein's monitored-source toggles scope what the card carries (all default on).
-    components = _scope_components(components, sources)
+        except Exception:
+            pass
+    return _scope_components(components, sources)
 
-    signature = _signature(components)
-    existing = _active_cards()
-    out = {"ok": True, "total": len(components), "posted": False, "cleared": 0, "ha_error": ha_detail}
 
-    if not components:  # everything current — clear any stale card
-        for c in existing:
-            store.delete_card(c["id"])
-            out["cleared"] += 1
-        return out
-
-    if any(c.get("change_set") == signature for c in existing):  # dedup: same set
-        for c in existing:  # collapse any duplicates, keep the matching one
-            if c.get("change_set") != signature:
-                store.delete_card(c["id"])
-                out["cleared"] += 1
-        return out
-
-    for c in existing:  # set changed — replace
-        store.delete_card(c["id"])
-        out["cleared"] += 1
+async def _block_stack_updates(items, params, ctx):
+    components = await _gather_components(ctx.get("options") or {})
+    if not components:
+        return items
     n = len(components)
-    title = f"{n} update{'s' if n != 1 else ''} available"
-    templated = await _templated_names() if any(c["group"] == "Containers" for c in components) else None
-    await _inject(title, _summary_body(components), summary=title,
-                  items=_build_items(components, templated),
-                  kind="status", category="update", severity="notice", change_set=signature)
-    out["posted"] = True
-    return out
+    item = {"key": "updates", "title": f"{n} update{'s' if n != 1 else ''} available",
+            "content": _summary_body(components), "severity": "notice", "category": "update"}
+    active = [c for c in store.list_cards()
+              if c.get("kind") == ctx.get("kind") and c.get("situation_key") == "updates"
+              and c.get("status") in ("new", "seen")]
+    if not any(c.get("change_set") == vein_engine._content_sig(item) for c in active):
+        templated = (await _templated_names()
+                     if any(c["group"] == "Containers" for c in components) else None)
+        item["items"] = _build_items(components, templated)
+    return items + [item]
+
+
+vein_engine.register("stack_updates", _block_stack_updates, monitor=True)

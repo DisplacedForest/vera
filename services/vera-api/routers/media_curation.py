@@ -1,27 +1,27 @@
-"""Weekly media curation — Vera as a tasteful media librarian. EXPERIMENTAL: this pipeline
-has run once at scale; treat its picks as suggestions and keep the digest gate on.
+"""Weekly media curation — the Media vein's `media_candidates` and `media_digest` blocks.
 
-Once a week: build a candidate pool from Overseerr/TMDB discover + a web_search zeitgeist pass,
-let Vera select against the household's configured taste profile (popularity is a candidate pool,
-not a ranking), drop anything already in the library or previously decided on, and emit ONE
-multi-item approve/skip digest card in the Media vein. Each pick is staged as an
-`overseerr_request` action, so approving it downloads the title and is audited/undoable.
+Once a week: `media_candidates` builds a pool from Overseerr/TMDB discover + a web_search
+zeitgeist pass and drops anything already in the library or previously decided on; the
+vein's `llm_judge` gates each candidate against the household's configured taste profile
+(popularity is a candidate pool, not a ranking); `media_digest` trims to the cap and emits
+ONE multi-item approve/skip digest situation. Each pick is staged as an `overseerr_request`
+action, so approving it downloads the title and is audited/undoable.
 
-Taste is config, not code: MEDIA_CURATION_TASTE carries the household's hard rules and
-preferences and steers both the zeitgeist title extraction and the final selection. Enabled via
-the overseerr integration's media_curation feature; triggered weekly by the built-in scheduler
-hitting POST /media/curate.
+Taste is config, not code: the vein's taste option (env MEDIA_CURATION_TASTE) steers both
+the zeitgeist title extraction and the judge bar.
 """
 import json
 import os
+from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from . import media_store as mstore
 from . import overseerr
+from . import vein_engine
 from . import websearch
-from .actions import DigestItem, propose_digest_card
-from .pulse import _vera
+from .actions import DigestItem
+from .pulse import TZ, _vera
 
 router = APIRouter()
 
@@ -67,7 +67,7 @@ async def _discover_pool() -> list[dict]:
     return pool
 
 
-async def _zeitgeist_pool() -> list[dict]:
+async def _zeitgeist_pool(taste: str | None = None) -> list[dict]:
     """web_search for what's culturally in the air, have Vera name titles, resolve each to a real
     Overseerr entry (grounded tmdb id + availability)."""
     try:
@@ -81,7 +81,7 @@ async def _zeitgeist_pool() -> list[dict]:
         return []
     out = await _vera([
         {"role": "system", "content": "You extract concrete movie/TV titles people are currently "
-         "talking about from web snippets. " + _taste() + " Return ONLY JSON: "
+         "talking about from web snippets. " + (taste or _taste()) + " Return ONLY JSON: "
          '{"titles": ["Title 1", "Title 2", ...]} (up to 12).'},
         {"role": "user", "content": context},
     ], temperature=0.3)
@@ -118,74 +118,53 @@ def _dedupe_and_filter(pool: list[dict]) -> list[dict]:
     return out
 
 
-async def _select(pool: list[dict], cap: int) -> list[dict]:
-    """Vera picks up to `cap` from the pool, enforcing the taste rules. Returns the chosen pool items."""
-    catalog = "\n".join(
-        f'{i}. {m["title"]} ({m.get("year") or "?"}) [{m["media_type"]}] — {(m.get("overview") or "")[:160]}'
-        for i, m in enumerate(pool)
-    )
-    out = await _vera([
-        {"role": "system", "content":
-         "You're curating what to add to the household's media library. From the numbered "
-         f"candidates, choose UP TO {cap} worth adding. " + _taste() + " Return ONLY JSON: "
-         '{"picks": [{"i": <number>, "reason": "<=8 words"}]}'},
-        {"role": "user", "content": catalog},
-    ], temperature=0.4)
-    picks = _json(out).get("picks") or []
-    chosen = []
-    for p in picks:
-        try:
-            i = int(p.get("i"))
-        except (TypeError, ValueError):
-            continue
-        if 0 <= i < len(pool):
-            m = dict(pool[i])
-            m["reason"] = (p.get("reason") or "").strip()
-            chosen.append(m)
-        if len(chosen) >= cap:
-            break
-    return chosen
+def _taste_from(ctx) -> str:
+    return (str((ctx.get("options") or {}).get("taste") or "").strip() or _NEUTRAL_TASTE)
 
 
-@router.post("/media/curate", tags=["media"])
-async def curate(force: bool = False):
-    """Run the weekly curation and post the digest card. Gated behind the overseerr
-    integration's experimental media_curation feature; `force` bypasses the gate for
-    a deliberate manual run (the overseerr integration itself must still be enabled)."""
-    from . import integrations, pulse_veins
-    if not force and not pulse_veins.is_enabled("media"):
-        raise HTTPException(status_code=503, detail=pulse_veins.gate_reason("media"))
-    if not force and not integrations.feature_enabled("overseerr", "media_curation"):
-        raise HTTPException(
-            status_code=503,
-            detail="media curation is off. Enable the overseerr integration's media_curation feature")
+async def _block_media_candidates(items, params, ctx):
+    pool = _dedupe_and_filter(await _discover_pool() + await _zeitgeist_pool(_taste_from(ctx)))
+    return items + [{
+        "key": f"{m['media_type']}:{m['id']}",
+        "title": f"{m['title']} ({m.get('year') or '?'})",
+        "content": f"[{m['media_type']}] {(m.get('overview') or '')[:160]}",
+        "media_type": m["media_type"], "tmdb_id": m["id"], "media_title": m["title"],
+        "year": m.get("year"), "poster": m.get("poster"),
+    } for m in pool[:POOL_MAX]]
 
-    pool = _dedupe_and_filter(await _discover_pool() + await _zeitgeist_pool())
-    if not pool:
-        return {"ok": True, "candidates": 0, "picked": 0, "note": "no eligible candidates"}
 
-    vein_opts = pulse_veins.option_values("media")
-    cap = int(vein_opts.get("cap") or CAP)
-    chosen = await _select(pool[:POOL_MAX], cap)
-    if not chosen:
-        return {"ok": True, "candidates": len(pool), "picked": 0, "note": "nothing met the bar"}
-
-    items = []
-    for m in chosen:
-        items.append(DigestItem(
+async def _block_media_digest(items, params, ctx):
+    if not items:
+        return []
+    from .actions import _build_digest_items
+    cap = int((ctx.get("options") or {}).get("cap") or CAP)
+    rows = []
+    for m in items[:cap]:
+        rows.append(DigestItem(
             verb="overseerr_request",
-            args={"media_type": m["media_type"], "media_id": m["id"], "title": m["title"]},
-            title=m["title"],
+            args={"media_type": m["media_type"], "media_id": m["tmdb_id"],
+                  "title": m["media_title"]},
+            title=m["media_title"],
             subtitle=" · ".join(filter(None, [
                 str(m["year"]) if m.get("year") else None,
                 "Movie" if m["media_type"] == "movie" else "TV",
-                m.get("reason") or None,
+                (m.get("judge_reason") or "").strip() or None,
             ])),
             media_type=m["media_type"],
-            tmdb_id=m["id"],
+            tmdb_id=m["tmdb_id"],
             poster=m.get("poster"),
-            link=await overseerr.detail_link(m["media_type"], m["id"]),
+            link=await overseerr.detail_link(m["media_type"], m["tmdb_id"]),
         ))
-    body = f"This week I'd add {len(items)} to the library. Tap add to grab each, or skip to pass."
-    res = await propose_digest_card("Worth adding this week", body, items, kind="media")
-    return {"ok": True, "candidates": len(pool), "picked": len(items), "card_id": res["card_id"]}
+    year, week, _ = datetime.now(TZ).isocalendar()
+    n = len(rows)
+    return [{"key": f"digest:{year}-W{week:02d}",
+             "title": "Worth adding this week",
+             "content": f"This week I'd add {n} to the library. "
+                        "Tap add to grab each, or skip to pass.",
+             "items": await _build_digest_items(rows)}]
+
+
+vein_engine.register("media_candidates", _block_media_candidates)
+vein_engine.register("media_digest", _block_media_digest)
+
+

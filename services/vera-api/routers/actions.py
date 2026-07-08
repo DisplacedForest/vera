@@ -453,16 +453,16 @@ async def _apply_item(item: dict, decision: str) -> dict:
 
 
 def _repoll_updates(card: dict, res: dict) -> None:
-    """After a successful apply on the stack-updates card, re-run the updates check so the card
-    reflects reality without waiting for the daily scheduled check. Fire-and-forget and best-effort
-    (the check does live HA/Unraid I/O); the applying client also refreshes."""
+    """After a successful apply on the stack-updates card, re-run the System vein so the card
+    reflects reality without waiting for the next scheduled run. Fire-and-forget and best-effort
+    (the run does live HA/Unraid I/O); the applying client also refreshes."""
     if (card or {}).get("category") != "update" or not res.get("ok"):
         return
 
     async def _run():
         try:
-            from . import updates
-            await updates.check(updates.UpdateCheck())
+            from . import vein_engine
+            await vein_engine.run_vein("status", manual=True)
         except Exception:
             pass
     asyncio.create_task(_run())

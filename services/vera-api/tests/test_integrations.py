@@ -207,7 +207,7 @@ def test_scheduler_jobs_inherit_feature_gates(monkeypatch):
 def test_scheduler_manual_run_refused_when_gated():
     from routers import scheduler as sch
     with pytest.raises(Exception) as e:
-        asyncio.run(sch.run_job("media_curate"))
+        asyncio.run(sch.run_job("vein_media"))
     assert getattr(e.value, "status_code", None) == 409
 
 

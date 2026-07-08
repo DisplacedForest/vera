@@ -69,8 +69,8 @@ def test_jobs_view_covers_registry_with_next_runs():
 
 
 def test_outcome_recording():
-    store.record_outcome("weather", True, "ok: 0 concerns")
-    j = sch._effective("weather", store.overrides()["weather"])
+    store.record_outcome("vein_weather", True, "ok: 0 concerns")
+    j = sch._effective("vein_weather", store.overrides()["vein_weather"])
     assert j["last_run"]["ok"] is True
     assert "concerns" in j["last_run"]["detail"]
 
@@ -82,8 +82,8 @@ def test_fire_refuses_while_vein_gate_closed(monkeypatch):
         fired.append(True)
         return {"ok": True}
 
-    monkeypatch.setitem(sch.REGISTRY, "weather", ("Weather check", "0 */6 * * *", handler))
-    asyncio.run(sch._fire("weather"))  # weather vein off -> the gate refuses the fire
+    monkeypatch.setitem(sch.REGISTRY, "vein_weather", ("Weather vein run", "0 */6 * * *", handler))
+    asyncio.run(sch._fire("vein_weather"))  # weather vein off -> the gate refuses the fire
     assert not fired
 
 

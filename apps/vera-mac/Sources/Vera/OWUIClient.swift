@@ -424,11 +424,12 @@ struct OWUIClient: Sendable {
         _ = try? await URLSession.shared.data(for: r)
     }
 
-    /// Force a fresh stack-updates check (POST /updates/check). Returns true on a 2xx, so the
-    /// caller can refresh the feed once the card has been reconciled against current reality.
+    /// Force a fresh System vein run (POST /pulse/veins/status/run), covering the health probes
+    /// and the stack-updates check. Returns true on a 2xx, so the caller can refresh the feed
+    /// once the card has been reconciled against current reality.
     @discardableResult
     func checkUpdatesNow() async -> Bool {
-        guard let url = veraAPI("/updates/check") else { return false }
+        guard let url = veraAPI("/pulse/veins/status/run") else { return false }
         var r = URLRequest(url: url)
         r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")

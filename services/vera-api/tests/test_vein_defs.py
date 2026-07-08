@@ -39,11 +39,26 @@ def _watcher(kind="geopolitics", **over):
 def test_shipped_files_load_and_validate():
     defs = vein_defs.shipped()
     assert [d["kind"] for d in defs] == ["status", "weather", "signals", "media"]
-    assert all(d.get("producer_jobs") for d in defs)
+    by_kind = {d["kind"]: d for d in defs}
+    for kind in ("status", "weather", "media"):
+        assert by_kind[kind].get("pipeline") and by_kind[kind].get("schedule")
+    assert by_kind["signals"].get("producer_jobs")
 
 
 def test_shipped_matches_catalog_module():
     assert pulse_veins.VEINS == vein_defs.shipped()
+
+
+def test_shipped_skips_pipeline_draft_siblings(monkeypatch, tmp_path):
+    shipped_dir = tmp_path / "veins"
+    shipped_dir.mkdir()
+    (shipped_dir / "status.json").write_text(json.dumps({
+        "kind": "status", "label": "System", "icon": "gearshape",
+        "producer_jobs": ["updates"]}))
+    (shipped_dir / "status.pipeline.json").write_text("{not even json")
+    monkeypatch.setattr(vein_defs, "SHIPPED_DIR", str(shipped_dir))
+    monkeypatch.setattr(vein_defs, "_shipped_cache", None)
+    assert [d["kind"] for d in vein_defs.shipped()] == ["status"]
 
 
 # --------------------------------------------------------------------------- custom origin

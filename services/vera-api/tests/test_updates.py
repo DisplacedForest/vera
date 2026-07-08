@@ -96,19 +96,6 @@ def test_component_action_routing():
     assert u._component_action({"group": "Unraid OS", "id": "update.unraid_update"}) is None
 
 
-def test_signature_set_based():
-    components = [
-        {"id": "docker:x/radarr:latest"},
-        {"id": "update.bubble_card_update"},
-        {"id": "update.unraid_management_agent_update"},
-    ]
-    # Order-independent.
-    assert u._signature(components) == u._signature(list(reversed(components)))
-    # A different member set -> different signature (even if count is identical).
-    swapped = components[:2] + [{"id": "update.udmpro"}]
-    assert u._signature(swapped) != u._signature(components)
-
-
 def test_summary_body_grouped_in_order():
     components = [
         {"group": "HACS", "name": "bubble card"},

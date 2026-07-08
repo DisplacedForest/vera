@@ -5,7 +5,12 @@
   "order": 0,
   "nominal_label": "nominal",
   "blurb": "stack health and pending updates across your monitored sources",
-  "producer_jobs": ["updates", "healthcheck"],
+  "pipeline": [
+    {"block": "service_health"},
+    {"block": "stack_updates"},
+    {"block": "llm_compose"}
+  ],
+  "schedule": "*/15 * * * *",
   "requires": [],
   "providers": [],
   "options": [

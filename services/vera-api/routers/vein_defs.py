@@ -34,7 +34,7 @@ def shipped() -> list[dict]:
     if _shipped_cache is None:
         defs = []
         for name in sorted(os.listdir(SHIPPED_DIR)):
-            if not name.endswith(".json"):
+            if not name.endswith(".json") or name.endswith(".pipeline.json"):
                 continue
             path = os.path.join(SHIPPED_DIR, name)
             try:

@@ -97,11 +97,50 @@ def _record(msg: dict):
     _state["last_event_ts"] = ts
 
 
+def _on_text(data: str, ctl: dict):
+    msg = json.loads(data)
+    if msg.get("type") == "event":
+        try:
+            _record(msg)
+        except Exception as e:
+            _state["last_error"] = f"record: {e}"
+    now = time.time()
+    if now - ctl["last_purge"] > 86400:  # daily retention sweep, inline
+        try:
+            store.purge()
+            series_store.purge()
+        except Exception:
+            pass
+        ctl["last_purge"] = now
+
+
+async def _session(url: str, token: str, ctl: dict) -> bool:
+    async with aiohttp.ClientSession() as s:
+        async with s.ws_connect(_ws_url(url), heartbeat=30, timeout=aiohttp.ClientTimeout(total=30)) as ws:
+            await ws.receive_json()  # {"type":"auth_required"}
+            await ws.send_json({"type": "auth", "access_token": token})
+            ack = await ws.receive_json()
+            if ack.get("type") != "auth_ok":
+                _state["last_error"] = f"auth failed: {ack.get('type')}"
+                await asyncio.sleep(30)
+                return False
+            for i, et in enumerate(EVENT_TYPES, start=1):
+                await ws.send_json({"id": i, "type": "subscribe_events", "event_type": et})
+            _state["connected"] = True
+            _state["last_error"] = None
+            ctl["backoff"] = 1
+            async for raw in ws:
+                if raw.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    break
+                if raw.type == aiohttp.WSMsgType.TEXT:
+                    _on_text(raw.data, ctl)
+    return True
+
+
 async def _run():
     """Maintain the HA WebSocket subscription forever, reconnecting on any drop."""
     _state["started_at"] = int(time.time())
-    backoff = 1
-    last_purge = 0.0
+    ctl = {"backoff": 1, "last_purge": 0.0}
     while True:
         try:
             url, token = _ha()  # re-read per attempt so config edits apply on reconnect
@@ -109,45 +148,15 @@ async def _run():
                 _state["last_error"] = "home_assistant integration unconfigured"
                 await asyncio.sleep(30)
                 continue
-            async with aiohttp.ClientSession() as s:
-                async with s.ws_connect(_ws_url(url), heartbeat=30, timeout=aiohttp.ClientTimeout(total=30)) as ws:
-                    await ws.receive_json()  # {"type":"auth_required"}
-                    await ws.send_json({"type": "auth", "access_token": token})
-                    ack = await ws.receive_json()
-                    if ack.get("type") != "auth_ok":
-                        _state["last_error"] = f"auth failed: {ack.get('type')}"
-                        await asyncio.sleep(30)
-                        continue
-                    for i, et in enumerate(EVENT_TYPES, start=1):
-                        await ws.send_json({"id": i, "type": "subscribe_events", "event_type": et})
-                    _state["connected"] = True
-                    _state["last_error"] = None
-                    backoff = 1
-                    async for raw in ws:
-                        if raw.type == aiohttp.WSMsgType.TEXT:
-                            msg = json.loads(raw.data)
-                            if msg.get("type") == "event":
-                                try:
-                                    _record(msg)
-                                except Exception as e:
-                                    _state["last_error"] = f"record: {e}"
-                            now = time.time()
-                            if now - last_purge > 86400:  # daily retention sweep, inline
-                                try:
-                                    store.purge()
-                                    series_store.purge()
-                                except Exception:
-                                    pass
-                                last_purge = now
-                        elif raw.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                            break
+            if not await _session(url, token, ctl):
+                continue
         except asyncio.CancelledError:
             raise
         except Exception as e:
             _state["last_error"] = str(e)
         _state["connected"] = False
-        await asyncio.sleep(min(backoff, 60))
-        backoff = min(backoff * 2, 60)
+        await asyncio.sleep(min(ctl["backoff"], 60))
+        ctl["backoff"] = min(ctl["backoff"] * 2, 60)
 
 
 async def _start_capture():

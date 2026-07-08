@@ -42,7 +42,7 @@ def _harness(tmp_path, monkeypatch):
 
 def _vera_for(decide):
     """Dispatch on the system prompt: candidate -> `decide`, the two gates -> pass."""
-    async def fake(messages, temperature=0.4):
+    async def fake(messages, temperature=0.4, think=None):
         sys_p = messages[0]["content"]
         if "between briefings" in sys_p:
             return json.dumps(decide)
@@ -57,7 +57,7 @@ def _vera_for(decide):
 def test_skipped_topics_enter_dont_repeat_list(monkeypatch):
     seen = {}
 
-    async def fake(messages, temperature=0.4):
+    async def fake(messages, temperature=0.4, think=None):
         if "between briefings" in messages[0]["content"]:
             seen["usr"] = messages[1]["content"]
             return '{"surface": false}'
@@ -109,7 +109,7 @@ def test_cooled_interest_is_withheld(monkeypatch):
     vi.touch("Ashvale Rovers")
     called = {}
 
-    async def fake(messages, temperature=0.4):
+    async def fake(messages, temperature=0.4, think=None):
         called["model"] = True
         return '{"surface": false}'
 

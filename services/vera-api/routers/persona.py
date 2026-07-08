@@ -12,6 +12,7 @@ deliberately excludes her identity). The file is the source of truth; a built-in
 keeps import working if it is ever missing. Kept brace-free so it is safe to
 combine with `.format()` prompt strings.
 """
+import json
 import os
 from functools import lru_cache
 
@@ -89,6 +90,27 @@ def vera_identity() -> str:
     except OSError:
         pass
     return personalize(_FALLBACK)
+
+
+def _kwargs_env(name: str) -> dict | None:
+    """A JSON-object env value; unset, invalid, non-object, or empty all mean None."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        v = json.loads(raw)
+    except ValueError:
+        return None
+    return v if isinstance(v, dict) and v else None
+
+
+def think_kwargs(mode: str) -> dict | None:
+    """Chat-template kwargs for a reasoning mode ("on" deliberative, "off" terse).
+    The mode→kwargs mapping is operator config — VERA_THINK_KWARGS_ON / _OFF hold
+    whatever object the served model's template understands; an unset mode key falls
+    back to the global VERA_CHAT_TEMPLATE_KWARGS. Read at call time."""
+    key = "VERA_THINK_KWARGS_ON" if mode == "on" else "VERA_THINK_KWARGS_OFF"
+    return _kwargs_env(key) or _kwargs_env("VERA_CHAT_TEMPLATE_KWARGS")
 
 
 def voiced(task: str) -> str:

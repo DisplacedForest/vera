@@ -143,6 +143,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view.hasPrefix("settings-engine") {
+            content = AnyView(
+                EngineSettingsShotView(variant: view)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "onboarding" {
             content = AnyView(
                 OnboardingShotView()
@@ -421,6 +427,142 @@ struct SettingsShotView: View {
                 .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline, lineWidth: 1))
         }
+    }
+}
+
+struct EngineSettingsShotView: View {
+    let variant: String
+
+    private var mode: String {
+        if variant.hasSuffix("local") || variant.hasSuffix("error") { return "local" }
+        if variant.hasSuffix("off") { return "off" }
+        return "remote"
+    }
+    private var isError: Bool { variant.hasSuffix("error") }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 3) {
+                    shotTab("Connection", "link", active: false)
+                    shotTab("Model", "cpu", active: false)
+                    shotTab("Services", "server.rack", active: true)
+                    shotTab("Identity", "person", active: false)
+                }
+                .padding(3).background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("ENGINE").font(.system(size: 10, weight: .semibold)).tracking(0.5)
+                        .foregroundStyle(Theme.textSecondary)
+                    segmented
+                    modeBody
+                }
+            }
+            .padding(22).frame(width: 560)
+            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(Theme.textPrimary)
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var segmented: some View {
+        HStack(spacing: 0) {
+            segTab("Remote URL", active: mode == "remote")
+            segTab("On this Mac", active: mode == "local")
+            segTab("Off", active: mode == "off")
+        }
+        .padding(2).background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    @ViewBuilder private var modeBody: some View {
+        switch mode {
+        case "remote":
+            fieldRow("Base URL", "http://my-api-host:8089")
+            HStack(spacing: 10) {
+                pill("Test vera-api")
+                Label("vera-api is reachable", systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 12)).foregroundStyle(Color(red: 0.36, green: 0.78, blue: 0.5))
+                Spacer()
+            }
+        case "off":
+            Text("vera-api is turned off. Pulse, veins, and the ambient features stay in their unconfigured state.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+        default:
+            infoRow("Version", isError ? "0.3.0" : "0.3.0")
+            infoRow("Status", isError ? "Stopped" : "Running")
+            infoRow("Data", "~/.vera/data")
+            fieldRow("Port", "8089")
+            HStack(spacing: 10) {
+                pill(isError ? "Start" : "Stop")
+                if isError {
+                    Label("Port 8089 is in use by another program. Change the port and try again.",
+                          systemImage: "xmark.circle.fill")
+                        .font(.system(size: 12)).foregroundStyle(.red)
+                } else {
+                    Label("Healthy", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 12)).foregroundStyle(Color(red: 0.36, green: 0.78, blue: 0.5))
+                }
+                Spacer()
+            }
+            Text("Log: ~/.vera/engine/engine.log")
+                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            HStack(spacing: 10) {
+                pill("Remove engine files")
+                pill("Delete data")
+                Spacer()
+            }
+        }
+    }
+
+    private func segTab(_ title: String, active: Bool) -> some View {
+        Text(title).font(.system(size: 12, weight: .medium))
+            .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
+            .frame(maxWidth: .infinity).padding(.vertical, 5)
+            .background(active ? Theme.surfaceHover : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func shotTab(_ title: String, _ icon: String, active: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 11, weight: .medium))
+            Text(title).font(.system(size: 12, weight: .medium))
+        }
+        .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
+        .frame(maxWidth: .infinity).padding(.vertical, 5)
+        .background(active ? Theme.surfaceHover : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+    }
+
+    private func infoRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            Spacer()
+            Text(value).font(.system(size: 12))
+        }
+    }
+
+    private func fieldRow(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 10) {
+            Text(label).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                .frame(width: 90, alignment: .trailing)
+            Text(value).font(.system(size: 12))
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline, lineWidth: 1))
+        }
+    }
+
+    private func pill(_ title: String) -> some View {
+        Text(title).font(.system(size: 12, weight: .medium))
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 

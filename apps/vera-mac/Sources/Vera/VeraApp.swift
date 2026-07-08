@@ -23,6 +23,7 @@ struct VeraApp: App {
     @StateObject private var voice: VoiceSession
     @StateObject private var config = ConfigStore()
     @StateObject private var updates = UpdateChecker()
+    @StateObject private var engine = EngineManager()
 
     init() {
         // Build the graph once so ChatStore, ToolsStore, and VoiceSession share a single
@@ -50,9 +51,11 @@ struct VeraApp: App {
                 .environmentObject(voice)
                 .environmentObject(config)
                 .environmentObject(updates)
+                .environmentObject(engine)
                 .frame(minWidth: 920, minHeight: 600)
                 .preferredColorScheme(config.colorSchemeOverride)
                 .task { updates.start() }
+                .task { await engine.reconcileOnLaunch() }
                 .task { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.resolved?.veraAPIBase) }
         }
         .defaultSize(width: 1180, height: 760)
@@ -71,6 +74,7 @@ struct VeraApp: App {
                 .environmentObject(store)
                 .environmentObject(tools)   // the Plugins and MCP tabs render from the shared ToolsStore
                 .environmentObject(updates)
+                .environmentObject(engine)
                 .preferredColorScheme(config.colorSchemeOverride)
         }
     }

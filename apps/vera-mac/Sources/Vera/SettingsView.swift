@@ -73,13 +73,7 @@ private struct ServicesTab: View {
     @EnvironmentObject var config: ConfigStore
     var body: some View {
         Form {
-            Section("vera-api") {
-                ConfigField(label: "Base URL", key: "vera_api_base", placeholder: "http://my-api-host:8089")
-                InlineTest(title: "Test vera-api") {
-                    try await ConnectionTest.http(base: config["vera_api_base"],
-                                                  path: "health/services", label: "vera-api")
-                }
-            }
+            EngineSection()
             Section("Voice") {
                 ConfigField(label: "Base URL", key: "voice_base", placeholder: "http://my-voice-host:8131")
                 InlineTest(title: "Test voice") {
@@ -89,6 +83,134 @@ private struct ServicesTab: View {
             SaveSection()
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct EngineSection: View {
+    @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var engine: EngineManager
+
+    private var mode: EngineMode {
+        if let m = EngineMode(rawValue: config["engine_mode"]) { return m }
+        return config["vera_api_base"].isEmpty ? .off : .remote
+    }
+
+    private var modeBinding: Binding<EngineMode> {
+        Binding(get: { mode }, set: { new in
+            config["engine_mode"] = new.rawValue
+            try? config.save()
+            Task { await engine.apply(mode: new) }
+        })
+    }
+
+    var body: some View {
+        Section("Engine") {
+            Picker("Runs", selection: modeBinding) {
+                Text("Remote URL").tag(EngineMode.remote)
+                Text("On this Mac").tag(EngineMode.local)
+                Text("Off").tag(EngineMode.off)
+            }
+            .pickerStyle(.segmented)
+
+            switch mode {
+            case .remote: remoteBody
+            case .local: localBody
+            case .off: offBody
+            }
+        }
+    }
+
+    private var remoteBody: some View {
+        Group {
+            ConfigField(label: "Base URL", key: "vera_api_base", placeholder: "http://my-api-host:8089")
+            InlineTest(title: "Test vera-api") {
+                try await ConnectionTest.http(base: config["vera_api_base"],
+                                              path: "health/services", label: "vera-api")
+            }
+        }
+    }
+
+    private var offBody: some View {
+        Text("vera-api is turned off. Pulse, veins, and the ambient features stay in their unconfigured state.")
+            .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+    }
+
+    @ViewBuilder private var localBody: some View {
+        LabeledContent("Version", value: engine.installedVersion ?? "Not installed")
+        LabeledContent("Status", value: statusText)
+        LabeledContent("Data", value: engine.dataPathDisplay)
+        HStack(spacing: 6) {
+            TextField("Port", text: config.binding("engine_port"), prompt: Text("8089"))
+                .autocorrectionDisabled().frame(width: 120)
+            InfoTip(text: "The loopback port the engine binds. Change it only if 8089 is taken.")
+            Spacer(minLength: 0)
+        }
+        HStack(spacing: 10) {
+            if engine.running {
+                Button("Stop") { Task { await engine.stopEngine() } }.disabled(engine.busy)
+            } else {
+                Button(engine.busy ? "Starting…" : "Start") { Task { await engine.startEngine() } }
+                    .disabled(engine.busy)
+            }
+            if engine.busy { ProgressView().controlSize(.small) }
+            if let msg = phaseMessage {
+                Text(msg).font(.system(size: 12)).foregroundStyle(phaseColor)
+            }
+            Spacer(minLength: 0)
+        }
+        if let detail = engine.runDetail {
+            Label(detail, systemImage: "exclamationmark.triangle")
+                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+        }
+        Text("Log: \(engine.logPathDisplay)")
+            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+        HStack(spacing: 10) {
+            Text("Effective base").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            Text("http://127.0.0.1:\(engine.port)")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 0)
+        }
+        MaintenanceControls()
+    }
+
+    private var statusText: String {
+        engine.running ? "Running" : "Stopped"
+    }
+
+    private var phaseMessage: String? {
+        switch engine.phase {
+        case .idle, .healthy: return nil
+        case .resolving: return "Finding the release…"
+        case .downloading: return "Downloading…"
+        case .verifying: return "Verifying checksum…"
+        case .unpacking: return "Installing…"
+        case .launching: return "Starting the engine…"
+        case .failed(let m): return m
+        }
+    }
+
+    private var phaseColor: Color {
+        if case .failed = engine.phase { return .red }
+        return Theme.textSecondary
+    }
+}
+
+private struct MaintenanceControls: View {
+    @EnvironmentObject var engine: EngineManager
+    @State private var confirmDelete = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button("Remove engine files") { engine.removeEngineFiles() }.disabled(engine.busy)
+            Button("Delete data", role: .destructive) { confirmDelete = true }
+            Spacer(minLength: 0)
+        }
+        .confirmationDialog("Delete the engine's data directory?", isPresented: $confirmDelete) {
+            Button("Delete data", role: .destructive) { engine.deleteData() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes ~/.vera/data (Pulse history, memory, veins). This cannot be undone.")
+        }
     }
 }
 

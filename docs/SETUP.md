@@ -13,6 +13,8 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
 | Satellite services (voice, image, vision, coder) | Reference implementations of documented HTTP contracts | No |
 
+> **Fastest path on a Mac (no Docker).** Install the Mac app (step 4), then open Settings, Services, Engine and choose **On this Mac**. The app downloads the packaged engine for its own version from the GitHub Release, verifies the checksum, runs it as a background service on `127.0.0.1`, and points itself at it (data stays in `~/.vera/data`, the engine keeps running with the app closed). You get the full ambient tier (Pulse, veins, heartbeat, scheduler) with no Docker, no server, and no terminal. You still need an OpenAI-compatible LLM server and Open WebUI reachable. The Docker path below is for Linux hosts and shared or multi-device deployments.
+
 ## 1. Prerequisites
 
 - **Docker** (with compose) on any Linux/macOS host for vera-api and Open WebUI.

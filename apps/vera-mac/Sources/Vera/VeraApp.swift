@@ -53,6 +53,7 @@ struct VeraApp: App {
                 .frame(minWidth: 920, minHeight: 600)
                 .preferredColorScheme(config.colorSchemeOverride)
                 .task { updates.start() }
+                .task { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.resolved?.veraAPIBase) }
         }
         .defaultSize(width: 1180, height: 760)
         .commands {

@@ -116,15 +116,20 @@ These are **documented HTTP contracts** with reference implementations in this r
 | Voice | Wyoming protocol (ASR + TTS) plus a small batch HTTP API | `services/vera-voice`; install with `scripts/deploy-vera-voice.sh` |
 | Reminders | Small HTTP API over EventKit: `/health`, `/lists`, `/reminders` | `services/vera-reminders`; install with `scripts/deploy-vera-reminders.sh` |
 
-The Reminders bridge is the one slot that must run on a **Mac signed into the iCloud
-account whose lists Vera should see** — EventKit is Apple's only supported door into
-Reminders, and it sees shared lists, so items added by Siri on any household device
-appear and Vera's writes sync back to everyone. Bring-up: run the deploy script on that
-Mac, approve the one-time Reminders permission prompt in a GUI session (Screen Sharing
-works), verify `/health` reports `reminders_access: true`, then enable the Apple
-Reminders integration with the bridge URL. For chat access, install
-`services/owui-tools/reminders.py` as an Open WebUI tool and set its default-list valve
-to the list Vera should assume (your shopping list, say) when none is named.
+Reminders reaches EventKit, Apple's only supported door into Reminders, which must run
+on a **Mac signed into the iCloud account whose lists Vera should see** — it sees shared
+lists, so items added by Siri on any household device appear and Vera's writes sync back
+to everyone.
+
+**If you run the Vera Mac app, you do not need this service.** The app hosts the bridge
+itself: open Settings, Plugins, and toggle **Apple Reminders** on. That grants the
+permission (a native prompt), points vera-api at the app, and installs the Open WebUI
+tool in one step. It serves while the app is open, which is all reminders need — Vera
+only touches them on an explicit chat ask. `services/vera-reminders` remains as the
+headless reference for deployments with no Mac app: run `scripts/deploy-vera-reminders.sh`
+on a signed-in Mac, approve the one-time prompt, then enable the Apple Reminders
+integration with the bridge URL and install `services/owui-tools/reminders.py` as an
+Open WebUI tool.
 
 Every satellite env var (models, ports, voices, paths) is documented in `.env.example`'s
 companion-services section; voice installs with one command (`scripts/deploy-vera-voice.sh` —

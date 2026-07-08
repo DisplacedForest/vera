@@ -158,6 +158,22 @@ struct OWUIAdminClient: Sendable {
         _ = try await post("/api/v1/models/model/update?id=\(modelID)", modelUpdateForm(rec, meta: meta))
     }
 
+    /// Whether a tool with this id already exists in OWUI.
+    func toolExists(id: String) async throws -> Bool {
+        try await listTools().contains { $0.id == id }
+    }
+
+    /// Create the tool, or update it in place when it already exists. Idempotent.
+    func upsertTool(id: String, name: String, content: String, meta: [String: Any]) async throws {
+        let body: [String: Any] = ["id": id, "name": name, "content": content,
+                                   "meta": meta, "access_control": NSNull()]
+        if try await toolExists(id: id) {
+            _ = try await post("/api/v1/tools/id/\(id)/update", body)
+        } else {
+            _ = try await post("/api/v1/tools/create", body)
+        }
+    }
+
     func toggleFunction(id: String) async throws -> Bool {
         let r = try await post("/api/v1/functions/id/\(id)/toggle", [:]) as? [String: Any] ?? [:]
         return r["is_active"] as? Bool ?? false

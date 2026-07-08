@@ -199,7 +199,7 @@ private struct PluginCard: View {
                 Spacer(minLength: 8)
                 if plugins.busy.contains(entry.id) {
                     ProgressView().controlSize(.small)
-                } else if entry.configured {
+                } else if entry.configured || entry.id == "apple_reminders" {
                     Toggle("", isOn: Binding(get: { entry.enabled },
                                              set: { plugins.setEnabled(entry, $0) }))
                         .toggleStyle(.switch).controlSize(.small).labelsHidden()
@@ -229,13 +229,19 @@ private struct PluginCard: View {
             Spacer(minLength: 0)
 
             HStack(spacing: 10) {
-                Button(entry.configured ? "Configure" : "Add") { onConfigure() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(entry.configured ? Theme.textPrimary : .white)
-                    .padding(.horizontal, 14).padding(.vertical, 6)
-                    .background(entry.configured ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Theme.accent),
-                                in: Capsule())
+                if entry.id == "apple_reminders" {
+                    Text("Runs inside Vera. Toggle on to grant access and connect.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Button(entry.configured ? "Configure" : "Add") { onConfigure() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(entry.configured ? Theme.textPrimary : .white)
+                        .padding(.horizontal, 14).padding(.vertical, 6)
+                        .background(entry.configured ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Theme.accent),
+                                    in: Capsule())
+                }
                 if pendingNote != nil {
                     Button("Retry OWUI step") { plugins.retryOWUI(entry) }
                         .buttonStyle(.plain).font(.system(size: 12, weight: .medium))

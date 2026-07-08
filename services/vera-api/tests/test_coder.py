@@ -132,7 +132,7 @@ def test_hermes_loop_uses_text_protocol(monkeypatch):
     ], protocol="hermes")
     assert answer == "text-protocol answer."
     first_messages, first_tools = requests[0]
-    assert first_tools is None                         # hermes requests never advertise tools
+    assert first_tools is None
     assert first_messages[0]["content"].startswith(tool_protocol.render_tools(coder.TOOLS))
     assert first_messages[0]["content"].endswith("sys prompt")
     follow = requests[1][0][-1]

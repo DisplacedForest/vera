@@ -28,6 +28,10 @@ done
 iconutil -c icns "$ICONSET" -o "$BUILD_DIR/Vera.icns"
 
 # 2. Release build
+# Refresh the bundled OWUI reminders tool from its canonical source so the app installs
+# the current version (the in-app Apple Reminders toggle creates it in Open WebUI).
+cp "$APP_ROOT/../../services/owui-tools/reminders.py" "Sources/Vera/Resources/reminders_tool.py"
+
 echo "==> swift build -c release"
 swift build -c release
 
@@ -59,6 +63,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSMicrophoneUsageDescription</key><string>Vera listens to your voice for hands-free conversation.</string>
+  <key>NSRemindersFullAccessUsageDescription</key><string>Vera reads and writes your Reminders lists.</string>
 </dict>
 </plist>
 PLIST

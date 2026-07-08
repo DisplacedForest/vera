@@ -84,6 +84,35 @@ final class ToolsStore: ObservableObject {
 
     /// Attach or detach a set of tools on the Vera model by id (the Plugins store's
     /// one-click OWUI step). Returns whether OWUI accepted the change.
+    /// Install (create-or-update) the bundled Reminders OWUI tool and set its valves, so
+    /// enabling Apple Reminders needs no manual OWUI paste. Reloads the tool list on success.
+    /// Returns false (and sets `error`) if OWUI isn't an admin session or the write fails.
+    func installReminders(veraApiURL: String, defaultList: String) async -> Bool {
+        guard isAdmin, let admin else { error = "needs an OWUI admin session"; return false }
+        guard let url = Bundle.module.url(forResource: "reminders_tool", withExtension: "py"),
+              let content = try? String(contentsOf: url, encoding: .utf8) else {
+            error = "bundled reminders tool source missing"
+            return false
+        }
+        let meta: [String: Any] = [
+            "description": "Apple Reminders read/write (shared lists included) via vera-api.",
+            "manifest": ["title": "Reminders", "author": "vera",
+                         "description": "Read and write Apple Reminders lists (shared lists included) via vera-api. Call for anything about a reminders or shopping list: reading it, adding items, checking items off.",
+                         "version": "0.1.0"],
+        ]
+        do {
+            try await admin.upsertTool(id: "reminders", name: "Reminders", content: content, meta: meta)
+            let valves = try JSONSerialization.data(withJSONObject:
+                ["vera_api_url": veraApiURL, "default_list": defaultList])
+            try await admin.updateToolValves(id: "reminders", json: valves)
+            await load()
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+
     func setToolsAttached(_ ids: [String], _ on: Bool) async -> Bool {
         guard isAdmin, let admin else { return false }
         let prev = tools

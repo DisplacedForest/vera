@@ -6,11 +6,10 @@ Two tool-call transports, selected by DREAM_TOOL_PROTOCOL:
       returns `tool_calls`, and results go back as `role: "tool"` messages. Works with any
       server that implements the spec.
 
-  hermes — the plaintext Hermes contract (tool_protocol.py) for servers that run
-      tool-capable models but do not convert the model's native tool-call syntax into
-      OpenAI `tool_calls` (e.g. mlx_lm.server): tools are advertised in the system prompt
-      and the reply text is parsed for <tool_call> blocks. The value `mlx` is a deprecated
-      alias for `hermes`.
+  hermes — the plaintext Hermes contract (tool_protocol.py) for servers that pass the
+      model's text through untouched: tools are advertised in the system prompt and the
+      reply text is parsed for <tool_call> blocks. The deprecated value `mlx` resolves to
+      `openai` (current mlx_lm.server emits native OpenAI tool_calls).
 
 Either way the loop is ours: execute the search through our SearXNG backend, feed results
 back, and continue until the model answers without a tool call (or the step budget forces a
@@ -50,11 +49,12 @@ def _endpoint() -> tuple[str, str]:
 
 def tool_protocol() -> str:
     """The active tool-call transport: 'openai' unless the coder integration's tool_protocol
-    field (pinned by DREAM_TOOL_PROTOCOL when set in env) selects the hermes text protocol
-    ('hermes', or its deprecated alias 'mlx'). Read at call time — the one place the flag
-    is interpreted."""
+    field (pinned by DREAM_TOOL_PROTOCOL when set in env) selects the hermes text protocol.
+    The deprecated value 'mlx' resolves to 'openai': current mlx_lm.server emits native
+    OpenAI tool_calls and intercepts tool-syntax text, so the text protocol cannot round-trip
+    there. Read at call time — the one place the flag is interpreted."""
     raw = (_registry_values().get("tool_protocol") or os.environ.get("DREAM_TOOL_PROTOCOL", "")).strip().lower()
-    return "hermes" if raw in ("hermes", "mlx") else "openai"
+    return "hermes" if raw == "hermes" else "openai"
 
 
 # ------------------------------------------------------------------ openai protocol pieces

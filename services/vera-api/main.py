@@ -8,7 +8,7 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, dreaming, feedback, groom_session, health, heartbeat, home, home_events, home_model, home_reconcile, images, integrations, journal, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, memory, overseerr, pulse, pulse_veins, reminders, research, sandbox, scheduler, signals, updates, user_profile, vein_builder, vera_memory, vera_memory_groom, weather, websearch
+from routers import actions, agentic, authoring, config_report, dreaming, feedback, groom_session, health, heartbeat, home, home_events, home_model, home_reconcile, images, integrations, journal, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, memory, overseerr, pulse, pulse_veins, reminders, research, sandbox, scheduler, updates, user_profile, vein_builder, vein_engine, vera_memory, vera_memory_groom, weather, websearch
 
 # vera-api: ONE container, many capabilities.
 # To add a capability: create routers/<name>.py exposing `router` (an APIRouter
@@ -39,6 +39,7 @@ VERSION = _version()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config_report.report(VERSION, data_root=DATA_ROOT)
+    vein_engine.load_block_modules()
     # The home-events supervisor (starts capture only while the home_modeling feature
     # is enabled) + the built-in scheduler run for the app's lifetime.
     await home_events.start()
@@ -61,7 +62,6 @@ CAPABILITIES = {
     "vein_builder": vein_builder.router,
     "memory": memory.router,
     "weather": weather.router,
-    "signals": signals.router,
     "journal": journal.router,
     "kitchen": kitchen.router,
     "knowledge": knowledge.router,

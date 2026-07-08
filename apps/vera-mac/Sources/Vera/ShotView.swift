@@ -851,7 +851,7 @@ struct AgenticDetailShot: View {
         guard variant == "agentic-inspector-long", var st = flow.pulseState else { return flow }
         st.warnings = [
             "Starved run: only 6 of the target 8 cards survived after 3 triage rounds, so the briefing shipped short.",
-            "Signals corpus for the Strait of Hormuz watch grew past the fold threshold and was held for manual review rather than auto-merged.",
+            "Watch corpus for the Strait of Hormuz situation grew past the fold threshold and was held for manual review rather than auto-merged.",
             "Cover art for 2 cards fell back to source photos because the image service was busy at synthesis time.",
         ]
         st.gates = ["dedup": 11, "freshness": 4, "coherence": 3, "empty": 2, "interest_cap": 5]
@@ -862,7 +862,7 @@ struct AgenticDetailShot: View {
     private func inspectorJob(_ jobs: [String: SchedulerJob]) -> SchedulerJob? {
         guard var job = jobs["pulse"] else { return nil }
         guard variant == "agentic-inspector-long" else { return job }
-        job.lastRunDetail = "Signals check tripped 4 of 12 watched indicators this run. Brent crude held above its 90-day band for a third straight session, the Baltic Dry index broke its upper threshold, Taiwan Strait AIS density fell below the quiet-water floor, and the EUR/USD cross-currency basis widened past its alert line. Each trip carries its own multi-source corpus and a recommended follow-up; the longest ran to nine sources and was condensed to a single paragraph for the card."
+        job.lastRunDetail = "The watch sweep tripped 4 of 12 watched indicators this run. Brent crude held above its 90-day band for a third straight session, the Baltic Dry index broke its upper threshold, Taiwan Strait AIS density fell below the quiet-water floor, and the EUR/USD cross-currency basis widened past its alert line. Each trip carries its own multi-source corpus and a recommended follow-up; the longest ran to nine sources and was condensed to a single paragraph for the card."
         return job
     }
 

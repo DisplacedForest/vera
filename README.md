@@ -76,7 +76,7 @@ A row of status chips above the feed, one per vein — each an independently con
 
 ### Journal — her standing commitments, as a live graph view
 
-When a monitored situation deserves follow-through (a signals event, or simply "keep an eye on lumber prices for me"), Vera lands it as a watch in her Profile Graph, the same memory the rest of Pulse ranks from. The Journal is a live view over those watch and project nodes: each shows what she is watching, why it matters, what would resolve it, and when to check next. A repeat of a known situation folds onto its existing node by vector similarity instead of piling up, so the list cannot run away; a watch retires only when its resolve condition and date are both met. The app renders the view read-only at `GET /journal`, and Pulse surfaces a card when a watched node materially changes. You steer it by talking to her: hand her a new watch and it becomes a node, ask what she is keeping an eye on, or have her let one go.
+When a monitored situation deserves follow-through (a vein alert, or simply "keep an eye on lumber prices for me"), Vera lands it as a watch in her Profile Graph, the same memory the rest of Pulse ranks from. The Journal is a live view over those watch and project nodes: each shows what she is watching, why it matters, what would resolve it, and when to check next. A repeat of a known situation folds onto its existing node by vector similarity instead of piling up, so the list cannot run away; a watch retires only when its resolve condition and date are both met. The app renders the view read-only at `GET /journal`, and Pulse surfaces a card when a watched node materially changes. You steer it by talking to her: hand her a new watch and it becomes a node, ask what she is keeping an eye on, or have her let one go.
 
 ### Agentic — the autonomy control room
 
@@ -106,7 +106,7 @@ Every external dependency is a configuration slot with defined behavior when emp
 |---|---|---|---|
 | Main LLM | OpenAI `/v1` | Everything generated | Nothing generates; API surfaces still serve |
 | Open WebUI | OWUI API | Chat, memory, promoted cards, self-authored skills | Chat features off; Pulse still researches |
-| SearXNG | `/search` JSON | Research, signals news, image sourcing | Search-dependent features report unconfigured |
+| SearXNG | `/search` JSON | Research, watcher veins, image sourcing | Search-dependent features report unconfigured |
 | Dream/coder LLM | OpenAI `/v1` + tool calls | Nightly consolidation, fact verification | Dreaming skips; daily features unaffected |
 | Image gen | OpenAI Images API | Pulse cover art | Cards use the best researched image instead |
 | Vision | OpenAI chat + `image_url` | Image understanding in chat | Vision tools report unconfigured |
@@ -120,7 +120,6 @@ Every external dependency is a configuration slot with defined behavior when emp
 | Overseerr | Media requests, weekly curation digest (consent-gated) | Media curation unavailable |
 | Unraid | Container updates, host actuation | Those update sources drop from update digests |
 | Apple Reminders | Reminders lists read/write from chat, shared lists included (hosted by the Mac app, or the headless EventKit bridge, on a Mac signed into iCloud) | Reminders tools off |
-| FRED / EIA keys | Credit-spread and grid-stress signals | Those collectors skip cleanly |
 
 <details>
 <summary><b>Example deployment</b></summary>

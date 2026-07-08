@@ -117,9 +117,7 @@ jobs:
           tag="${GITHUB_REF_NAME#v}"
           grep -q "\"$tag\"" /tmp/version.json
           curl -sf http://127.0.0.1:8089/pulse/veins/catalog > /tmp/catalog.json
-          for kind in status weather signals media; do
-            grep -q "\"$kind\"" /tmp/catalog.json
-          done
+          python3 -c "import json; d = json.load(open('/tmp/catalog.json')); assert d['veins'] == [], d['veins']"
           kill "$engine_pid"
       - name: Zip and checksum
         working-directory: services/vera-api/dist

@@ -21,7 +21,7 @@ struct JournalView: View {
             .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 8)
             ScrollView {
                 if store.journalEntries.isEmpty && store.journalArchive.isEmpty {
-                    Text(store.isLive ? "Nothing on her journal right now. Commitments she takes on (from signals, or because you ask) appear here."
+                    Text(store.isLive ? "Nothing on her journal right now. Commitments she takes on (from her watches, or because you ask) appear here."
                                       : "Not connected. Her journal appears here once Vera is online.")
                         .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity).padding(.top, 48)

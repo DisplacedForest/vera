@@ -193,7 +193,7 @@ def _watch(nid, *, label=None, resolve_condition="", next_check=None, satisfied=
 
 def test_journal_view_contract_shape_and_origin():
     _watch("w1", label="Strait of Hormuz", origin="requested", next_check=NOW,
-           facts=[pg.make_fact("tankers rerouting", source="signals")])
+           facts=[pg.make_fact("tankers rerouting", source="watch")])
     v = editor.journal_view(now=NOW)
     assert v["ok"] is True and set(v) == {"ok", "entries", "raw", "archive"}
     e = v["entries"][0]

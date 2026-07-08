@@ -37,18 +37,6 @@ def test_pulse_single_card_is_singular():
     _no_record_markers(out)
 
 
-def test_signals_quiet_and_tripped():
-    quiet = summarize_outcome("signals", {"ok": True, "trips": [], "injected": False})
-    assert "quiet" in quiet
-    tripped = summarize_outcome("signals", {
-        "ok": True, "trips": [{"x": 1}, {"y": 2}], "severity": "alert", "injected": True,
-    })
-    assert "2 situations tripped" in tripped
-    assert "severity alert" in tripped
-    assert "a card was posted" in tripped
-    _no_record_markers(tripped)
-
-
 def test_heartbeat_summary():
     out = summarize_outcome("heartbeat", {
         "ok": True, "learned": ["a"], "refined": True, "proposed": {"verb": "x"},

@@ -1,5 +1,7 @@
 import hashlib
+import importlib.util
 import json
+import logging
 import os
 import re
 import time
@@ -10,10 +12,14 @@ import aiohttp
 from . import structured
 from . import vein_engine_store as engine_store
 
+log = logging.getLogger("vera.veins")
+
 FLOOR_MINUTES = int(os.environ.get("VEIN_LLM_FLOOR_MINUTES", "30"))
+BLOCKS_DIR = os.environ.get("VEIN_BLOCKS_DIR", "/data/blocks.d")
 FETCH_CHARS = 2500
-LLM_BLOCKS = ("llm_judge", "llm_compose")
+LLM_BLOCKS = ("llm_judge", "llm_compose", "situation_cluster")
 ACTIVE_SWEEPABLE = ("new", "seen")
+SEVERITY_RANK = {"notice": 1, "alert": 2, "critical": 3}
 
 
 class BlockError(Exception):
@@ -235,6 +241,98 @@ async def _run_llm_compose(items, params, ctx):
     return out
 
 
+CLUSTER_SYS = (
+    "Group today's vetted findings into DISTINCT situations — one per genuinely separate event. "
+    "Merge ONLY findings about the SAME underlying event. Keep separate events separate even in "
+    "one region.\n"
+    'Return ONLY JSON: {"situations":[{"headline":"3-6 word noun phrase, no trailing punctuation",'
+    '"members":[<finding index>,...],"query":"a focused web search to deepen THIS situation"}]}'
+)
+
+
+def _clip(s, n=48):
+    s = s.strip()
+    return s if len(s) <= n else (s[:n].rsplit(" ", 1)[0] or s[:n])
+
+
+def _slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "situation"
+
+
+def _numbered(sources):
+    return "\n".join(f"[{s['n']}] {s['title']}: {(s.get('content') or '')[:500]}" for s in sources)
+
+
+async def _run_situation_cluster(items, params, ctx):
+    from . import websearch
+    if not items:
+        return []
+    clusters = []
+    try:
+        listing = json.dumps([{"i": i, "severity": it.get("severity", ""),
+                               "title": it.get("title", ""), "detail": it.get("content", "")}
+                              for i, it in enumerate(items)], indent=2)
+        msgs = [{"role": "system", "content": CLUSTER_SYS},
+                {"role": "user", "content": f"Today's findings:\n{listing}"}]
+        obj, errs = await structured.parsed(
+            structured.repairable(_vera, msgs, temperature=0.2, think="off"), structured.Clusters)
+        clusters = (obj or {}).get("situations") or []
+        if obj is None and errs:
+            log.warning("situation_cluster: %s", "; ".join(errs))
+    except Exception as e:
+        log.warning("situation_cluster: %s", e)
+    if not clusters:
+        clusters = [{"headline": _clip(it.get("title", "situation")), "members": [i],
+                     "query": it.get("title", "")} for i, it in enumerate(items)]
+    deepen_query = ""
+    if params.get("deepen_query"):
+        try:
+            deepen_query = template(params["deepen_query"], ctx)
+        except ValueError:
+            deepen_query = ""
+    out = []
+    for cl in clusters:
+        members = [items[i] for i in cl.get("members", [])
+                   if isinstance(i, int) and 0 <= i < len(items)]
+        if not members:
+            continue
+        severity = max((m.get("severity", "notice") for m in members),
+                       key=lambda x: SEVERITY_RANK.get(x, 0))
+        headline = (cl.get("headline") or members[0].get("title", "situation")).strip().rstrip(".,;:… ")
+        sources, seen = [], set()
+        for m in members:
+            for s in m.get("trip_sources", []):
+                if s.get("url") and s["url"] not in seen:
+                    seen.add(s["url"])
+                    sources.append({"n": len(sources) + 1, "title": s.get("title", "source"),
+                                    "url": s["url"], "content": ""})
+        flagged = [m for m in members if "deepen" in m]
+        wants_deepen = any(m.get("deepen") for m in flagged) if flagged else True
+        queries = [cl.get("query") or headline]
+        if deepen_query and wants_deepen:
+            queries.append(f"{headline} {deepen_query}")
+        for q in queries:
+            try:
+                rs = await websearch.search(websearch.SearchRequest(
+                    query=q, fetch_pages=2, max_results=4))
+                for x in rs.results:
+                    if x.url and x.url not in seen:
+                        seen.add(x.url)
+                        sources.append({"n": len(sources) + 1, "title": x.title or x.url,
+                                        "url": x.url, "content": x.content or ""})
+            except Exception as e:
+                log.warning("situation_cluster research %s: %s", headline, e)
+        facts = json.dumps([{"title": m.get("title"), "detail": m.get("content")}
+                            for m in members], indent=2)
+        content = (f"Situation: {headline}\n\nVetted findings:\n{facts}"
+                   f"\n\nNumbered sources:\n{_numbered(sources)}")
+        out.append({"key": f"sit:{_slug(headline)}", "title": headline,
+                    "content": content, "severity": severity,
+                    "sources": [{"n": s["n"], "title": s["title"], "url": s["url"]}
+                                for s in sources]})
+    return out
+
+
 BLOCKS = {
     "web_search": _run_web_search,
     "http_fetch": _run_http_fetch,
@@ -242,6 +340,7 @@ BLOCKS = {
     "trip_band": _run_trip_band,
     "llm_judge": _run_llm_judge,
     "llm_compose": _run_llm_compose,
+    "situation_cluster": _run_situation_cluster,
 }
 
 _REQUIRED_PARAMS = {
@@ -252,13 +351,35 @@ _REQUIRED_PARAMS = {
 }
 
 
-MONITOR_BLOCKS: set[str] = {"trip_band"}
+MONITOR_BLOCKS: set[str] = {"trip_band", "situation_cluster"}
 
 
 def register(name: str, runner, monitor: bool = False) -> None:
     BLOCKS[name] = runner
     if monitor:
         MONITOR_BLOCKS.add(name)
+
+
+def load_block_modules() -> list[str]:
+    try:
+        names = sorted(os.listdir(BLOCKS_DIR))
+    except OSError:
+        return []
+    loaded = []
+    for name in names:
+        if not name.endswith(".py"):
+            continue
+        path = os.path.join(BLOCKS_DIR, name)
+        try:
+            spec = importlib.util.spec_from_file_location(f"vera_block_{name[:-3]}", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            loaded.append(name)
+        except Exception as e:
+            log.warning("block module %s failed to load: %s", name, e)
+    if loaded:
+        log.info("loaded block modules from %s: %s", BLOCKS_DIR, ", ".join(loaded))
+    return loaded
 
 
 def validate_pipeline(defn: dict) -> list[str]:
@@ -321,6 +442,15 @@ def _card_fields(it: dict) -> dict:
         "items": it.get("items"),
         "change_set": _content_sig(it),
     }
+
+
+def _watch_topics(body: str) -> list[str]:
+    m = re.search(r"(?im)^\s*Watching:\s*(.+)$", body or "")
+    if not m:
+        return []
+    return [t for t in (p.strip().strip(".").strip()
+                        for p in re.split(r",|;|\band\b", m.group(1)))
+            if t and len(t) <= 60][:4]
 
 
 def _active_cards(kind: str) -> list[dict]:
@@ -398,7 +528,7 @@ async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False
                | {c["situation_key"] for c in standing})
     if monitor:
         for c in active:
-            if c.get("situation_key") not in current:
+            if c.get("situation_key") and c["situation_key"] not in current:
                 pulse.store.delete_card(c["id"])
     for card in cards:
         for c in active:
@@ -409,6 +539,17 @@ async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False
                             sources=card["sources"], situation_key=card["situation_key"],
                             category=card["category"], change_set=card["change_set"],
                             items=card["items"])
+    if defn.get("journal"):
+        for card in cards:
+            label = card["title"].split("·", 1)[-1].strip() or card["title"]
+            watch = _watch_topics(card["body"])
+            try:
+                from . import editor
+                await editor.author_watch(label, facts=[card["body"]],
+                                          resolve_condition=", ".join(watch) or None,
+                                          origin="self")
+            except Exception as e:
+                log.warning("vein %s journal watch failed: %s", kind, e)
     if standing:
         today = datetime.now(pulse.TZ).date().isoformat()
         for c in standing:

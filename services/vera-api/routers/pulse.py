@@ -203,7 +203,7 @@ async def _inject(title, body, folder_id=None, image_url=None, tint=None, source
                   summary=None, inline_images=None, action=None, kind="research", severity=None,
                   user_id=None, provenance="scheduled", category=None, change_set=None, items=None,
                   situation_key=None):
-    """Store a Pulse card. Compat shim for the helper routers (health/signals/kitchen/weather/
+    """Store a Pulse card. Compat shim for the helper routers (health/kitchen/weather/
     heartbeat) that surface cards. `folder_id` is ignored — Pulse is store-backed.
     `kind`/`severity` place the card in an ambient vein; default is the research feed.
     `user_id` is the person the card is FOR; defaults to the household owner.

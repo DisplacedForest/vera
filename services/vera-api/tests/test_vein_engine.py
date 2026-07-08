@@ -497,3 +497,148 @@ def test_run_definition_resolves_unsaved_provider_defaults(monkeypatch):
     }
     out = _run(vein_engine.run_definition(defn, dry_run=True))
     assert out["ok"] is True and out["situations"] == 1
+
+
+def test_monitor_leaves_keyless_cards_alone(monkeypatch):
+    _save_monitor()
+    _stub_get(monkeypatch, 200, json.dumps({"level": 25}))
+    _run(vein_engine.run_vein("gauge"))
+    row = dict(pulse_store.list_cards()[0])
+    row["id"] = "foreign-1"
+    row["situation_key"] = None
+    row["title"] = "watch update"
+    pulse_store.insert_card(row)
+    _stub_get(monkeypatch, 200, json.dumps({"level": 10}))
+    _run(vein_engine.run_vein("gauge"))
+    remaining = _active("gauge")
+    assert [c["id"] for c in remaining] == ["foreign-1"]
+
+
+def test_watch_topics_parse():
+    body = "Prose here.\n\nWatching: port backlogs, diesel prices; grain futures and nothing"
+    assert vein_engine._watch_topics(body) == [
+        "port backlogs", "diesel prices", "grain futures", "nothing"]
+    assert vein_engine._watch_topics("no line") == []
+
+
+def test_journal_definition_authors_watches(monkeypatch):
+    from routers import editor
+    calls = []
+
+    async def spy(label, **kw):
+        calls.append((label, kw.get("resolve_condition")))
+        return "node-1"
+    monkeypatch.setattr(editor, "author_watch", spy)
+
+    async def compose(messages, **kw):
+        return ("HEADLINE: Signal watch · Port strike\nSUMMARY: S.\n===\n"
+                "Body.\n\nWatching: port backlogs, diesel prices")
+    monkeypatch.setattr(vein_engine, "_vera", compose)
+    _stub_search(monkeypatch, [{"title": "A", "url": "https://a", "content": "x",
+                                "published": None}])
+    defn = vein_defs.save_custom({
+        "kind": "journaled", "label": "Journaled", "icon": "eye", "journal": True,
+        "pipeline": [
+            {"block": "web_search", "params": {"query": "ports"}},
+            {"block": "llm_compose"},
+        ],
+        "schedule": "0 */6 * * *",
+    })
+    dry = _run(vein_engine.run_definition(defn, dry_run=True))
+    assert dry["ok"] is True and calls == []
+    out = _run(vein_engine.run_vein("journaled", manual=True))
+    assert out["cards"] == 1
+    assert calls == [("Port strike", "port backlogs, diesel prices")]
+
+
+def _findings():
+    return [{"title": "River at 24.1 ft", "content": "over flood stage",
+             "severity": "notice",
+             "trip_sources": [{"title": "gauge", "url": "https://waterdata.example/g"}]},
+            {"title": "Levee overtopping alert", "content": "downstream alert",
+             "severity": "alert",
+             "trip_sources": [{"title": "alert", "url": "https://alerts.example/l"}]}]
+
+
+def _stub_cluster(monkeypatch, situations):
+    from routers import structured
+
+    async def fake_parsed(call, schema):
+        return situations, []
+    monkeypatch.setattr(structured, "parsed", fake_parsed)
+
+
+def test_cluster_merges_members_and_mints_situation_keys(monkeypatch):
+    _stub_cluster(monkeypatch, {"situations": [
+        {"headline": "River flooding event", "members": [0, 1], "query": "river flood"}]})
+    _stub_search(monkeypatch, [{"title": "coverage", "url": "https://press.example/c",
+                                "content": "details", "published": None}])
+    out = _run(vein_engine._run_situation_cluster(_findings(), {}, CTX))
+    assert len(out) == 1
+    it = out[0]
+    assert it["key"] == "sit:river-flooding-event"
+    assert it["title"] == "River flooding event"
+    assert it["severity"] == "alert"
+    assert [s["url"] for s in it["sources"]] == [
+        "https://waterdata.example/g", "https://alerts.example/l", "https://press.example/c"]
+    assert [s["n"] for s in it["sources"]] == [1, 2, 3]
+    assert "Vetted findings" in it["content"]
+
+
+def test_cluster_falls_back_to_one_situation_per_finding(monkeypatch):
+    from routers import structured
+
+    async def fake_parsed(call, schema):
+        return None, ["bad json"]
+    monkeypatch.setattr(structured, "parsed", fake_parsed)
+    _stub_search(monkeypatch, [])
+    out = _run(vein_engine._run_situation_cluster(_findings(), {}, CTX))
+    assert len(out) == 2
+    assert all(it["key"].startswith("sit:") for it in out)
+
+
+def test_cluster_deepen_query_param(monkeypatch):
+    _stub_cluster(monkeypatch, {"situations": [
+        {"headline": "Port strike", "members": [0], "query": "port"}]})
+    from types import SimpleNamespace
+    from routers import websearch
+    queries = []
+
+    async def fake(req):
+        queries.append(req.query)
+        return SimpleNamespace(results=[])
+    monkeypatch.setattr(websearch, "search", fake)
+    finding = [{"title": "Port strike", "content": "d", "severity": "alert", "deepen": True}]
+    _run(vein_engine._run_situation_cluster(
+        finding, {"deepen_query": "which categories are affected"}, CTX))
+    assert len(queries) == 2 and "categories" in queries[1]
+    queries.clear()
+    flat = [{"title": "Port strike", "content": "d", "severity": "alert", "deepen": False}]
+    _run(vein_engine._run_situation_cluster(
+        flat, {"deepen_query": "which categories are affected"}, CTX))
+    assert len(queries) == 1
+    queries.clear()
+    _run(vein_engine._run_situation_cluster(finding, {}, CTX))
+    assert len(queries) == 1
+
+
+def test_cluster_is_monitor_and_empty_is_empty():
+    assert vein_engine.is_monitor([{"block": "situation_cluster"}])
+    assert _run(vein_engine._run_situation_cluster([], {}, CTX)) == []
+
+
+def test_block_modules_load_from_dir(monkeypatch, tmp_path):
+    d = tmp_path / "blocks.d"
+    d.mkdir()
+    (d / "mine.py").write_text(
+        "from routers import vein_engine\n"
+        "async def _mine(items, params, ctx):\n"
+        "    return items\n"
+        "vein_engine.register('my_source', _mine)\n", encoding="utf-8")
+    (d / "broken.py").write_text("import nope_never\n", encoding="utf-8")
+    monkeypatch.setattr(vein_engine, "BLOCKS_DIR", str(d))
+    try:
+        assert vein_engine.load_block_modules() == ["mine.py"]
+        assert "my_source" in vein_engine.BLOCKS
+    finally:
+        vein_engine.BLOCKS.pop("my_source", None)

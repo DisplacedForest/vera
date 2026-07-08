@@ -1,18 +1,3 @@
-"""The Hermes tool-calling contract — Vera's model-agnostic text protocol for tool use.
-
-Wire format, plaintext any GGUF/MLX model can emit and any OpenAI-compatible server can
-pass through verbatim:
-
-  * Tools are advertised in the system prompt as one JSON array of OpenAI-style function
-    schemas inside <tools>...</tools> (render_tools).
-  * The model calls a tool by emitting <tool_call>{"arguments": {...}, "name": "..."}</tool_call>.
-  * Each result is returned to the model as <tool_response>{"name": ..., "content": ...}</tool_response>
-    (render_response).
-
-Every call is validated against the FunctionCall schema before dispatch — deterministic
-code, never LLM judgment. A malformed block yields a corrective reason string so the
-caller can answer the model with a fix-it <tool_response> instead of raising.
-"""
 import json
 import re
 
@@ -38,20 +23,14 @@ _INSTRUCTIONS = (
 
 
 def render_tools(schemas: list[dict]) -> str:
-    """The system-prompt preamble advertising `schemas` (OpenAI-style function schemas)
-    and documenting the call format."""
     return _INSTRUCTIONS.format(schemas=json.dumps(schemas))
 
 
 def render_response(name: str, content: str) -> str:
-    """One tool result, wrapped for the model."""
     return f"<tool_response>{json.dumps({'name': name, 'content': content})}</tool_response>"
 
 
 def parse_tool_calls(text: str) -> tuple[list[FunctionCall], list[str]]:
-    """Every <tool_call> block in `text`, validated. Returns (calls, errors): well-formed
-    blocks become FunctionCall objects in order of appearance; each malformed block becomes
-    a reason string. Never raises."""
     calls: list[FunctionCall] = []
     errors: list[str] = []
     for m in _TOOL_CALL.finditer(text or ""):

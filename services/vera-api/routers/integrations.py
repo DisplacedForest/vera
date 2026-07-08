@@ -47,8 +47,7 @@ REGISTRY: dict[str, dict] = {
             {"id": "tool_protocol", "env": "DREAM_TOOL_PROTOCOL", "label": "Tool-call protocol",
              "secret": False, "optional": True, "choices": ["openai", "hermes"],
              "hint": "openai = standard tool_calls (default); hermes = Hermes-style text tool "
-                     "calls for servers that pass model text through untouched; the deprecated "
-                     "value mlx resolves to openai"},
+                     "calls for servers that pass model text through untouched"},
         ],
         "unlocks": ["nightly dreaming consolidation and grooming",
                     "fact verification research with web search"],

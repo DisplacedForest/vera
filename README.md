@@ -144,6 +144,8 @@ docker compose logs vera-api | head -60    # the config report — what's wired,
 
 **App** (macOS 26+; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, drag to Applications. The app is ad-hoc signed, so the first launch needs right-click → Open.
 
+**Backend without Docker** (macOS arm64): each release also ships `vera-api-macos-arm64.zip`, a self-contained engine binary — verify the checksum, unzip, run; data lands in `~/.vera/data` (see `docs/SETUP.md`).
+
 Building either from source instead:
 
 ```sh

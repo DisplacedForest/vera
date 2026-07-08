@@ -29,6 +29,10 @@ docker compose up -d     # pulls the released ghcr.io/displacedforest/vera-api i
 
 Compose pulls the released image by default. To run from source instead, uncomment `build: services/vera-api` in `docker-compose.yml` and use `docker compose up -d --build`.
 
+### Run the engine without Docker (macOS arm64)
+
+Every release ships a packaged engine binary alongside the image. Download `vera-api-macos-arm64.zip` and its `.sha256` from the GitHub Release, verify with `shasum -a 256 -c vera-api-macos-arm64.zip.sha256`, unzip, and run `./vera-api/vera-api`. It serves on `127.0.0.1:8089` and keeps its data in `~/.vera/data`; `VERA_DATA_DIR`, `VERA_BIND`, and `VERA_PORT` override those defaults. Configuration is the same `.env` surface either way (export the variables or launch through a wrapper that sets them).
+
 Then read the **config report** — vera-api prints exactly what is wired at startup, and it is the first thing to check when something is off:
 
 ```sh

@@ -16,12 +16,31 @@ from pydantic import BaseModel
 
 from .pulse import OWUI_BASE, OWUI_KEY, _headers, _vera
 from .persona import owner, voiced
+from .tool_protocol import LOOP_RULES, loop_budget
 from .websearch import SearchRequest, search as web_search
 
 router = APIRouter()
 
 MAX_SOURCES = 14
 PER_SOURCE_CHARS = 1500
+
+PLAN_SYS = (
+    f"{LOOP_RULES}\n\n"
+    "You are a research planner. Given a question, output 3-5 focused sub-questions "
+    "that, researched and combined, would thoroughly answer it. Output ONLY a JSON "
+    "array of strings, nothing else.")
+
+SYN_SYS = (
+    f"{LOOP_RULES}\n\n"
+    f"Write a research report for {owner()}. Synthesize an answer using ONLY the "
+    "numbered sources below. Put an inline citation [n] after every claim, matching the source "
+    "numbers. Structure: a 2-3 sentence summary, then findings (with [n] citations), then a "
+    "'Sources' list mapping each [n] to its title and URL. If sources disagree, say so. Never "
+    "state a fact that isn't supported by a source. GitHub-flavored markdown, no preamble.")
+
+
+def _iteration_cap(requested: int) -> int:
+    return loop_budget("RESEARCH_MAX_ITERATIONS", requested)
 
 
 class ResearchRequest(BaseModel):
@@ -68,58 +87,64 @@ async def _rag_sources(query: str) -> list[dict]:
     return out
 
 
+async def _plan(query: str, cap: int, errors: list[str]) -> list[str]:
+    try:
+        plan = await _vera([{"role": "system", "content": PLAN_SYS}, {"role": "user", "content": query}],
+                           temperature=0.3, think="on")
+        return _parse_list(plan)[:cap] or [query]
+    except Exception as e:
+        errors.append(f"plan: {e}")
+        return [query]
+
+
+async def _search_one(sq: str, pages: int, seen: set, sources: list[dict], errors: list[str]) -> None:
+    try:
+        resp = await web_search(SearchRequest(query=sq, max_results=4, fetch_pages=pages, chars_per_page=2000))
+    except Exception as e:
+        errors.append(f"search '{sq[:40]}': {e}")
+        return
+    for r in resp.results:
+        if r.url and r.url not in seen and r.content:
+            seen.add(r.url)
+            sources.append({"title": r.title, "url": r.url, "content": r.content})
+
+
+async def _gather(req: ResearchRequest, subqs: list[str], errors: list[str]) -> list[dict]:
+    sources: list[dict] = []
+    seen: set = set()
+    for sq in subqs:
+        await _search_one(sq, req.pages_per_q, seen, sources, errors)
+    if req.use_rag:
+        sources.extend(await _rag_sources(req.query))
+    sources = sources[:MAX_SOURCES]
+    for i, s in enumerate(sources, 1):
+        s["n"] = i
+    return sources
+
+
+async def _synthesize(req: ResearchRequest, subqs: list[str], sources: list[dict], errors: list[str]) -> str:
+    src_block = "\n\n".join(f"[{s['n']}] {s['title']} ({s['url']})\n{s['content'][:PER_SOURCE_CHARS]}" for s in sources)
+    syn_usr = f"Question: {req.query}\n\nSub-questions researched:\n- " + "\n- ".join(subqs) + f"\n\nSources:\n{src_block}"
+    try:
+        return (await _vera([{"role": "system", "content": voiced(SYN_SYS)}, {"role": "user", "content": syn_usr}],
+                            temperature=0.4, think="on")).strip()
+    except Exception as e:
+        errors.append(f"synthesis: {e}")
+        return ""
+
+
 @router.post("/research", tags=["research"])
 async def research(req: ResearchRequest):
     t0 = time.time()
     out = {"ok": True, "query": req.query, "subquestions": [], "report": "", "sources": [], "errors": []}
-
-    # 1. Plan — decompose into focused sub-questions.
-    try:
-        plan_sys = ("You are a research planner. Given a question, output 3-5 focused sub-questions "
-                    "that, researched and combined, would thoroughly answer it. Output ONLY a JSON "
-                    "array of strings, nothing else.")
-        plan = await _vera([{"role": "system", "content": plan_sys}, {"role": "user", "content": req.query}],
-                           temperature=0.3, think="on")
-        subqs = _parse_list(plan)[: req.subquestions] or [req.query]
-    except Exception as e:
-        out["errors"].append(f"plan: {e}"); subqs = [req.query]
+    subqs = await _plan(req.query, _iteration_cap(req.subquestions), out["errors"])
     out["subquestions"] = subqs
-
-    # 2. Gather — web per sub-question (+ Playwright pages), then local RAG. Dedup by URL.
-    sources: list[dict] = []
-    seen = set()
-    for sq in subqs:
-        try:
-            resp = await web_search(SearchRequest(query=sq, max_results=4, fetch_pages=req.pages_per_q, chars_per_page=2000))
-            for r in resp.results:
-                if r.url and r.url not in seen and r.content:
-                    seen.add(r.url)
-                    sources.append({"title": r.title, "url": r.url, "content": r.content})
-        except Exception as e:
-            out["errors"].append(f"search '{sq[:40]}': {e}")
-    if req.use_rag:
-        sources.extend(await _rag_sources(req.query))
-
-    sources = sources[:MAX_SOURCES]
-    for i, s in enumerate(sources, 1):
-        s["n"] = i
+    sources = await _gather(req, subqs, out["errors"])
     if not sources:
-        out["errors"].append("no sources gathered"); out["seconds"] = round(time.time() - t0, 1)
+        out["errors"].append("no sources gathered")
+        out["seconds"] = round(time.time() - t0, 1)
         return out
-
-    # 3. Synthesize — cited report grounded ONLY in the gathered sources.
-    src_block = "\n\n".join(f"[{s['n']}] {s['title']} ({s['url']})\n{s['content'][:PER_SOURCE_CHARS]}" for s in sources)
-    syn_sys = (f"Write a research report for {owner()}. Synthesize an answer using ONLY the "
-               "numbered sources below. Put an inline citation [n] after every claim, matching the source "
-               "numbers. Structure: a 2-3 sentence summary, then findings (with [n] citations), then a "
-               "'Sources' list mapping each [n] to its title and URL. If sources disagree, say so. Never "
-               "state a fact that isn't supported by a source. GitHub-flavored markdown, no preamble.")
-    syn_usr = f"Question: {req.query}\n\nSub-questions researched:\n- " + "\n- ".join(subqs) + f"\n\nSources:\n{src_block}"
-    try:
-        out["report"] = (await _vera([{"role": "system", "content": voiced(syn_sys)}, {"role": "user", "content": syn_usr}],
-                                     temperature=0.4, think="on")).strip()
-    except Exception as e:
-        out["errors"].append(f"synthesis: {e}")
+    out["report"] = await _synthesize(req, subqs, sources, out["errors"])
     out["sources"] = [{"n": s["n"], "title": s["title"], "url": s["url"]} for s in sources]
     out["seconds"] = round(time.time() - t0, 1)
     return out

@@ -56,6 +56,7 @@ struct ReleaseInfo: Decodable, Equatable {
 
     var version: String { tag_name.hasPrefix("v") ? String(tag_name.dropFirst()) : tag_name }
     var appZip: Asset? { assets.first { $0.name == "Vera.app.zip" } }
+    func asset(named: String) -> Asset? { assets.first { $0.name == named } }
 }
 
 @MainActor

@@ -30,3 +30,5 @@ venv/
 /CLAUDE.md
 /.mcp.json
 /.repowise/
+/.claude/
+/.vscode/

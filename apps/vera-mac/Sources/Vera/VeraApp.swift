@@ -51,6 +51,7 @@ struct VeraApp: App {
                 .environmentObject(config)
                 .environmentObject(updates)
                 .frame(minWidth: 920, minHeight: 600)
+                .preferredColorScheme(config.colorSchemeOverride)
                 .task { updates.start() }
         }
         .defaultSize(width: 1180, height: 760)
@@ -69,6 +70,7 @@ struct VeraApp: App {
                 .environmentObject(store)
                 .environmentObject(tools)   // the Plugins and MCP tabs render from the shared ToolsStore
                 .environmentObject(updates)
+                .preferredColorScheme(config.colorSchemeOverride)
         }
     }
 }

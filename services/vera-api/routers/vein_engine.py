@@ -312,8 +312,8 @@ async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False
             return {"ok": True, "skipped": "schedule floor",
                     "detail": f"last run {ago}m ago; the floor for LLM pipelines is {FLOOR_MINUTES}m"}
     ctx = {"kind": kind,
-           "options": pulse_veins.option_values(kind),
-           "providers": pulse_veins.provider_values(kind)}
+           "options": pulse_veins.option_values_for(defn),
+           "providers": pulse_veins.provider_values_for(defn)}
     items, seen_filtered, steps = [], False, []
     for step in pipeline:
         name = step.get("block", "")

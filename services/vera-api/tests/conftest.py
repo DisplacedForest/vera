@@ -29,6 +29,7 @@ _STORE_PATHS = {
     "GROOM_DB_PATH": "groom.db",
     "KNOWLEDGE_DB_PATH": "knowledge.db",
     "VEINS_PATH": "veins.json",
+    "VEINS_D_PATH": "veins.d",
     "MEDIA_DB_PATH": "media.db",
     "PULSE_DB_PATH": "pulse.db",
     "SIGNALS_LOG_PATH": "signals_log.jsonl",

@@ -1,0 +1,22 @@
+{
+  "kind": "media",
+  "label": "Media",
+  "icon": "film",
+  "order": 3,
+  "nominal_label": "quiet",
+  "blurb": "a weekly worth-adding digest for your media library",
+  "producer_jobs": ["media_curate"],
+  "requires": [
+    {"kind": "integration", "id": "overseerr"}
+  ],
+  "providers": [],
+  "options": [
+    {"group": "Curation", "fields": [
+      {"id": "taste", "label": "Taste profile", "type": "text",
+       "env": "MEDIA_CURATION_TASTE", "default": "",
+       "hint": "hard rules and preferences; empty = neutral (popularity is a pool, not a ranking)"},
+      {"id": "cap", "label": "Picks per digest", "type": "number",
+       "env": "MEDIA_CURATION_CAP", "default": 8}
+    ]}
+  ]
+}

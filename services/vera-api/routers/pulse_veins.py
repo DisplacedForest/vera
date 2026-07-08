@@ -1,32 +1,20 @@
-"""Pulse vein catalog — declarative manifests for the pinned ambient veins, plus the
-opt-in state API. NOTHING is enabled by default: a fresh install shows an empty chip
-row, and veins are activated through the app's Veins pane (or this API).
+"""Pulse vein catalog — schema-validated vein definitions merged from two origins,
+plus the opt-in state API. NOTHING is enabled by default: a fresh install shows an
+empty chip row, and veins are activated through the app's Veins pane (or this API).
 
 Pulse has two tiers: the research feed (image-rich briefings, core Vera, NOT a vein)
 and a row of pinned ambient veins above it. Each vein groups one card `kind`; the Mac
 app renders a slim chip per enabled vein that sits quiet until a producer posts a card
 of that kind. Any card whose kind has no ENABLED vein falls back into the feed.
 
-THE MANIFEST SCHEMA (the extensibility contract — a new vein is one entry here plus a
-producer; the app hardcodes nothing and renders unknown veins/options generically):
-
-  kind           card kind this vein groups (chip identity)
-  label / icon / order / nominal_label    chip presentation (SF Symbol icon)
-  blurb          one line: what this vein watches
-  producer_jobs  scheduler job ids that feed the vein; all gate on the vein's enabled
-                 state (first id is "primary" — its cron is the vein's editable schedule)
-  requires       requirement dicts blocking enable while unmet:
-                   {"kind": "integration", "id": <integrations registry id>}
-                   {"kind": "feature", "integration": id, "feature": id}
-                   {"kind": "env", "names": [...], "label": "human name"}
-  providers      endpoint slots, declared as contracts (id, label, hint, default) —
-                 point the vein at any compatible service, never a hardcoded pick
-  options        groups of per-vein scoping fields the producer honors at run time:
-                   {"group": label, "fields": [{id, label, type: bool|text|number|choice,
-                    choices?, default, env?, hint?}]}
-                 resolution per field: store value > env (when declared) > default —
-                 the store is the runtime authority; env acts as the seed/headless layer.
-"""
+Definitions are data (schema in vein_schema.py, origins in vein_defs.py): shipped
+JSON files in the repo's `veins/` directory plus user-created files under the data
+volume's `veins.d/`, one file per vein, managed through the definition CRUD below.
+The app hardcodes nothing and renders unknown veins/options generically. Option
+resolution per field: store value > env (when declared) > default — the store is
+the runtime authority; env acts as the seed/headless layer. A pipeline-bearing
+definition carries an `engine` requirement that is unmet until the vein engine
+ships, so it can be created, edited, and listed but not enabled."""
 
 import os
 
@@ -34,112 +22,26 @@ import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from . import vein_store
+from . import vein_defs, vein_schema, vein_store
 
 router = APIRouter()
 
 MAX_ACTIVE = 6  # chip-row constraint, enforced at enable time
 
-VEINS: list[dict] = [
-    {
-        "kind": "status", "label": "System", "icon": "gearshape", "order": 0,
-        "nominal_label": "nominal",
-        "blurb": "stack health and pending updates across your monitored sources",
-        "producer_jobs": ["updates", "healthcheck"],
-        "requires": [],
-        "providers": [],
-        "options": [
-            {"group": "Monitored sources", "fields": [
-                {"id": "src_containers", "label": "Containers", "type": "bool", "default": True,
-                 "hint": "container-image updates from the host's update-status feed"},
-                {"id": "src_host", "label": "Host OS", "type": "bool", "default": True},
-                {"id": "src_home_assistant", "label": "Home Assistant + HACS", "type": "bool", "default": True},
-                {"id": "src_network", "label": "Network gear", "type": "bool", "default": True},
-                {"id": "src_apps", "label": "Apps", "type": "bool", "default": True},
-                {"id": "src_service_health", "label": "Service health probes", "type": "bool", "default": True,
-                 "hint": "liveness checks on the endpoints you've configured"},
-            ]},
-        ],
-    },
-    {
-        "kind": "weather", "label": "Weather", "icon": "cloud.sun", "order": 1,
-        "nominal_label": "clear",
-        "blurb": "severe-weather pre-warnings for the home's coordinates",
-        "producer_jobs": ["weather"],
-        "requires": [{"kind": "env", "names": ["WEATHER_LAT", "WEATHER_LON"],
-                      "label": "home coordinates"}],
-        "providers": [
-            {"id": "forecast_url", "label": "Forecast endpoint",
-             "default": "https://api.open-meteo.com/v1/forecast",
-             "hint": "any Open-Meteo-compatible forecast API; the default is the public instance"},
-        ],
-        "options": [
-            {"group": "Units & thresholds", "fields": [
-                {"id": "unit", "label": "Temperature unit", "type": "choice",
-                 "choices": ["fahrenheit", "celsius"], "env": "TEMPERATURE_UNIT", "default": "fahrenheit"},
-                {"id": "gust_threshold", "label": "Wind gust alert (mph)", "type": "number", "default": 45},
-                {"id": "heat_threshold", "label": "Extreme heat alert", "type": "number", "default": None,
-                 "hint": "in the configured unit; blank = 100F / 38C"},
-                {"id": "freeze_threshold", "label": "Hard freeze alert", "type": "number", "default": None,
-                 "hint": "in the configured unit; blank = 15F / -9C"},
-            ]},
-        ],
-    },
-    {
-        "kind": "signals", "label": "Signals", "icon": "antenna.radiowaves.left.and.right",
-        "order": 2, "nominal_label": "quiet",
-        "blurb": "an external-watch monitor (only what crosses pre-declared thresholds)",
-        "producer_jobs": ["signals"],
-        "requires": [],
-        "providers": [],
-        "options": [
-            {"group": "Source groups", "fields": [
-                {"id": "grp_financial", "label": "Financial stress", "type": "bool", "default": True,
-                 "hint": "Treasury yield curve, VIX, high-yield credit spreads"},
-                {"id": "grp_geophysical", "label": "Geophysical", "type": "bool", "default": True,
-                 "hint": "USGS earthquakes, GDACS disaster alerts"},
-                {"id": "grp_civic", "label": "Civic (US)", "type": "bool", "default": False,
-                 "hint": "FEMA declarations for your state, Federal Register emergency documents"},
-                {"id": "grp_grid", "label": "Grid stress", "type": "bool", "default": False,
-                 "hint": "EIA demand-vs-forecast for your balancing authority (needs an EIA key)"},
-                {"id": "grp_news", "label": "News judge", "type": "bool", "default": True,
-                 "hint": "web-search sweep of your configured news beats, LLM-judged"},
-            ]},
-            {"group": "Orientation", "fields": [
-                {"id": "orientation", "label": "What clears the bar", "type": "text",
-                 "env": "SIGNALS_ORIENTATION", "default": "",
-                 "hint": "completes \"would plausibly …\"; empty = a neutral household bar"},
-                {"id": "impact_goods", "label": "Affected-goods line on supply cards", "type": "bool",
-                 "env": "SIGNALS_IMPACT_GOODS", "default": False},
-            ]},
-        ],
-    },
-    {
-        "kind": "media", "label": "Media", "icon": "film", "order": 3,
-        "nominal_label": "quiet",
-        "blurb": "a weekly worth-adding digest for your media library",
-        "producer_jobs": ["media_curate"],
-        "requires": [{"kind": "integration", "id": "overseerr"}],
-        "providers": [],
-        "options": [
-            {"group": "Curation", "fields": [
-                {"id": "taste", "label": "Taste profile", "type": "text",
-                 "env": "MEDIA_CURATION_TASTE", "default": "",
-                 "hint": "hard rules and preferences; empty = neutral (popularity is a pool, not a ranking)"},
-                {"id": "cap", "label": "Picks per digest", "type": "number",
-                 "env": "MEDIA_CURATION_CAP", "default": 8},
-            ]},
-        ],
-    },
-]
+VEINS: list[dict] = vein_defs.shipped()
 
 _BY_KIND = {l["kind"]: l for l in VEINS}
+
+
+def _defs() -> dict[str, dict]:
+    """The merged catalog, kind → definition: shipped first, then custom files."""
+    return {l["kind"]: l for l in VEINS} | vein_defs.customs()
 
 
 # --------------------------------------------------------------------- state resolution
 
 def manifest(kind: str) -> dict | None:
-    return _BY_KIND.get(kind)
+    return _defs().get(kind)
 
 
 def is_enabled(kind: str) -> bool:
@@ -149,14 +51,14 @@ def is_enabled(kind: str) -> bool:
 
 def enabled_kinds() -> set[str]:
     doc = vein_store.load()
-    return {l["kind"] for l in VEINS if (doc.get(l["kind"]) or {}).get("enabled")}
+    return {k for k in _defs() if (doc.get(k) or {}).get("enabled")}
 
 
 def veins() -> list[dict]:
     """ENABLED veins only, chip fields, ordered left→right — the `GET /pulse/veins` view."""
     on = enabled_kinds()
     return sorted(({k: l[k] for k in ("kind", "label", "icon", "order", "nominal_label")}
-                   for l in VEINS if l["kind"] in on), key=lambda l: l["order"])
+                   for l in _defs().values() if l["kind"] in on), key=lambda l: l["order"])
 
 
 def _coerce(field: dict, value):
@@ -185,7 +87,7 @@ def _field_default(field: dict):
 
 def option_values(kind: str) -> dict:
     """One vein's effective option values: store > env > manifest default."""
-    spec = _BY_KIND.get(kind)
+    spec = _defs().get(kind)
     if not spec:
         return {}
     stored = (vein_store.load().get(kind) or {}).get("options") or {}
@@ -204,7 +106,7 @@ def has_stored_options(kind: str) -> bool:
 
 def provider_values(kind: str) -> dict:
     """One vein's effective provider endpoints: store > slot default."""
-    spec = _BY_KIND.get(kind)
+    spec = _defs().get(kind)
     if not spec:
         return {}
     stored = (vein_store.load().get(kind) or {}).get("providers") or {}
@@ -218,33 +120,41 @@ def _requirement_state(req: dict) -> dict:
     if req["kind"] == "integration":
         spec = integrations.REGISTRY.get(req["id"], {})
         met = integrations.integration(req["id"]) is not None
-        return {"label": spec.get("display_name", req["id"]), "met": met,
+        return {"kind": "integration", "label": spec.get("display_name", req["id"]), "met": met,
                 "integration": req["id"],
                 "detail": "" if met else f"connect {spec.get('display_name', req['id'])} in Plugins"}
     if req["kind"] == "feature":
         met = integrations.feature_enabled(req["integration"], req["feature"])
-        return {"label": f"{req['integration']} · {req['feature']}", "met": met,
+        return {"kind": "feature", "label": f"{req['integration']} · {req['feature']}", "met": met,
                 "integration": req["integration"],
                 "detail": "" if met else f"enable the {req['feature']} feature in Plugins"}
     if req["kind"] == "env":
         met = all(os.environ.get(n, "").strip() for n in req["names"])
-        return {"label": req.get("label", ", ".join(req["names"])), "met": met,
+        return {"kind": "env", "label": req.get("label", ", ".join(req["names"])), "met": met,
                 "detail": "" if met else f"set {' and '.join(req['names'])}"}
-    return {"label": str(req), "met": False, "detail": "unknown requirement"}
+    if req["kind"] == "engine":
+        return {"kind": "engine", "label": "vein engine", "met": False,
+                "detail": "the vein engine ships in a later release"}
+    return {"kind": req.get("kind", ""), "label": str(req), "met": False,
+            "detail": "unknown requirement"}
 
 
 def requirements(kind: str) -> list[dict]:
-    return [_requirement_state(r) for r in _BY_KIND.get(kind, {}).get("requires", [])]
+    spec = _defs().get(kind, {})
+    reqs = list(spec.get("requires", []))
+    if spec.get("pipeline"):
+        reqs.insert(0, {"kind": "engine"})
+    return [_requirement_state(r) for r in reqs]
 
 
 def gate_reason(kind: str) -> str | None:
     """Scheduler-gate hook: why this vein's producer jobs may not run, or None."""
+    spec = _defs().get(kind, {})
     if not is_enabled(kind):
-        label = _BY_KIND.get(kind, {}).get("label", kind)
-        return f"the {label} vein is off. Enable it in Veins."
+        return f"the {spec.get('label', kind)} vein is off. Enable it in Veins."
     unmet = [r for r in requirements(kind) if not r["met"]]
     if unmet:
-        return f"the {_BY_KIND[kind]['label']} vein needs {unmet[0]['label']} ({unmet[0]['detail']})"
+        return f"the {spec.get('label', kind)} vein needs {unmet[0]['label']} ({unmet[0]['detail']})"
     return None
 
 
@@ -309,9 +219,10 @@ def _entry(spec: dict, doc: dict) -> dict:
     reqs = requirements(kind)
     opts = option_values(kind)
     provs = provider_values(kind)
-    return {
+    out = {
         "kind": kind, "label": spec["label"], "icon": spec["icon"], "order": spec["order"],
         "nominal_label": spec["nominal_label"], "blurb": spec["blurb"],
+        "origin": "shipped" if any(l["kind"] == kind for l in VEINS) else "custom",
         "enabled": bool(state.get("enabled")),
         "requires": reqs, "can_enable": all(r["met"] for r in reqs),
         "providers": [{**{k: s.get(k, "") for k in ("id", "label", "hint", "default")},
@@ -321,22 +232,75 @@ def _entry(spec: dict, doc: dict) -> dict:
                                  "value": opts.get(f["id"]), "default": f.get("default")}
                                 for f in g["fields"]]}
                     for g in spec.get("options", [])],
-        "jobs": _job_views(spec["producer_jobs"]),
+        "jobs": _job_views(spec.get("producer_jobs") or []),
     }
+    if spec.get("pipeline"):
+        out["pipeline"] = spec["pipeline"]
+        out["schedule"] = spec.get("schedule")
+    return out
 
 
 @router.get("/pulse/veins/catalog", tags=["pulse"])
 async def catalog():
-    """Every vein manifest merged with its runtime state — the Veins pane's feed."""
+    """Every vein definition merged with its runtime state — the Veins pane's feed."""
     doc = vein_store.load()
-    return {"veins": [_entry(l, doc) for l in sorted(VEINS, key=lambda x: x["order"])],
-            "active": len(enabled_kinds()), "cap": MAX_ACTIVE}
+    return {"veins": [_entry(l, doc) for l in sorted(_defs().values(), key=lambda x: x["order"])],
+            "active": len(enabled_kinds()), "cap": MAX_ACTIVE,
+            "load_report": vein_defs.load_report()}
+
+
+@router.get("/pulse/veins/schema", tags=["pulse"])
+async def definition_schema():
+    """The vein definition JSON Schema — the contract builder drafts and imports meet."""
+    return vein_schema.json_schema()
+
+
+@router.post("/pulse/veins", tags=["pulse"])
+async def create_vein(defn: dict):
+    """Create a custom vein from a definition body; the catalog entry on success."""
+    from fastapi import HTTPException
+    if defn.get("kind") in _defs():
+        raise HTTPException(status_code=409, detail=f"vein '{defn.get('kind')}' already exists")
+    try:
+        saved = vein_defs.save_custom(defn)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return _entry(saved, vein_store.load())
+
+
+@router.put("/pulse/veins/{kind}/definition", tags=["pulse"])
+async def replace_definition(kind: str, defn: dict):
+    """Replace a custom vein's definition (shipped definitions are read-only)."""
+    from fastapi import HTTPException
+    if any(l["kind"] == kind for l in VEINS):
+        raise HTTPException(status_code=403, detail=f"vein '{kind}' is shipped and read-only")
+    if kind not in vein_defs.customs():
+        raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
+    if defn.get("kind") != kind:
+        raise HTTPException(status_code=422, detail="definition `kind` must match the path")
+    try:
+        saved = vein_defs.save_custom(defn)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return _entry(saved, vein_store.load())
+
+
+@router.delete("/pulse/veins/{kind}", tags=["pulse"])
+async def delete_vein(kind: str):
+    """Delete a custom vein and its runtime state; its cards fall back into the feed."""
+    from fastapi import HTTPException
+    if any(l["kind"] == kind for l in VEINS):
+        raise HTTPException(status_code=403, detail=f"vein '{kind}' is shipped and read-only")
+    if not vein_defs.delete_custom(kind):
+        raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
+    vein_store.remove(kind)
+    return {"deleted": kind}
 
 
 @router.put("/pulse/veins/{kind}", tags=["pulse"])
 async def update_vein(kind: str, req: VeinUpdate):
     from fastapi import HTTPException
-    spec = _BY_KIND.get(kind)
+    spec = _defs().get(kind)
     if not spec:
         raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
 
@@ -362,7 +326,7 @@ async def update_vein(kind: str, req: VeinUpdate):
                                 detail=f"vein cap reached ({MAX_ACTIVE} active). Disable one first.")
 
     vein_store.update(kind, enabled=req.enabled, options=req.options, providers=req.providers)
-    if req.cron is not None and spec["producer_jobs"]:
+    if req.cron is not None and spec.get("producer_jobs"):
         from croniter import croniter
         if not croniter.is_valid(req.cron):
             raise HTTPException(status_code=422, detail=f"invalid cron expression '{req.cron}'")
@@ -375,7 +339,7 @@ async def update_vein(kind: str, req: VeinUpdate):
 async def test_vein(kind: str):
     """Exercise the vein's provider slots / sources; per-slot results, nothing persisted."""
     from fastapi import HTTPException
-    spec = _BY_KIND.get(kind)
+    spec = _defs().get(kind)
     if not spec:
         raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
     results = []

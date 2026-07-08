@@ -617,7 +617,7 @@ async def _compose_signal(headline, members, sources, deepen):
            + json.dumps([{"title": m["title"], "detail": m["detail"]} for m in members], indent=2)
            + "\n\nNumbered sources:\n" + _numbered(sources))
     raw = (await _vera([{"role": "system", "content": voiced(sysp)}, {"role": "user", "content": usr}],
-                       temperature=0.4)).strip()
+                       temperature=0.4, think="on")).strip()
     head, sep, rest = raw.partition("===")
     if sep:
         m = re.search(r"SUMMARY:\s*(.+)", head)
@@ -694,7 +694,7 @@ async def check(req: SignalsRequest):
                     raw = await _vera(
                         [{"role": "system", "content": news_judge_sys(effective_orientation())},
                          {"role": "user", "content": f"Today: {time.strftime('%Y-%m-%d')}.\n\n{corpus}"}],
-                        temperature=0.2)
+                        temperature=0.2, think="off")
                     parsed = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
                     cands = parsed.get("candidates", []) if isinstance(parsed, dict) else []
                     out["considered"] = cands
@@ -729,7 +729,8 @@ async def check(req: SignalsRequest):
         listing = json.dumps([{"i": i, "sentinel": t["sentinel"], "tier": t["tier"],
                                "title": t["title"], "detail": t["detail"]} for i, t in enumerate(trips)], indent=2)
         raw = await _vera([{"role": "system", "content": CLUSTER_SYS},
-                           {"role": "user", "content": f"Today's trips:\n{listing}"}], temperature=0.2)
+                           {"role": "user", "content": f"Today's trips:\n{listing}"}],
+                          temperature=0.2, think="off")
         clusters = json.loads(raw[raw.index("{"):raw.rindex("}") + 1]).get("situations", [])
     except Exception as e:
         out["errors"].append(f"cluster: {e}")

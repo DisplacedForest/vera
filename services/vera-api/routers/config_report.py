@@ -12,7 +12,8 @@ log = logging.getLogger("vera.config")
 # (group, vars). Everything optional by design: an unset integration degrades
 # gracefully — this report is how you see what's off and why.
 GROUPS: list[tuple[str, list[str]]] = [
-    ("core llm",      ["VERA_BASE", "VERA_MODEL", "VERA_CHAT_TEMPLATE_KWARGS"]),
+    ("core llm",      ["VERA_BASE", "VERA_MODEL", "VERA_CHAT_TEMPLATE_KWARGS",
+                       "VERA_THINK_KWARGS_ON", "VERA_THINK_KWARGS_OFF"]),
     ("open-webui",    ["OWUI_BASE", "OWUI_KEY"]),
     ("web search",    ["SEARXNG_BASE", "PLAYWRIGHT_WS"]),
     ("dream/coder",   ["DREAM_BASE", "DREAM_MODEL", "DREAM_TOOL_PROTOCOL"]),

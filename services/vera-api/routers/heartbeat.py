@@ -173,7 +173,7 @@ async def _grounded_belief(topic, query, results):
     text = (await _vera(
         [{"role": "system", "content": voiced(GROUND_SYS)},
          {"role": "user", "content": f"Topic: {topic}\n\nNumbered sources:\n{corpus}"}],
-        temperature=0.2)).strip()
+        temperature=0.2, think="on")).strip()
     if not text or text.upper().strip(".!\"' ").startswith("NOTHING") or len(text) < 40:
         return None
     cited = sorted({int(n) for n in re.findall(r"\[(\d+)\]", text)})
@@ -230,7 +230,7 @@ async def _ensure_glosses(uid, name, prof, interests):
             [{"role": "system", "content": GLOSS_SYS.format(who=name)},
              {"role": "user", "content": f"About {name}: {prof.get('persona') or '(unknown)'}\n"
                                           f"Interests:\n- " + "\n- ".join(missing)}],
-            temperature=0.3))
+            temperature=0.3, think="off"))
         for topic, gloss in (out.get("glosses") or {}).items():
             if not isinstance(gloss, str) or not gloss.strip():
                 continue
@@ -299,7 +299,7 @@ async def _for_you(now_str, recent):
                                       f"Already in their feed (do NOT repeat):\n- "
                                       + ("\n- ".join(feed_titles) if feed_titles else "(empty)")
                                       + f"\n\nRecently surfaced to them (don't repeat): {recent_for or 'none'}"}],
-        temperature=0.4))
+        temperature=0.4, think="off"))
     if not decide.get("surface") or not decide.get("query"):
         return None
     topic = (decide.get("topic") or "").strip()
@@ -320,7 +320,7 @@ async def _for_you(now_str, recent):
     rel = _parse_json(await _vera(
         [{"role": "system", "content": RELEVANCE_SYS.format(who=name)},
          {"role": "user", "content": f"Interest: {interest_meaning}\nCandidate topic: {topic}\nQuery: {query}"}],
-        temperature=0.2))
+        temperature=0.2, think="off"))
     if not rel.get("related"):
         return None  # token-only match dies here — no research, no card
 
@@ -328,7 +328,7 @@ async def _for_you(now_str, recent):
     sub = _parse_json(await _vera(
         [{"role": "system", "content": SUBSTANCE_SYS.format(who=name)},
          {"role": "user", "content": f"Topic: {topic}\nWhy it may matter: {rel.get('link', '')}"}],
-        temperature=0.2))
+        temperature=0.2, think="off"))
     if not sub.get("briefing_worthy"):
         return None
 
@@ -470,7 +470,8 @@ async def tick(req: TickRequest):
         f"## Recent outcomes (don't repeat these)\n{recent_txt}"
     )
     decision = _parse_json(await _vera(
-        [{"role": "system", "content": DECIDE_SYS}, {"role": "user", "content": usr}], temperature=0.5))
+        [{"role": "system", "content": DECIDE_SYS}, {"role": "user", "content": usr}],
+        temperature=0.5, think="off"))
 
     out = {"ok": True, "now": now, "learned": [], "refined": False, "proposed": None, "errors": []}
 

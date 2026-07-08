@@ -27,7 +27,7 @@ from . import pulse_veins
 from . import pulse_store as store
 from . import user_profile_store as up
 from . import vera_interests_store as vi
-from .persona import voiced
+from .persona import think_kwargs, voiced
 from .images import ImageSearchRequest, search as image_search
 from .websearch import SearchRequest, search as web_search
 
@@ -125,19 +125,22 @@ def _headers():
     return {"Authorization": f"Bearer {OWUI_KEY}", "Content-Type": "application/json"}
 
 
-def _chat_payload(messages, temperature) -> dict:
-    """The /chat/completions body — pure OpenAI unless template kwargs are configured."""
+def _chat_payload(messages, temperature, think=None) -> dict:
+    """The /chat/completions body — pure OpenAI unless template kwargs are configured.
+    An explicit `think` mode ("on"/"off") resolves per-mode kwargs via persona.think_kwargs;
+    no mode means the global kwargs."""
     p = {"model": MODEL, "stream": False, "temperature": temperature, "messages": messages}
-    if CHAT_TEMPLATE_KWARGS:
-        p["chat_template_kwargs"] = CHAT_TEMPLATE_KWARGS
+    kwargs = think_kwargs(think) if think else CHAT_TEMPLATE_KWARGS
+    if kwargs:
+        p["chat_template_kwargs"] = kwargs
     return p
 
 
-async def _vera(messages, temperature=0.4):
+async def _vera(messages, temperature=0.4, think=None):
     async with aiohttp.ClientSession() as s:
         async with s.post(
             f"{VERA_BASE}/chat/completions",
-            json=_chat_payload(messages, temperature),
+            json=_chat_payload(messages, temperature, think),
             timeout=aiohttp.ClientTimeout(total=300),
         ) as r:
             d = await r.json()

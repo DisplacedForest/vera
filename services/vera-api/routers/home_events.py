@@ -22,7 +22,7 @@ import aiohttp
 from fastapi import APIRouter
 
 from . import home_events_store as store
-from . import integrations
+from . import integrations, series_store
 
 router = APIRouter()
 
@@ -80,6 +80,11 @@ def _record(msg: dict):
             "old_state": old.get("state"), "new_state": new.get("state"),
             "attrs": new.get("attributes"), "context": ctx,
         })
+        if eid.split(".")[0] == "sensor":
+            from .home_model_mine import _as_float
+            v = _as_float(new.get("state"))
+            if v is not None:
+                series_store.insert(eid, ts, v)
     else:  # automation_triggered / script_started
         eid = data.get("entity_id") or ""
         store.insert({
@@ -130,6 +135,7 @@ async def _run():
                             if now - last_purge > 86400:  # daily retention sweep, inline
                                 try:
                                     store.purge()
+                                    series_store.purge()
                                 except Exception:
                                     pass
                                 last_purge = now
@@ -148,6 +154,7 @@ async def _start_capture():
     global _task
     if _task is None:
         store.init()
+        series_store.init()
         _task = asyncio.create_task(_run())
 
 
@@ -210,3 +217,16 @@ async def events(limit: int = 100, entity_id: str | None = None,
 async def events_stats():
     """Capture health (is the subscriber connected, how many events) + store totals."""
     return {"enabled": _gate_open(), "capture": _state, "store": store.stats()}
+
+
+@router.get("/home/series", tags=["home"])
+async def series_index(min_points: int = 0):
+    return {"entities": series_store.entities(min_points=min_points)}
+
+
+@router.get("/home/series/{entity_id}", tags=["home"])
+async def series_points(entity_id: str, since: int | None = None, until: int | None = None,
+                        limit: int | None = None):
+    return {"entity_id": entity_id,
+            "points": series_store.series(entity_id, since=since, until=until,
+                                          limit=min(limit, 100_000) if limit else None)}

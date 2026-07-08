@@ -84,17 +84,73 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  engine:
+    name: build vera-api-macos-arm64.zip
+    needs: verify
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        working-directory: services/vera-api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - name: Build
+        working-directory: services/vera-api
+        run: pyinstaller --noconfirm vera-api.spec
+      - name: Smoke-boot the packaged engine
+        working-directory: services/vera-api
+        run: |
+          export VERA_DATA_DIR="$RUNNER_TEMP/vera-data"
+          ./dist/vera-api/vera-api &
+          engine_pid=$!
+          for i in $(seq 1 30); do
+            sleep 1
+            if curl -sf http://127.0.0.1:8089/version > /tmp/version.json; then
+              break
+            fi
+          done
+          cat /tmp/version.json
+          tag="${GITHUB_REF_NAME#v}"
+          grep -q "\"$tag\"" /tmp/version.json
+          curl -sf http://127.0.0.1:8089/pulse/veins/catalog > /tmp/catalog.json
+          for kind in status weather signals media; do
+            grep -q "\"$kind\"" /tmp/catalog.json
+          done
+          kill "$engine_pid"
+      - name: Zip and checksum
+        working-directory: services/vera-api/dist
+        run: |
+          ditto -c -k --keepParent vera-api vera-api-macos-arm64.zip
+          shasum -a 256 vera-api-macos-arm64.zip > vera-api-macos-arm64.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vera-api-macos-arm64
+          path: |
+            services/vera-api/dist/vera-api-macos-arm64.zip
+            services/vera-api/dist/vera-api-macos-arm64.zip.sha256
+          if-no-files-found: error
+
   release:
     name: create GitHub Release
-    needs: [app, image]
+    needs: [app, image, engine]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: Vera.app.zip
+      - uses: actions/download-artifact@v4
+        with:
+          name: vera-api-macos-arm64
       - uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           generate_release_notes: true
-          files: Vera.app.zip
+          files: |
+            Vera.app.zip
+            vera-api-macos-arm64.zip
+            vera-api-macos-arm64.zip.sha256

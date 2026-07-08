@@ -56,9 +56,11 @@ GROUPS: list[tuple[str, list[str]]] = [
 ]
 
 
-def report(version: str) -> None:
+def report(version: str, data_root: str | None = None) -> None:
     from routers import env_compat
     log.info("vera-api v%s — configuration (set/unset per integration; unset = that capability is off):", version)
+    if data_root:
+        log.info("  data root: %s", data_root)
     for group, names in GROUPS:
         parts = [f"{n}={'set' if env_compat.read(n) or os.environ.get(n, '').strip() else 'unset'}"
                  for n in names]

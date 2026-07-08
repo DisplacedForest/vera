@@ -66,8 +66,11 @@ def report(version: str) -> None:
                     old, new)
     # Resolved protocols are config, not secrets — name them so a misbehaving endpoint
     # is diagnosable from the boot log alone.
-    proto = "mlx" if os.environ.get("DREAM_TOOL_PROTOCOL", "").strip().lower() == "mlx" else "openai"
+    raw_proto = os.environ.get("DREAM_TOOL_PROTOCOL", "").strip().lower()
+    proto = "hermes" if raw_proto in ("hermes", "mlx") else "openai"
     log.info("  dream/coder tool protocol: %s", proto)
+    if raw_proto == "mlx":
+        log.warning("  deprecated DREAM_TOOL_PROTOCOL value in use: mlx — rename it to hermes")
     img_proto = "vera" if os.environ.get("IMAGE_PROTOCOL", "").strip().lower() == "vera" else "openai"
     log.info("  image-gen protocol: %s", img_proto)
     if os.environ.get("VERA_CHAT_TEMPLATE_KWARGS", "").strip():

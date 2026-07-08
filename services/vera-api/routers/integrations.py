@@ -45,9 +45,10 @@ REGISTRY: dict[str, dict] = {
              "hint": "any /v1 endpoint (llama.cpp, vLLM, llama-swap, mlx_lm.server, or a hosted API)"},
             {"id": "model", "env": "DREAM_MODEL", "label": "Model id", "secret": False},
             {"id": "tool_protocol", "env": "DREAM_TOOL_PROTOCOL", "label": "Tool-call protocol",
-             "secret": False, "optional": True, "choices": ["openai", "mlx"],
-             "hint": "openai = standard tool_calls (default); mlx = text-protocol fallback for "
-                     "mlx_lm.server, which doesn't emit OpenAI tool_calls"},
+             "secret": False, "optional": True, "choices": ["openai", "hermes"],
+             "hint": "openai = standard tool_calls (default); hermes = Hermes-style text tool "
+                     "calls for servers that don't emit OpenAI tool_calls (mlx_lm.server and "
+                     "similar); the value mlx is a deprecated alias for hermes"},
         ],
         "unlocks": ["nightly dreaming consolidation and grooming",
                     "fact verification research with web search"],

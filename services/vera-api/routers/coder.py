@@ -6,11 +6,11 @@ Two tool-call transports, selected by DREAM_TOOL_PROTOCOL:
       returns `tool_calls`, and results go back as `role: "tool"` messages. Works with any
       server that implements the spec.
 
-  mlx — a text-protocol fallback for servers that run tool-capable models but do not convert
-      the model's native tool-call syntax into OpenAI `tool_calls`: the call format is
-      documented in a system instruction and the reply text is parsed for it:
-
-          <function=web_search><parameter=query>...</parameter></function>
+  hermes — the plaintext Hermes contract (tool_protocol.py) for servers that run
+      tool-capable models but do not convert the model's native tool-call syntax into
+      OpenAI `tool_calls` (e.g. mlx_lm.server): tools are advertised in the system prompt
+      and the reply text is parsed for <tool_call> blocks. The value `mlx` is a deprecated
+      alias for `hermes`.
 
 Either way the loop is ours: execute the search through our SearXNG backend, feed results
 back, and continue until the model answers without a tool call (or the step budget forces a
@@ -21,10 +21,10 @@ is never touched.
 """
 import json
 import os
-import re
 
 import aiohttp
 
+from .tool_protocol import parse_tool_calls, render_response, render_tools
 from .websearch import SearchRequest, search as web_search
 
 CODER_BASE = os.environ.get("DREAM_BASE", "").rstrip("/")  # coder LLM, any OpenAI-compatible /v1
@@ -50,10 +50,11 @@ def _endpoint() -> tuple[str, str]:
 
 def tool_protocol() -> str:
     """The active tool-call transport: 'openai' unless the coder integration's tool_protocol
-    field (pinned by DREAM_TOOL_PROTOCOL when set in env) says 'mlx'. Read at call time —
-    the one place the flag is interpreted."""
-    raw = _registry_values().get("tool_protocol") or os.environ.get("DREAM_TOOL_PROTOCOL", "")
-    return "mlx" if raw.strip().lower() == "mlx" else "openai"
+    field (pinned by DREAM_TOOL_PROTOCOL when set in env) selects the hermes text protocol
+    ('hermes', or its deprecated alias 'mlx'). Read at call time — the one place the flag
+    is interpreted."""
+    raw = (_registry_values().get("tool_protocol") or os.environ.get("DREAM_TOOL_PROTOCOL", "")).strip().lower()
+    return "hermes" if raw in ("hermes", "mlx") else "openai"
 
 
 # ------------------------------------------------------------------ openai protocol pieces
@@ -71,29 +72,6 @@ TOOLS = [{
         },
     },
 }]
-
-
-# ------------------------------------------------------------------ mlx text-protocol pieces
-
-TOOL_SYS = (
-    "You have ONE tool, web_search, for looking up current facts. When you need to check something, "
-    "respond with EXACTLY this and nothing else:\n"
-    "<function=web_search><parameter=query>your search query</parameter></function>\n"
-    "You will then be given the results and may search again or give your final answer. Prefer "
-    "searching over relying on memory whenever a fact could be recent or uncertain."
-)
-
-_FN = re.compile(r"<function=web_search>(.*?)</function>", re.DOTALL)
-_QUERY = re.compile(r"<parameter=query>\s*(.*?)\s*</parameter>", re.DOTALL)
-
-
-def parse_search_call(text):
-    """Extract the web_search query from the model's text-protocol tool call, or None if it isn't one."""
-    m = _FN.search(text or "")
-    if not m:
-        return None
-    q = _QUERY.search(m.group(1))
-    return q.group(1).strip() if q else None
 
 
 # ------------------------------------------------------------------ shared plumbing
@@ -136,8 +114,8 @@ async def chat_agent(system, user, max_steps=3, temperature=0.2):
     """Run the coder with the web_search tool until it answers (or max_steps), speaking the
     configured tool protocol. `system` carries the caller's identity + task instructions.
     Returns the final text."""
-    if tool_protocol() == "mlx":
-        return await _chat_agent_mlx(system, user, max_steps, temperature)
+    if tool_protocol() == "hermes":
+        return await _chat_agent_hermes(system, user, max_steps, temperature)
     return await _chat_agent_openai(system, user, max_steps, temperature)
 
 
@@ -179,23 +157,38 @@ async def _chat_agent_openai(system, user, max_steps, temperature):
     return (await _llm(messages, temperature)).get("content") or ""
 
 
-async def _chat_agent_mlx(system, user, max_steps, temperature):
-    """Text-protocol loop: the tool format is prepended to the system prompt and each reply is
-    parsed for a call; a reply that isn't a tool call is the final answer."""
+async def _hermes_response(call):
+    """Execute one validated hermes call, tolerantly: an unknown tool name or unusable
+    arguments produce a corrective <tool_response>, never an exception."""
+    if call.name != "web_search":
+        return render_response(call.name, f"unknown tool '{call.name}' — only web_search exists")
+    query = str(call.arguments.get("query") or "").strip()
+    if not query:
+        return render_response("web_search", ('malformed arguments — call web_search with '
+                                              '{"query": "..."} or give your final answer'))
+    return render_response("web_search", await _run_search(query))
+
+
+async def _chat_agent_hermes(system, user, max_steps, temperature):
+    """Hermes text-protocol loop: the tool contract is prepended to the system prompt and
+    each reply is parsed for <tool_call> blocks; a reply with none is the final answer.
+    Malformed blocks are answered with a corrective <tool_response> so the model can retry."""
     messages = [
-        {"role": "system", "content": f"{TOOL_SYS}\n\n{system}"},
+        {"role": "system", "content": f"{render_tools(TOOLS)}\n\n{system}"},
         {"role": "user", "content": user},
     ]
     for _ in range(max_steps):
         text = (await _llm(messages, temperature)).get("content") or ""
-        query = parse_search_call(text)
-        if not query:
+        calls, errors = parse_tool_calls(text)
+        if not calls and not errors:
             return text  # final answer
-        results = await _run_search(query)
+        responses = [await _hermes_response(c) for c in calls]
+        responses += [render_response("error", f'{reason}; emit {{"arguments": {{...}}, "name": "..."}}')
+                      for reason in errors]
         messages.append({"role": "assistant", "content": text})
         messages.append({"role": "user", "content":
-                         f'web_search results for "{query}":\n{results}\n\n'
-                         "Search again if you still need to, or give your final answer now."})
+                         "\n".join(responses) + "\n\n"
+                         "Call another tool if you still need to, or give your final answer now."})
     # out of steps — force a final answer with no more tools
     messages.append({"role": "user", "content": "Give your final answer now — do not call the tool again."})
     return (await _llm(messages, temperature)).get("content") or ""

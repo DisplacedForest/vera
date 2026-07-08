@@ -34,15 +34,23 @@ def _watcher(kind="geopolitics", **over):
     return d
 
 
+def _ship(monkeypatch, tmp_path, *defs):
+    shipped_dir = tmp_path / "shipped"
+    shipped_dir.mkdir(exist_ok=True)
+    for d in defs:
+        (shipped_dir / (d["kind"] + ".json")).write_text(json.dumps(d), encoding="utf-8")
+    monkeypatch.setattr(vein_defs, "SHIPPED_DIR", str(shipped_dir))
+    monkeypatch.setattr(vein_defs, "_shipped_cache", None)
+    shipped = vein_defs.shipped()
+    monkeypatch.setattr(pulse_veins, "VEINS", shipped)
+    monkeypatch.setattr(pulse_veins, "_BY_KIND", {l["kind"]: l for l in shipped})
+
+
 # --------------------------------------------------------------------------- shipped origin
 
-def test_shipped_files_load_and_validate():
-    defs = vein_defs.shipped()
-    assert [d["kind"] for d in defs] == ["status", "weather", "signals", "media"]
-    by_kind = {d["kind"]: d for d in defs}
-    for kind in ("status", "weather", "media"):
-        assert by_kind[kind].get("pipeline") and by_kind[kind].get("schedule")
-    assert by_kind["signals"].get("producer_jobs")
+def test_tree_ships_no_veins(monkeypatch):
+    monkeypatch.setattr(vein_defs, "_shipped_cache", None)
+    assert vein_defs.shipped() == []
 
 
 def test_shipped_matches_catalog_module():
@@ -66,12 +74,13 @@ def test_shipped_skips_pipeline_draft_siblings(monkeypatch, tmp_path):
 def test_save_custom_round_trips():
     saved = vein_defs.save_custom(_watcher())
     assert vein_defs.customs()["geopolitics"]["label"] == "Geopolitics"
-    assert saved["order"] > max(d["order"] for d in vein_defs.shipped())
+    assert saved["order"] >= 1
 
 
-def test_save_custom_rejects_shipped_kind():
+def test_save_custom_rejects_shipped_kind(monkeypatch, tmp_path):
+    _ship(monkeypatch, tmp_path, _watcher(kind="tanks"))
     with pytest.raises(ValueError):
-        vein_defs.save_custom(_watcher(kind="weather"))
+        vein_defs.save_custom(_watcher(kind="tanks"))
 
 
 def test_corrupt_custom_file_skipped_not_fatal(tmp_path):
@@ -84,10 +93,11 @@ def test_corrupt_custom_file_skipped_not_fatal(tmp_path):
     assert len(report) == 1 and "broken.json" in report[0]["file"]
 
 
-def test_shipped_colliding_custom_file_skipped(tmp_path):
+def test_shipped_colliding_custom_file_skipped(monkeypatch, tmp_path):
+    _ship(monkeypatch, tmp_path, _watcher(kind="tanks"))
     os.makedirs(vein_defs.CUSTOM_DIR, exist_ok=True)
-    with open(os.path.join(vein_defs.CUSTOM_DIR, "weather.json"), "w", encoding="utf-8") as f:
-        json.dump(_watcher(kind="weather"), f)
+    with open(os.path.join(vein_defs.CUSTOM_DIR, "tanks.json"), "w", encoding="utf-8") as f:
+        json.dump(_watcher(kind="tanks"), f)
     assert vein_defs.customs() == {}
     assert vein_defs.load_report()
 
@@ -115,9 +125,10 @@ def test_custom_vein_appears_in_catalog_with_engine_met():
     assert entry["schedule"] == "0 */6 * * *"
 
 
-def test_shipped_entries_carry_origin():
-    assert all(l["origin"] == "shipped" for l in _catalog()["veins"]
-               if l["kind"] in ("status", "weather", "signals", "media"))
+def test_shipped_entries_carry_origin(monkeypatch, tmp_path):
+    _ship(monkeypatch, tmp_path, _watcher(kind="tanks"))
+    entry = next(l for l in _catalog()["veins"] if l["kind"] == "tanks")
+    assert entry["origin"] == "shipped"
 
 
 def test_pipeline_vein_enables_through_the_engine_requirement():
@@ -139,9 +150,10 @@ def test_post_definition_creates():
     assert entry["kind"] == "geopolitics" and entry["origin"] == "custom"
 
 
-def test_post_collision_409():
+def test_post_collision_409(monkeypatch, tmp_path):
+    _ship(monkeypatch, tmp_path, _watcher(kind="tanks"))
     asyncio.run(pulse_veins.create_vein(_watcher()))
-    for kind in ("geopolitics", "weather"):
+    for kind in ("geopolitics", "tanks"):
         with pytest.raises(HTTPException) as e:
             asyncio.run(pulse_veins.create_vein(_watcher(kind=kind)))
         assert e.value.status_code == 409
@@ -153,13 +165,14 @@ def test_post_invalid_definition_422():
     assert e.value.status_code == 422
 
 
-def test_put_definition_edits_custom_only():
+def test_put_definition_edits_custom_only(monkeypatch, tmp_path):
+    _ship(monkeypatch, tmp_path, _watcher(kind="tanks"))
     asyncio.run(pulse_veins.create_vein(_watcher()))
     entry = asyncio.run(pulse_veins.replace_definition(
         "geopolitics", _watcher(blurb="sharper bar")))
     assert entry["blurb"] == "sharper bar"
     with pytest.raises(HTTPException) as e:
-        asyncio.run(pulse_veins.replace_definition("weather", _watcher(kind="weather")))
+        asyncio.run(pulse_veins.replace_definition("tanks", _watcher(kind="tanks")))
     assert e.value.status_code == 403
     with pytest.raises(HTTPException) as e:
         asyncio.run(pulse_veins.replace_definition("nope", _watcher(kind="nope")))
@@ -173,13 +186,14 @@ def test_put_definition_kind_follows_path():
     assert e.value.status_code == 422
 
 
-def test_delete_definition_clears_state():
+def test_delete_definition_clears_state(monkeypatch, tmp_path):
+    _ship(monkeypatch, tmp_path, _watcher(kind="tanks"))
     asyncio.run(pulse_veins.create_vein(_watcher()))
     vein_store.update("geopolitics", options={"noop": True})
     asyncio.run(pulse_veins.delete_vein("geopolitics"))
     assert "geopolitics" not in {l["kind"] for l in _catalog()["veins"]}
     assert "geopolitics" not in vein_store.load()
-    for kind, code in (("weather", 403), ("nope", 404)):
+    for kind, code in (("tanks", 403), ("nope", 404)):
         with pytest.raises(HTTPException) as e:
             asyncio.run(pulse_veins.delete_vein(kind))
         assert e.value.status_code == code

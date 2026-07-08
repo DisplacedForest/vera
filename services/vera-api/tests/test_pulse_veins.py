@@ -1,5 +1,5 @@
-"""Pulse vein catalog/store — opt-in veins, cap enforcement, gates, option scoping,
-and upgrade seeding. Run under pytest."""
+"""Pulse vein catalog/store — opt-in veins, cap enforcement, gates, option scoping.
+Run under pytest."""
 import asyncio
 import os
 
@@ -11,7 +11,7 @@ from routers import scheduler as sch
 
 
 @pytest.fixture(autouse=True)
-def _fresh(monkeypatch, tmp_path):
+def _fresh(monkeypatch, tmp_path, vein_shapes):
     monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "veins.json"))
     for var in ("WEATHER_LAT", "WEATHER_LON", "HOME_STATE",
                 "SIGNALS_ORIENTATION", "SIGNALS_IMPACT_GOODS", "TEMPERATURE_UNIT"):
@@ -29,8 +29,18 @@ def test_fresh_install_has_no_veins():
     assert pulse_veins.veins() == []
     assert pulse_veins.enabled_kinds() == set()
     cat = asyncio.run(pulse_veins.catalog())
-    assert cat["active"] == 0 and len(cat["veins"]) == len(pulse_veins.VEINS)
+    assert cat["active"] == 0
+    assert {l["kind"] for l in cat["veins"]} == {"status", "weather", "signals", "media"}
     assert all(not l["enabled"] for l in cat["veins"])
+
+
+def test_empty_deployment_has_empty_catalog(monkeypatch, tmp_path):
+    from routers import vein_defs
+    monkeypatch.setattr(vein_defs, "CUSTOM_DIR", str(tmp_path / "none.d"))
+    assert pulse_veins.VEINS == []
+    cat = asyncio.run(pulse_veins.catalog())
+    assert cat["veins"] == [] and cat["active"] == 0
+    assert pulse_veins.veins() == []
 
 
 def test_enable_disable_round_trip():
@@ -164,32 +174,29 @@ def test_updates_scoped_to_monitored_sources():
     assert _scope_components(comps, {}) == comps  # nothing stored -> everything on
 
 
-# --------------------------------------------------------------------------- seeding
-
 def test_fresh_env_seeds_nothing(monkeypatch, tmp_path):
     monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "fresh.json"))
     assert pulse_veins.enabled_kinds() == set()
-    assert vein_store.load().get("_seeded") is True  # the pass ran and chose nothing
+    assert vein_store.load() == {}
 
 
-def test_configured_fresh_install_still_seeds_nothing(monkeypatch, tmp_path):
-    # full env config but no prior-deployment artifacts: veins stay opt-in
+def test_configured_env_seeds_nothing(monkeypatch, tmp_path):
     monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "fresh.json"))
     monkeypatch.setenv("WEATHER_LAT", "39.0")
     monkeypatch.setenv("WEATHER_LON", "-95.0")
     monkeypatch.setenv("HOME_STATE", "KS")
     assert pulse_veins.enabled_kinds() == set()
-    assert vein_store.load().get("_seeded") is True
+    assert vein_store.load() == {}
 
 
-def test_upgraded_deployment_seeds_its_veins(monkeypatch, tmp_path):
+def test_prior_deployment_artifacts_seed_nothing(monkeypatch, tmp_path):
     monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "upgrade.json"))
-    (tmp_path / "pulse.db").touch()  # a data volume that already ran Vera
+    (tmp_path / "pulse.db").touch()
     monkeypatch.setenv("WEATHER_LAT", "39.0")
     monkeypatch.setenv("WEATHER_LON", "-95.0")
     monkeypatch.setenv("HOME_STATE", "KS")
-    assert {"weather", "signals"} <= pulse_veins.enabled_kinds()
-    assert "media" not in pulse_veins.enabled_kinds()  # no overseerr integration here
+    assert pulse_veins.enabled_kinds() == set()
+    assert vein_store.load() == {}
 
 
 # --------------------------------------------------------------------------- legacy adoption
@@ -198,7 +205,7 @@ def test_legacy_lanes_file_is_adopted_once(monkeypatch, tmp_path):
     # a pre-rename data volume: lanes.json holds the deployment's choices
     monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "veins.json"))
     (tmp_path / "lanes.json").write_text(
-        '{"signals": {"enabled": true, "options": {"grp_news": false}}, "_seeded": true}',
+        '{"signals": {"enabled": true, "options": {"grp_news": false}}}',
         encoding="utf-8")
     assert pulse_veins.is_enabled("signals")
     assert pulse_veins.option_values("signals").get("grp_news") is False
@@ -208,9 +215,9 @@ def test_legacy_lanes_file_is_adopted_once(monkeypatch, tmp_path):
 
 def test_existing_vein_store_wins_over_legacy_file(monkeypatch, tmp_path):
     monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "veins.json"))
-    (tmp_path / "veins.json").write_text('{"weather": {"enabled": true}, "_seeded": true}',
+    (tmp_path / "veins.json").write_text('{"weather": {"enabled": true}}',
                                          encoding="utf-8")
-    (tmp_path / "lanes.json").write_text('{"signals": {"enabled": true}, "_seeded": true}',
+    (tmp_path / "lanes.json").write_text('{"signals": {"enabled": true}}',
                                          encoding="utf-8")
     assert pulse_veins.enabled_kinds() == {"weather"}
     assert (tmp_path / "lanes.json").exists()  # untouched when the vein store already exists

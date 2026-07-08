@@ -181,8 +181,8 @@ struct AgenticGraph: Sendable, Hashable {
         return AgenticGraph(
             flows: [
                 pulse,
-                flow("weather", "Weather check", "cloud.sun", "cyan", "Ambient", feeds: ["veins"]),
-                flow("signals", "Signals check", "antenna.radiowaves.left.and.right", "orange",
+                flow("vein_rivergauge", "River gauge run", "water.waves", "cyan", "Ambient", feeds: ["veins"]),
+                flow("vein_geopolitics", "Geopolitics run", "globe", "orange",
                      "Ambient", feeds: ["veins"], tools: ["websearch"]),
                 flow("memory_groom", "Memory groom", "archivebox", "purple", "Memory", feeds: ["memory"]),
                 flow("home_model", "Home model", "house", "cyan", "Home", feeds: ["actions"]),

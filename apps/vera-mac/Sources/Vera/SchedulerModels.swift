@@ -27,8 +27,8 @@ struct SchedulerJob: Identifiable, Sendable, Hashable {
         return [
             job("pulse", "Pulse briefing", "0 5 * * *", detail: "6 cards", lastAgo: 7 * 3600, nextIn: 17 * 3600),
             job("heartbeat", "Heartbeat tick", "*/20 * * * *", detail: "nominal", lastAgo: 600, nextIn: 900),
-            job("weather", "Weather check", "0 */6 * * *", detail: "no change", lastAgo: 300, nextIn: 6 * 3600),
-            job("signals", "Signals check", "0 6,18 * * *", ok: false,
+            job("vein_rivergauge", "River gauge run", "*/30 * * * *", detail: "no change", lastAgo: 300, nextIn: 1800),
+            job("vein_geopolitics", "Geopolitics run", "0 */6 * * *", ok: false,
                 detail: "feed timeout after 30s", lastAgo: 3 * 3600, nextIn: 9 * 3600),
             job("memory_groom", "Memory groom", "0 4 * * *", detail: "merged 2, promoted 1",
                 lastAgo: 8 * 3600, nextIn: 16 * 3600),

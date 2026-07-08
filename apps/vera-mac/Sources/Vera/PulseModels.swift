@@ -168,9 +168,9 @@ struct PulseVein: Identifiable, Hashable {
 
     static func mock() -> [PulseVein] {
         [
-            PulseVein(kind: "status", label: "System", icon: "gearshape", order: 0, nominalLabel: "nominal"),
-            PulseVein(kind: "weather", label: "Weather", icon: "cloud.sun", order: 1, nominalLabel: "clear"),
-            PulseVein(kind: "signals", label: "Signals", icon: "antenna.radiowaves.left.and.right", order: 2, nominalLabel: "quiet"),
+            PulseVein(kind: "status", label: "Status", icon: "gauge", order: 0, nominalLabel: "nominal"),
+            PulseVein(kind: "rivergauge", label: "River gauge", icon: "water.waves", order: 1, nominalLabel: "steady"),
+            PulseVein(kind: "geopolitics", label: "Geopolitics", icon: "globe", order: 2, nominalLabel: "quiet"),
         ]
     }
 }
@@ -188,12 +188,12 @@ struct PulseCard: Identifiable, Hashable {
     var inlineImages: [PulseInlineImage] = []  // real photos placed via [[img:n]] tokens
     var body: String = ""         // full markdown body (markers stripped) for the expanded view
     var status: String? = nil     // vera-api lifecycle: new|seen|bookmarked|promoted
-    var kind: String = "research" // research feed vs an ambient vein (status/weather/signals/…)
+    var kind: String = "research" // research feed vs an ambient vein
     var severity: String? = nil   // ambient severity — notice|alert|critical (nil = neutral)
     var action: PulseAction? = nil // a confirm-able action this card proposes
     var provenance: String = "scheduled" // "scheduled" (morning run) | "heartbeat" (noticed for you)
     var read: Bool = false        // has this person opened this card's detail?
-    var category: String? = nil   // System sub-group — vera|infra|health|update
+    var category: String? = nil
     var changeSet: [GroomOp] = [] // reversible memory-tending diff (audit + restore)
     var items: [PulseDigestItem] = [] // multi-item digest rows (per-row approve/skip)
 
@@ -218,23 +218,19 @@ struct PulseCard: Identifiable, Hashable {
         ]
     }
 
-    /// Mock System-vein status cards for the lit-state + grouped-detail shots —
-    /// text-forward, no cover art, spread across categories (Vera / Infra / Health / Updates).
     static func statusMock() -> [PulseCard] {
         [
             groomMock(),
             PulseCard(id: "st-infra", title: "vera-api restarted",
                       preview: "Container came back after a brief blip; all routers healthy.",
-                      subtitle: "System", kind: "status", severity: "notice", category: "infra"),
-            PulseCard(id: "st-health", title: "SearXNG degraded",
-                      preview: "Search backend was slow to respond on the last two checks.",
-                      subtitle: "System", kind: "status", severity: "alert", category: "health"),
+                      subtitle: "Status", kind: "status", severity: "notice", category: "infra"),
+            PulseCard(id: "st-health", title: "Search backend degraded",
+                      preview: "The search endpoint was slow to respond on the last two checks.",
+                      subtitle: "Status", kind: "status", severity: "alert", category: "health"),
             updateDigestMock(),
         ]
     }
 
-    /// The available-stack-updates card — per-row Confirm-to-apply, grouped by source.
-    /// Container + HA-domain rows are actionable; the Unraid OS row is flag-only ("info").
     static func updateDigestMock() -> PulseCard {
         func row(_ id: String, _ t: String, _ s: String, _ group: String, _ state: String = "pending") -> PulseDigestItem {
             PulseDigestItem(itemID: id, title: t, subtitle: s, mediaType: nil, tmdbID: nil,
@@ -242,13 +238,13 @@ struct PulseCard: Identifiable, Hashable {
         }
         return PulseCard(
             id: "st-update", title: "4 updates available",
-            preview: "Containers, HACS, and network gear have updates ready to apply.",
-            subtitle: "System", body: "", kind: "status", severity: "notice", category: "update",
+            preview: "Containers, dashboards, and network gear have updates ready to apply.",
+            subtitle: "Status", body: "", kind: "status", severity: "notice", category: "update",
             items: [
-                row("u1", "searxng", "new image available", "Containers"),
-                row("u2", "unraid", "v2026.6.0 → v2026.6.1", "Unraid OS", "info"),
-                row("u3", "bubble card", "v3.2.2 → v3.2.3", "HACS"),
-                row("u4", "udmpro", "5.1.15 → 5.2.0", "Network"),
+                row("u1", "search backend", "new image available", "Containers"),
+                row("u2", "host os", "v2.6.0 → v2.6.1", "Host OS", "info"),
+                row("u3", "dashboard card", "v3.2.2 → v3.2.3", "HACS"),
+                row("u4", "router", "5.1.15 → 5.2.0", "Network"),
             ])
     }
 
@@ -272,9 +268,9 @@ struct PulseCard: Identifiable, Hashable {
             kind: "status", severity: nil, category: "vera",
             changeSet: [
                 GroomOp(index: 0, type: "merge", store: "memory", reason: "two notes about the same thing",
-                        before: [belief("a1", "Network", "The home runs UniFi networking gear."),
-                                 belief("a2", "Network", "UniFi gear is used across the house.")],
-                        after: belief("m1", "Network", "The home runs UniFi networking gear throughout.")),
+                        before: [belief("a1", "Network", "The home runs managed networking gear."),
+                                 belief("a2", "Network", "Managed switches are used across the house.")],
+                        after: belief("m1", "Network", "The home runs managed networking gear throughout.")),
                 GroomOp(index: 1, type: "promote", store: "memory", reason: "promoted into core",
                         before: [belief("p1", "Home", "Jordan lives in Springfield.")],
                         after: belief("p1", "Home", "Jordan lives in Springfield.", "core")),

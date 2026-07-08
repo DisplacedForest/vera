@@ -70,7 +70,7 @@ Vera researches overnight — topics drawn from her own accumulating interests a
 
 ### Veins — opt-in ambient monitoring
 
-A row of status chips above the feed — System, Weather, Signals, Media — each an independently configured monitor that stays quiet until a configured threshold is crossed. **None are enabled by default.** Each vein is scoped: the Signals vein can watch only financial stress indicators; the System vein can monitor only Home Assistant. Thresholds determine what surfaces; the model only explains what crossed them. Veins are also user-buildable: a JSON definition with a block pipeline (search, fetch, threshold math, LLM judge/compose) and a schedule becomes a running monitor with the same quiet discipline as the built-ins.
+A row of status chips above the feed, one per vein — each an independently configured monitor that stays quiet until a configured threshold is crossed. **Vera ships with none**: a vein is something you build for your own life. A river gauge, a service-status watch, a geopolitics bar — describe what deserves an ambient eye and the in-app builder turns the conversation into a schema-validated JSON definition with a block pipeline (search, fetch, threshold math, LLM judge/compose) and a schedule; dropping a definition file in place works too. Thresholds determine what surfaces; the model only explains what crossed them, one card per distinct situation, updated rather than stacked.
 
 <div align="center"><img src="docs/assets/pulse.png" alt="The Pulse surface with its vein chips" width="850"></div>
 
@@ -80,7 +80,7 @@ When a monitored situation deserves follow-through (a signals event, or simply "
 
 ### Agentic — the autonomy control room
 
-The Agentic tab opens on a living canvas: every flow Vera runs on her own — briefings, weather, signals, grooming, health probes, the heartbeat — drawn as a node graph connected to the surfaces it feeds, served by the API as a manifest (`GET /agentic/graph`) so new capabilities appear on the canvas without an app update. Running flows glow, outcomes tint their nodes, recent events travel their edges, and a node that used a tool carries a badge naming it on hover. Clicking a flow opens an inspector with run-now, enable/disable, and plain-English schedule editing; flows with internal stages (the Pulse pipeline, the heartbeat's branches) drill into their own maps with per-stage state from the last run. All of it rides the built-in scheduler: a job tied to a vein or integration does not fire until that vein or integration is enabled, and gated jobs report why they are not running.
+The Agentic tab opens on a living canvas: every flow Vera runs on her own — briefings, vein runs, grooming, the heartbeat — drawn as a node graph connected to the surfaces it feeds, served by the API as a manifest (`GET /agentic/graph`) so new capabilities appear on the canvas without an app update. Running flows glow, outcomes tint their nodes, recent events travel their edges, and a node that used a tool carries a badge naming it on hover. Clicking a flow opens an inspector with run-now, enable/disable, and plain-English schedule editing; flows with internal stages (the Pulse pipeline, the heartbeat's branches) drill into their own maps with per-stage state from the last run. All of it rides the built-in scheduler: a job tied to a vein or integration does not fire until that vein or integration is enabled, and gated jobs report why they are not running.
 
 Everything Vera does on her own is also auditable in one place: an Activity feed (`GET /agentic/activity`) merges heartbeat outcomes, scheduled job runs, and autonomous actions into a single newest-first list, rendered as the Activity pane of the Agentic tab. Autonomy is wanted, and it is always visible.
 
@@ -115,10 +115,10 @@ Every external dependency is a configuration slot with defined behavior when emp
 
 | Integration | Powers | When absent |
 |---|---|---|
-| Home Assistant | Live home state, actuation, System-vein sources | Home features off |
+| Home Assistant | Live home state, actuation, the `ha_state` vein block | Home features off |
 | Grocy / Mealie | Kitchen inventory, expiry, recipes (pairing unlocks suggestions) | Kitchen tools off |
-| Overseerr | Media requests, weekly curation digest (consent-gated) | Media vein unavailable |
-| Unraid | Container updates, host actuation | Those update sources drop from System |
+| Overseerr | Media requests, weekly curation digest (consent-gated) | Media curation unavailable |
+| Unraid | Container updates, host actuation | Those update sources drop from update digests |
 | Apple Reminders | Reminders lists read/write from chat, shared lists included (hosted by the Mac app, or the headless EventKit bridge, on a Mac signed into iCloud) | Reminders tools off |
 | FRED / EIA keys | Credit-spread and grid-stress signals | Those collectors skip cleanly |
 
@@ -155,7 +155,7 @@ docker compose up -d --build        # backend (uncomment `build:` in docker-comp
 cd apps/vera-mac && scripts/deploy.sh   # app — packages Vera.app and installs it to /Applications
 ```
 
-Onboarding asks for your endpoints, then offers the opt-in veins (managed anytime from the Pulse header); integrations are configured anytime from the Settings window.
+Onboarding asks for your endpoints, then points you at the vein builder (veins are managed anytime from the Pulse header); integrations are configured anytime from the Settings window.
 
 <div align="center"><img src="docs/assets/onboarding.png" alt="Onboarding" width="700"></div>
 

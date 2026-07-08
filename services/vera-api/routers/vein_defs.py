@@ -1,14 +1,3 @@
-"""Vein definition origins. Two sources merge into the catalog:
-
-  shipped   JSON files in the repo's `veins/` directory (env `VEINS_SHIPPED_DIR`),
-            validated once at first load — a bad shipped file is a startup error
-  custom    one file per vein at `<VEINS_D_PATH>/<kind>.json`, scanned on every
-            read so external edits show up live; a bad custom file is skipped
-            with a warning and reported via `load_report`, never fatal
-
-A custom definition never shadows a shipped kind: colliding files are skipped at
-load and rejected at save. Writes are atomic (tmp file + rename)."""
-
 import json
 import logging
 import os
@@ -23,8 +12,6 @@ SHIPPED_DIR = os.environ.get(
     os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "veins")))
 CUSTOM_DIR = os.environ.get("VEINS_D_PATH", "/data/veins.d")
 
-SHIPPED_ORDER = ("status", "weather", "signals", "media")
-
 _shipped_cache: list[dict] | None = None
 _last_report: list[dict] = []
 
@@ -33,7 +20,11 @@ def shipped() -> list[dict]:
     global _shipped_cache
     if _shipped_cache is None:
         defs = []
-        for name in sorted(os.listdir(SHIPPED_DIR)):
+        try:
+            names = sorted(os.listdir(SHIPPED_DIR))
+        except OSError:
+            names = []
+        for name in names:
             if not name.endswith(".json") or name.endswith(".pipeline.json"):
                 continue
             path = os.path.join(SHIPPED_DIR, name)

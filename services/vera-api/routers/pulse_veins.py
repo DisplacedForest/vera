@@ -163,44 +163,6 @@ def gate_reason(kind: str) -> str | None:
     return None
 
 
-# --------------------------------------------------------------------- one-time seeding
-
-# Artifacts only a running deployment writes (briefing history, heartbeat ticks,
-# memory stores). Their presence next to the vein store is what distinguishes an
-# upgrade from a fresh install — env config alone is not evidence, since a fresh
-# install may arrive fully parameterized.
-_UPGRADE_MARKERS = ("pulse.db", "heartbeat.db", "knowledge.db", "actions.db",
-                    "home_events.db", "media.db", "vera_memory")
-
-
-def _prior_deployment() -> bool:
-    from . import vein_store
-    base = os.path.dirname(os.path.abspath(vein_store.PATH))
-    return any(os.path.exists(os.path.join(base, name)) for name in _UPGRADE_MARKERS)
-
-
-def seed_states() -> dict[str, dict]:
-    """Upgrade seeding (called once by vein_store): on a data volume that already ran
-    Vera, a vein whose producer is demonstrably configured seeds enabled, so the
-    deployment keeps its chip row across the upgrade. A fresh install seeds nothing —
-    veins are opt-in no matter how much config is present."""
-    if not _prior_deployment():
-        return {}
-    from . import integrations
-    seeds: dict[str, dict] = {}
-    coords = all(os.environ.get(n, "").strip() for n in ("WEATHER_LAT", "WEATHER_LON"))
-    if coords:
-        seeds["weather"] = {"enabled": True}
-    # a region-anchored deployment (state or coordinates) has been running signals
-    if os.environ.get("HOME_STATE", "").strip() or coords:
-        seeds["signals"] = {"enabled": True}
-    if integrations.integration("home_assistant") or integrations.integration("unraid"):
-        seeds["status"] = {"enabled": True}
-    if integrations.integration("overseerr"):
-        seeds["media"] = {"enabled": True}
-    return seeds
-
-
 # --------------------------------------------------------------------- API
 
 class VeinUpdate(BaseModel):

@@ -180,8 +180,6 @@ FLOW_FACE: dict[str, dict] = {
                        "group": "Ambient", "feeds": ["pulse_feed"],
                        "tools": ["websearch", "vera-image"],
                        "stage_layout": "pipeline", "stages": _PULSE_STAGES},
-    "vein_weather":   {"label": "Weather vein", "icon": "cloud.sun", "tint": "cyan",
-                       "group": "Ambient", "feeds": ["veins"], "tools": []},
     "signals":        {"label": "Signals check", "icon": "antenna.radiowaves.left.and.right",
                        "tint": "orange", "group": "Ambient", "feeds": ["veins"],
                        "tools": ["websearch"]},
@@ -197,10 +195,6 @@ FLOW_FACE: dict[str, dict] = {
                        "group": "Heartbeat", "feeds": ["pulse_feed", "veins", "memory", "actions"],
                        "tools": ["websearch"],
                        "stage_layout": "fan", "stages": _HEARTBEAT_BRANCHES},
-    "vein_status":    {"label": "System vein", "icon": "waveform.path.ecg", "tint": "green",
-                       "group": "System", "feeds": ["veins"], "tools": []},
-    "vein_media":     {"label": "Media vein", "icon": "film", "tint": "red",
-                       "group": "Media", "feeds": ["veins"], "tools": ["overseerr"]},
     "conversation_extract": {"label": "Conversation extraction", "icon": "text.bubble",
                              "tint": "purple", "group": "Memory", "feeds": ["memory"], "tools": []},
     "weight_fit":     {"label": "Weight fit", "icon": "chart.xyaxis.line", "tint": "purple",
@@ -209,6 +203,13 @@ FLOW_FACE: dict[str, dict] = {
 
 # A job with no authored face still renders (and the test suite flags the omission).
 _DEFAULT_FACE = {"icon": "clock", "tint": "gray", "group": "Other", "feeds": [], "tools": []}
+
+
+def _vein_face(job_id: str) -> dict:
+    from . import pulse_veins
+    spec = pulse_veins.manifest(job_id.removeprefix("vein_")) or {}
+    return {"label": spec.get("label", job_id), "icon": spec.get("icon", "clock"),
+            "tint": "cyan", "group": "Ambient", "feeds": ["veins"], "tools": []}
 
 
 def _pulse_stage_state() -> dict | None:
@@ -265,11 +266,13 @@ def _surface_stat(surface_id: str) -> str | None:
 
 @router.get("/agentic/graph", tags=["agentic"])
 async def graph():
-    from .scheduler import REGISTRY, running_jobs
+    from .scheduler import _registry, running_jobs
     running = running_jobs()
     flows = []
-    for job_id, (label, _cron, _handler) in REGISTRY.items():
-        face = FLOW_FACE.get(job_id, _DEFAULT_FACE)
+    for job_id, (label, _cron, _handler) in _registry().items():
+        face = FLOW_FACE.get(job_id)
+        if face is None:
+            face = _vein_face(job_id) if job_id.startswith("vein_") else _DEFAULT_FACE
         flow = {
             "id": job_id,
             "label": face.get("label", label),

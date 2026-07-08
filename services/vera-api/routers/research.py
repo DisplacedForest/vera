@@ -78,7 +78,8 @@ async def research(req: ResearchRequest):
         plan_sys = ("You are a research planner. Given a question, output 3-5 focused sub-questions "
                     "that, researched and combined, would thoroughly answer it. Output ONLY a JSON "
                     "array of strings, nothing else.")
-        plan = await _vera([{"role": "system", "content": plan_sys}, {"role": "user", "content": req.query}], temperature=0.3)
+        plan = await _vera([{"role": "system", "content": plan_sys}, {"role": "user", "content": req.query}],
+                           temperature=0.3, think="on")
         subqs = _parse_list(plan)[: req.subquestions] or [req.query]
     except Exception as e:
         out["errors"].append(f"plan: {e}"); subqs = [req.query]
@@ -115,7 +116,8 @@ async def research(req: ResearchRequest):
                "state a fact that isn't supported by a source. GitHub-flavored markdown, no preamble.")
     syn_usr = f"Question: {req.query}\n\nSub-questions researched:\n- " + "\n- ".join(subqs) + f"\n\nSources:\n{src_block}"
     try:
-        out["report"] = (await _vera([{"role": "system", "content": voiced(syn_sys)}, {"role": "user", "content": syn_usr}], temperature=0.4)).strip()
+        out["report"] = (await _vera([{"role": "system", "content": voiced(syn_sys)}, {"role": "user", "content": syn_usr}],
+                                     temperature=0.4, think="on")).strip()
     except Exception as e:
         out["errors"].append(f"synthesis: {e}")
     out["sources"] = [{"n": s["n"], "title": s["title"], "url": s["url"]} for s in sources]

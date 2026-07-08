@@ -7,17 +7,17 @@ struct ShotView: View {
     var section: AppSection = .chat
     var emptyChat: Bool = false
     var attachDemo: Bool = false
-    // Veins and Plugins/MCP no longer have sidebar destinations — they render in their new homes.
     var chrome: ShotChrome = .window
 
     /// Which framing the shot renders: the main window, the Veins sheet over Pulse, or a Settings tab.
-    enum ShotChrome: Equatable { case window, veinsSheet, settings(SettingsTab) }
+    enum ShotChrome: Equatable { case window, veinsSheet, veinBrowse, settings(SettingsTab) }
 
     var body: some View {
         Group {
             switch chrome {
             case .window: windowBody
             case .veinsSheet: veinsSheetShot
+            case .veinBrowse: veinBrowseShot
             case .settings(let tab): settingsShot(tab)
             }
         }
@@ -42,7 +42,6 @@ struct ShotView: View {
         }
     }
 
-    /// The Veins manager as it now appears: a sheet card (Done bar + the veins board) over a dimmed Pulse.
     private var veinsSheetShot: some View {
         ZStack {
             windowBodyForPulse.opacity(0.5)
@@ -70,6 +69,90 @@ struct ShotView: View {
             Rectangle().fill(Theme.hairline).frame(width: 1)
             pulse.frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.bg)
         }
+    }
+
+    private var veinBrowseShot: some View {
+        let entry = VeinEntry.browseMock()[0]
+        return ZStack {
+            windowBodyForPulse.opacity(0.5)
+            Color.black.opacity(0.35)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 10) {
+                    Image(systemName: "plus.rectangle.on.rectangle").font(.system(size: 16))
+                    Text("Add a vein").font(.system(size: 16, weight: .semibold))
+                    Spacer()
+                    Text("Done").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.accent)
+                }
+                .padding(16)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                VStack(alignment: .leading, spacing: 12) {
+                    shotStartRow(icon: "wand.and.stars", title: "Build a new vein",
+                                 note: "Describe a watch in your own words and Vera drafts it.", enabled: true)
+                    shotStartRow(icon: "square.and.arrow.down", title: "Import from file",
+                                 note: "Add a vein someone shared with you. Coming soon.", enabled: false)
+                    Text("AVAILABLE WITH AN INTEGRATION")
+                        .font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                        .foregroundStyle(Theme.textSecondary).padding(.top, 6)
+                    shotUnexposedRow(entry)
+                }
+                .padding(16)
+                Spacer(minLength: 0)
+            }
+            .frame(width: 520, height: 460)
+            .background(Theme.bg)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+    }
+
+    private func shotStartRow(icon: String, title: String, note: String, enabled: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon).font(.system(size: 16)).frame(width: 24)
+                .foregroundStyle(enabled ? Theme.accent : Theme.textSecondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(enabled ? Theme.textPrimary : Theme.textSecondary)
+                Text(note).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+            Spacer(minLength: 0)
+            if enabled {
+                Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    private func shotUnexposedRow(_ entry: VeinEntry) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            RoundedRectangle(cornerRadius: 8).fill(Theme.surfaceHover)
+                .overlay(Image(systemName: entry.icon).font(.system(size: 14))
+                    .foregroundStyle(Theme.textSecondary))
+                .frame(width: 34, height: 34)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.label).font(.system(size: 13, weight: .semibold))
+                Text(entry.blurb).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let req = entry.requiresUnmet.first {
+                    HStack(spacing: 6) {
+                        Image(systemName: "link").font(.system(size: 10))
+                        Text("Available if you connect \(req.label)").font(.system(size: 11, weight: .medium))
+                        Text("Open Plugins").font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                    .foregroundStyle(.orange).padding(.top, 2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
     }
 
     /// A Settings tab (Plugins or MCP) — the Settings window chrome (tab bar) over the moved board.

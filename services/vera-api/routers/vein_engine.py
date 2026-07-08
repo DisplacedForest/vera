@@ -298,10 +298,10 @@ def _card_fields(it: dict) -> dict:
     }
 
 
-async def run_vein(kind: str, dry_run: bool = False, manual: bool = False) -> dict:
+async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False) -> dict:
     from . import pulse, pulse_veins
-    defn = pulse_veins.manifest(kind)
-    if not defn or not defn.get("pipeline"):
+    kind = defn.get("kind", "")
+    if not defn.get("pipeline"):
         return {"ok": False, "detail": f"vein '{kind}' has no pipeline"}
     pipeline = defn["pipeline"]
     monitor = is_monitor(pipeline)
@@ -314,7 +314,7 @@ async def run_vein(kind: str, dry_run: bool = False, manual: bool = False) -> di
     ctx = {"kind": kind,
            "options": pulse_veins.option_values(kind),
            "providers": pulse_veins.provider_values(kind)}
-    items, seen_filtered = [], False
+    items, seen_filtered, steps = [], False, []
     for step in pipeline:
         name = step.get("block", "")
         runner = BLOCKS.get(name)
@@ -326,15 +326,16 @@ async def run_vein(kind: str, dry_run: bool = False, manual: bool = False) -> di
         try:
             items = await runner(items, step.get("params") or {}, ctx)
         except BlockError as e:
-            return {"ok": False, "block": e.block, "detail": e.detail}
+            return {"ok": False, "block": e.block, "detail": e.detail, "steps": steps}
         except Exception as e:
-            return {"ok": False, "block": name, "detail": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "block": name, "detail": f"{type(e).__name__}: {e}", "steps": steps}
+        steps.append({"block": name, "items": len(items)})
     _ensure_keys(items)
     if not monitor and not seen_filtered:
         items = _drop_seen(kind, items)
     cards = [_card_fields(it) for it in items]
     if dry_run:
-        return {"ok": True, "dry_run": True, "situations": len(cards), "cards": cards}
+        return {"ok": True, "dry_run": True, "situations": len(cards), "cards": cards, "steps": steps}
     if has_llm(pipeline):
         engine_store.mark_run(kind)
     active = [c for c in pulse.store.list_cards()
@@ -354,6 +355,14 @@ async def run_vein(kind: str, dry_run: bool = False, manual: bool = False) -> di
     if not monitor:
         engine_store.record_seen(kind, sorted(current))
     return {"ok": True, "situations": len(cards), "cards": len(cards)}
+
+
+async def run_vein(kind: str, dry_run: bool = False, manual: bool = False) -> dict:
+    from . import pulse_veins
+    defn = pulse_veins.manifest(kind)
+    if not defn or not defn.get("pipeline"):
+        return {"ok": False, "detail": f"vein '{kind}' has no pipeline"}
+    return await run_definition(defn, dry_run=dry_run, manual=manual)
 
 
 def _make_handler(kind: str):

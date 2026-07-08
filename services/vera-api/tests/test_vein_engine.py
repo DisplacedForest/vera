@@ -291,3 +291,38 @@ def test_dynamic_jobs_reflect_pipeline_definitions():
     assert cron == "*/30 * * * *"
     vein_defs.delete_custom("gauge")
     assert "vein_gauge" not in vein_engine.dynamic_jobs()
+
+
+def test_run_definition_executes_unsaved_draft_with_steps(monkeypatch):
+    _stub_get(monkeypatch, 200, json.dumps({"level": 25}))
+    defn = {
+        "kind": "draftgauge", "label": "Draft", "icon": "water.waves",
+        "pipeline": [
+            {"block": "http_fetch", "params": {"url": "https://g.example/x.json",
+                                               "extract": "level"}},
+            {"block": "trip_band", "params": {"hi": 21.5}},
+        ],
+        "schedule": "*/30 * * * *",
+    }
+    out = _run(vein_engine.run_definition(defn, dry_run=True))
+    assert out["ok"] and out["dry_run"] and out["situations"] == 1
+    assert out["steps"] == [{"block": "http_fetch", "items": 1},
+                            {"block": "trip_band", "items": 1}]
+    assert pulse_store.list_cards() == []
+    assert vein_engine_store.last_run("draftgauge") is None
+
+
+def test_run_definition_failure_carries_partial_steps(monkeypatch):
+    _stub_get(monkeypatch, 200, json.dumps({"level": 25}))
+    defn = {
+        "kind": "draftgauge", "label": "Draft", "icon": "water.waves",
+        "pipeline": [
+            {"block": "http_fetch", "params": {"url": "https://g.example/x.json",
+                                               "extract": "level"}},
+            {"block": "trip_band", "params": {}},
+        ],
+        "schedule": "*/30 * * * *",
+    }
+    out = _run(vein_engine.run_definition(defn, dry_run=True))
+    assert out["ok"] is False and out["block"] == "trip_band"
+    assert out["steps"] == [{"block": "http_fetch", "items": 1}]

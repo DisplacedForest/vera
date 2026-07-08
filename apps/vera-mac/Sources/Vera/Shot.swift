@@ -162,6 +162,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "builder" {
+            content = AnyView(
+                VeinBuilderView(model: BuilderModel.fixture())
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "veins" || view == "settings-plugins" || view == "settings-mcp" {
             // Veins is now a sheet over Pulse; Plugins and MCP are Settings tabs.
             let chrome: ShotView.ShotChrome = view == "veins" ? .veinsSheet

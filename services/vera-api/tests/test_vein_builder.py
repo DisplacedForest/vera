@@ -130,3 +130,9 @@ def test_unconfigured_model_degrades_clean(monkeypatch):
     turn_out = _turn()
     dry_out = asyncio.run(vein_builder.dry_run(vein_builder.DryRunRequest(definition=GOOD_DRAFT)))
     assert turn_out["disabled"] and dry_out["disabled"]
+
+
+def test_status_probe_reports_configured(monkeypatch):
+    assert asyncio.run(vein_builder.status()) == {"configured": True}
+    monkeypatch.setattr(pulse, "VERA_BASE", "")
+    assert asyncio.run(vein_builder.status()) == {"configured": False}

@@ -79,6 +79,11 @@ async def _model_turn(msgs: list[dict]):
         structured.repairable(_vera, msgs, temperature=0.4, think="on"), BuilderTurn)
 
 
+@router.get("/pulse/veins/builder", tags=["pulse"])
+async def status():
+    return {"configured": _configured()}
+
+
 @router.post("/pulse/veins/builder/turn", tags=["pulse"])
 async def turn(req: TurnRequest):
     if not _configured():

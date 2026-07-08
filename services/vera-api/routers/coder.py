@@ -3,7 +3,7 @@ import os
 
 import aiohttp
 
-from .tool_protocol import parse_tool_calls, render_response, render_tools
+from .tool_protocol import dispatch, parse_tool_calls, register_tool, render_response, render_tools, tool_schemas
 from .websearch import SearchRequest, search as web_search
 
 CODER_BASE = os.environ.get("DREAM_BASE", "").rstrip("/")  # coder LLM, any OpenAI-compatible /v1
@@ -34,7 +34,7 @@ def tool_protocol() -> str:
 
 # ------------------------------------------------------------------ openai protocol pieces
 
-TOOLS = [{
+WEB_SEARCH_SCHEMA = {
     "type": "function",
     "function": {
         "name": "web_search",
@@ -46,7 +46,18 @@ TOOLS = [{
             "required": ["query"],
         },
     },
-}]
+}
+
+
+async def _web_search_tool(args: dict) -> str:
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return ('(malformed tool arguments — call web_search with JSON arguments '
+                '{"query": "..."} or give your final answer)')
+    return f'web_search results for "{query}":\n{await _run_search(query)}'
+
+
+register_tool(WEB_SEARCH_SCHEMA, _web_search_tool)
 
 
 # ------------------------------------------------------------------ shared plumbing
@@ -95,20 +106,19 @@ async def chat_agent(system, user, max_steps=3, temperature=0.2):
 
 
 async def _tool_result(call):
-    """Execute one openai-protocol tool call, tolerantly: malformed JSON arguments or an
-    unknown tool name produce a corrective tool message, never an exception."""
     fn = call.get("function") or {}
-    if fn.get("name") != "web_search":
-        return f"(unknown tool '{fn.get('name')}' — only web_search exists)"
+    name = fn.get("name") or ""
     try:
         args = json.loads(fn.get("arguments") or "{}")
-        query = (args.get("query") or "").strip() if isinstance(args, dict) else ""
     except (json.JSONDecodeError, TypeError):
-        query = ""
-    if not query:
-        return ('(malformed tool arguments — call web_search with JSON arguments '
-                '{"query": "..."} or give your final answer)')
-    return f'web_search results for "{query}":\n{await _run_search(query)}'
+        args = {}
+    if not isinstance(args, dict):
+        args = {}
+    out = await dispatch(name, args)
+    if out is None:
+        names = ", ".join(s["function"]["name"] for s in tool_schemas())
+        return f"(unknown tool '{name}' — available tools: {names})"
+    return out
 
 
 async def _chat_agent_openai(system, user, max_steps, temperature):
@@ -119,7 +129,7 @@ async def _chat_agent_openai(system, user, max_steps, temperature):
         {"role": "user", "content": user},
     ]
     for _ in range(max_steps):
-        msg = await _llm(messages, temperature, tools=TOOLS)
+        msg = await _llm(messages, temperature, tools=tool_schemas())
         calls = msg.get("tool_calls") or []
         if not calls:
             return msg.get("content") or ""
@@ -133,18 +143,16 @@ async def _chat_agent_openai(system, user, max_steps, temperature):
 
 
 async def _hermes_response(call):
-    if call.name != "web_search":
-        return render_response(call.name, f"unknown tool '{call.name}' — only web_search exists")
-    query = str(call.arguments.get("query") or "").strip()
-    if not query:
-        return render_response("web_search", ('malformed arguments — call web_search with '
-                                              '{"query": "..."} or give your final answer'))
-    return render_response("web_search", await _run_search(query))
+    out = await dispatch(call.name, call.arguments)
+    if out is None:
+        names = ", ".join(s["function"]["name"] for s in tool_schemas())
+        return render_response(call.name, f"unknown tool '{call.name}' — available tools: {names}")
+    return render_response(call.name, out)
 
 
 async def _chat_agent_hermes(system, user, max_steps, temperature):
     messages = [
-        {"role": "system", "content": f"{render_tools(TOOLS)}\n\n{system}"},
+        {"role": "system", "content": f"{render_tools(tool_schemas())}\n\n{system}"},
         {"role": "user", "content": user},
     ]
     for _ in range(max_steps):

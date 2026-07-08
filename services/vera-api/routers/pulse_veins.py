@@ -88,9 +88,13 @@ def _field_default(field: dict):
 def option_values(kind: str) -> dict:
     """One vein's effective option values: store > env > manifest default."""
     spec = _defs().get(kind)
-    if not spec:
-        return {}
-    stored = (vein_store.load().get(kind) or {}).get("options") or {}
+    return option_values_for(spec) if spec else {}
+
+
+def option_values_for(spec: dict) -> dict:
+    """Effective option values for a definition object, saved or not; an unsaved
+    draft has no stored state, so env and manifest defaults decide."""
+    stored = (vein_store.load().get(spec.get("kind", "")) or {}).get("options") or {}
     out = {}
     for grp in spec.get("options", []):
         for f in grp["fields"]:
@@ -107,9 +111,11 @@ def has_stored_options(kind: str) -> bool:
 def provider_values(kind: str) -> dict:
     """One vein's effective provider endpoints: store > slot default."""
     spec = _defs().get(kind)
-    if not spec:
-        return {}
-    stored = (vein_store.load().get(kind) or {}).get("providers") or {}
+    return provider_values_for(spec) if spec else {}
+
+
+def provider_values_for(spec: dict) -> dict:
+    stored = (vein_store.load().get(spec.get("kind", "")) or {}).get("providers") or {}
     return {s["id"]: (str(stored.get(s["id"]) or "").strip() or s.get("default") or "")
             for s in spec.get("providers", [])}
 

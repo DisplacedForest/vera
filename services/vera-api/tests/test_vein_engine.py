@@ -326,3 +326,20 @@ def test_run_definition_failure_carries_partial_steps(monkeypatch):
     out = _run(vein_engine.run_definition(defn, dry_run=True))
     assert out["ok"] is False and out["block"] == "trip_band"
     assert out["steps"] == [{"block": "http_fetch", "items": 1}]
+
+
+def test_run_definition_resolves_unsaved_provider_defaults(monkeypatch):
+    _stub_get(monkeypatch, 200, json.dumps({"level": 25}))
+    defn = {
+        "kind": "draftgauge", "label": "Draft", "icon": "water.waves",
+        "providers": [{"id": "gauge_url", "label": "Gauge",
+                       "default": "https://g.example/x.json"}],
+        "pipeline": [
+            {"block": "http_fetch", "params": {"url": "{providers.gauge_url}",
+                                               "extract": "level"}},
+            {"block": "trip_band", "params": {"hi": 21.5}},
+        ],
+        "schedule": "*/30 * * * *",
+    }
+    out = _run(vein_engine.run_definition(defn, dry_run=True))
+    assert out["ok"] is True and out["situations"] == 1

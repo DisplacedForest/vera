@@ -265,14 +265,14 @@ struct ActivityRow: View {
         RowCard {
             Image(systemName: event.icon)
                 .font(.system(size: 14))
-                .foregroundStyle(event.failed ? Color(red: 0.92, green: 0.42, blue: 0.38) : Theme.textSecondary)
+                .foregroundStyle(event.failed ? Color.red : Theme.textSecondary)
                 .frame(width: 22)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(event.title).font(.system(size: 13, weight: .semibold))
                     if event.failed {
                         Text("failed").font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Color(red: 0.92, green: 0.42, blue: 0.38))
+                            .foregroundStyle(.red)
                     }
                 }
                 if !event.detail.isEmpty {

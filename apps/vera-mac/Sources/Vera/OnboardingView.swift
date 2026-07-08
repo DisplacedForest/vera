@@ -15,8 +15,6 @@ struct OnboardingSheet: View {
         if let base = veinsBase {
             VeinsOnboardingStep(base: base) { config.showOnboarding = false }
                 .padding(24).frame(width: 480)
-                .background(Theme.bg)
-                .preferredColorScheme(.dark)
         } else {
             connectionPage
         }
@@ -44,7 +42,7 @@ struct OnboardingSheet: View {
 
             if let error {
                 Label(error, systemImage: "xmark.circle.fill")
-                    .font(.system(size: 12)).foregroundStyle(Color(red: 0.92, green: 0.42, blue: 0.38))
+                    .font(.system(size: 12)).foregroundStyle(.red)
             }
 
             HStack {
@@ -58,8 +56,6 @@ struct OnboardingSheet: View {
             }
         }
         .padding(24).frame(width: 480)
-        .background(Theme.bg)
-        .preferredColorScheme(.dark)
     }
 
     private func field(_ label: String, _ key: String, secure: Bool = false, placeholder: String = "") -> some View {

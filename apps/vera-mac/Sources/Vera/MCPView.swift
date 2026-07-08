@@ -105,7 +105,7 @@ struct MCPView: View {
                         Text(fn.name).font(.system(size: 14, weight: .semibold))
                         Text(fn.type).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textSecondary)
                             .padding(.horizontal, 7).padding(.vertical, 2)
-                            .background(Theme.surfaceHover).clipShape(Capsule())
+                            .background(.quaternary, in: Capsule())
                     }
                     Spacer(minLength: 12)
                     gearButton(ValvesContext(id: fn.id, title: fn.name, isFunction: true))

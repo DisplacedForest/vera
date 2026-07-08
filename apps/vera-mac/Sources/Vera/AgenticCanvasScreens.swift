@@ -661,7 +661,7 @@ struct BranchNode: View {
                 Spacer(minLength: 0)
                 Circle()
                     .fill(outcome == nil ? Theme.textSecondary.opacity(0.5)
-                                         : Color(red: 0.36, green: 0.78, blue: 0.50))
+                                         : Color.green)
                     .frame(width: 7, height: 7)
             }
             if let outcome {
@@ -705,7 +705,7 @@ struct InspectorPanel: View {
                 .padding(.top, 20)
         }
         .frame(width: 332)
-        .background(Color(red: 0.118, green: 0.122, blue: 0.129))
+        .background(Theme.surface)
         .overlay(Rectangle().fill(Theme.hairline).frame(width: 1), alignment: .leading)
     }
 }
@@ -845,7 +845,7 @@ struct InspectorContent: View {
                         Image(systemName: "play.fill").font(.system(size: 10))
                         Text("Run now").font(.system(size: 12.5, weight: .semibold))
                     }
-                    .foregroundStyle(Color(red: 0.09, green: 0.09, blue: 0.10))
+                    .foregroundStyle(Color.white)
                     .padding(.horizontal, 14).padding(.vertical, 7)
                     .background(Theme.accent)
                     .clipShape(RoundedRectangle(cornerRadius: 8))

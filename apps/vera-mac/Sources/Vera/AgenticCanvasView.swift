@@ -43,9 +43,9 @@ enum FlowStatus {
     var dotColor: Color {
         switch self {
         case .never: return Theme.textSecondary.opacity(0.5)
-        case .ok: return Color(red: 0.36, green: 0.78, blue: 0.50)
-        case .warn: return Color(red: 0.90, green: 0.62, blue: 0.30)
-        case .fail: return Color(red: 0.92, green: 0.42, blue: 0.38)
+        case .ok: return .green
+        case .warn: return .orange
+        case .fail: return .red
         case .off: return Theme.textSecondary.opacity(0.5)
         }
     }
@@ -273,7 +273,7 @@ struct OrganismMap: View {
                     ctx.fill(Path(ellipseIn: CGRect(x: pt.x - 6, y: pt.y - 6, width: 12, height: 12)),
                              with: .color(Theme.accent.opacity(0.22 * fade)))
                     ctx.fill(Path(ellipseIn: CGRect(x: pt.x - 2.6, y: pt.y - 2.6, width: 5.2, height: 5.2)),
-                             with: .color(Color(red: 0.56, green: 0.68, blue: 0.97).opacity(fade)))
+                             with: .color(Theme.accentGlow.opacity(fade)))
                     _ = flow
                 }
             }

@@ -19,7 +19,6 @@ struct SettingsView: View {
         // Wider than a plain form window so the moved Plugins/MCP surfaces (860-wide content) breathe;
         // a fixed height keeps their scrolling panes from collapsing in the Settings scene.
         .frame(width: 860, height: 640)
-        .preferredColorScheme(.dark)
     }
 }
 
@@ -217,10 +216,10 @@ private struct InlineTest: View {
             case .running: ProgressView().controlSize(.small)
             case .ok(let m):
                 Label(m, systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 12)).foregroundStyle(Color(red: 0.36, green: 0.78, blue: 0.5))
+                    .font(.system(size: 12)).foregroundStyle(.green)
             case .fail(let m):
                 Label(m, systemImage: "xmark.circle.fill")
-                    .font(.system(size: 12)).foregroundStyle(Color(red: 0.92, green: 0.42, blue: 0.38))
+                    .font(.system(size: 12)).foregroundStyle(.red)
             }
             Spacer(minLength: 0)
         }

@@ -21,9 +21,9 @@ def test_protocol_hermes_opt_in(monkeypatch):
     assert coder.tool_protocol() == "openai"
 
 
-def test_protocol_mlx_is_deprecated_alias_for_hermes(monkeypatch):
+def test_protocol_mlx_is_deprecated_alias_for_openai(monkeypatch):
     monkeypatch.setenv("DREAM_TOOL_PROTOCOL", "mlx")
-    assert coder.tool_protocol() == "hermes"
+    assert coder.tool_protocol() == "openai"
 
 
 # --------------------------------------------------------------------------- loop harness
@@ -146,12 +146,13 @@ def test_hermes_plain_reply_is_final(monkeypatch):
     assert len(requests) == 1
 
 
-def test_hermes_legacy_mlx_value_runs_the_hermes_loop(monkeypatch):
+def test_legacy_mlx_value_runs_the_openai_loop(monkeypatch):
     answer, requests = _agent(monkeypatch, [
-        {"content": _hermes_call("gamma")},
+        {"content": None, "tool_calls": [_call(json.dumps({"query": "gamma"}))]},
         {"content": "done."},
     ], protocol="mlx")
     assert answer == "done."
+    assert requests[0][1] == coder.TOOLS
     assert "results for <gamma>" in requests[1][0][-1]["content"]
 
 

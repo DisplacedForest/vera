@@ -53,7 +53,8 @@ def test_every_registry_job_is_a_flow():
 
 def test_every_registry_job_has_an_authored_face():
     # A new job must get a deliberate canvas face, not the fallback.
-    assert set(agentic.FLOW_FACE) == set(REGISTRY)
+    assert set(REGISTRY) <= set(agentic.FLOW_FACE)
+    assert set(agentic.FLOW_FACE) - set(REGISTRY) == {"vein_status", "vein_weather", "vein_media"}
 
 
 def test_feeds_reference_declared_surfaces():
@@ -84,7 +85,7 @@ def test_drill_in_topology():
     assert hb["stage_layout"] == "fan"
     assert [s["id"] for s in hb["stages"]] == ["learn", "refine", "propose", "watch", "foryou"]
     # Simple jobs carry no stages: the manifest decides depth.
-    assert "stages" not in _flow(out, "weather")
+    assert "stages" not in _flow(out, "signals")
 
 
 def test_pulse_stage_state_idle_is_none():

@@ -47,11 +47,6 @@ async def _job_pulse():
     return await pulse.run_outcome(await pulse.run(pulse.PulseRequest()))
 
 
-async def _job_weather():
-    from . import weather
-    return await weather.check(weather.WeatherRequest())
-
-
 async def _job_signals():
     from . import signals
     return await signals.check(signals.SignalsRequest())
@@ -82,21 +77,6 @@ async def _job_heartbeat():
     return await heartbeat.tick(heartbeat.TickRequest())
 
 
-async def _job_healthcheck():
-    from . import health
-    return await health.check(health.HealthCheck())
-
-
-async def _job_updates():
-    from . import updates
-    return await updates.check(updates.UpdateCheck())
-
-
-async def _job_media_curate():
-    from . import media_curation
-    return await media_curation.curate()
-
-
 async def _job_conversation_extract():
     from . import conversation_extract
     return await conversation_extract.run()
@@ -111,16 +91,12 @@ async def _job_weight_fit():
 # id -> (label, default cron, handler). The shipped schedule; everything overridable.
 REGISTRY: dict[str, tuple[str, str, object]] = {
     "pulse":          ("Pulse briefing run",        "0 5 * * *",    _job_pulse),
-    "weather":        ("Weather check",             "0 */6 * * *",  _job_weather),
     "signals":        ("Signals check",             "0 6,18 * * *", _job_signals),
     "memory_groom":   ("Episodic memory groom",     "0 4 * * *",    _job_memory_groom),
     "home_model":     ("Home model refresh",        "30 3 * * *",   _job_home_model),
     "home_reconcile": ("Home map reconcile",        "0 3 * * *",    _job_home_reconcile),
     "home_digest":    ("Home rhythm digest",        "0 2 * * *",    _job_home_digest),
     "heartbeat":      ("Heartbeat tick",            "*/20 * * * *", _job_heartbeat),
-    "healthcheck":    ("Service health probe",      "*/15 * * * *", _job_healthcheck),
-    "updates":        ("Stack updates check",       "30 7 * * *",   _job_updates),
-    "media_curate":   ("Media curation digest",     "0 9 * * 0",    _job_media_curate),
     "conversation_extract": ("Conversation extraction into the Profile Graph", "45 4 * * *", _job_conversation_extract),
     "weight_fit":     ("Ranking weight fit from feedback", "30 4 * * 0",  _job_weight_fit),
 }
@@ -134,13 +110,6 @@ def _gate_home_modeling() -> str | None:
     if integrations.feature_enabled("home_assistant", "home_modeling"):
         return None
     return "requires the home_assistant integration with its home_modeling feature enabled"
-
-
-def _gate_media_curation() -> str | None:
-    from . import integrations
-    if integrations.feature_enabled("overseerr", "media_curation"):
-        return None
-    return "requires the overseerr integration with its media_curation feature enabled"
 
 
 def _vein_gate(kind: str):
@@ -157,19 +126,11 @@ def _registry() -> dict[str, tuple[str, str, object]]:
     return {**REGISTRY, **vein_engine.dynamic_jobs()}
 
 
-def _gate_media() -> str | None:
-    return _vein_gate("media")() or _gate_media_curation()
-
-
 GATES: dict[str, object] = {
     "home_model": _gate_home_modeling,
     "home_reconcile": _gate_home_modeling,
     "home_digest": _gate_home_modeling,
-    "media_curate": _gate_media,
-    "weather": _vein_gate("weather"),
     "signals": _vein_gate("signals"),
-    "updates": _vein_gate("status"),
-    "healthcheck": _vein_gate("status"),
 }
 
 

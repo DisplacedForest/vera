@@ -5,7 +5,12 @@
   "order": 1,
   "nominal_label": "clear",
   "blurb": "severe-weather pre-warnings for the home's coordinates",
-  "producer_jobs": ["weather"],
+  "pipeline": [
+    {"block": "weather_conditions"},
+    {"block": "llm_compose", "params": {
+      "style": "a severe-weather pre-warning: lead with the headline risk and when it hits, then two or three sentences on what to expect and one practical prep nudge"}}
+  ],
+  "schedule": "0 */6 * * *",
   "requires": [
     {"kind": "env", "names": ["WEATHER_LAT", "WEATHER_LON"], "label": "home coordinates"}
   ],

@@ -35,6 +35,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from . import env_compat
+from . import structured
 from .pulse import DEFAULT_FOLDER, _inject, _vera, store
 from .persona import home_region_is_us, orientation, owner, voiced
 from .websearch import SearchRequest, search as web_search
@@ -691,12 +692,13 @@ async def check(req: SignalsRequest):
             try:
                 corpus = (await _collect_news(session))["corpus"]
                 if corpus.strip():
-                    raw = await _vera(
-                        [{"role": "system", "content": news_judge_sys(effective_orientation())},
-                         {"role": "user", "content": f"Today: {time.strftime('%Y-%m-%d')}.\n\n{corpus}"}],
-                        temperature=0.2, think="off")
-                    parsed = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
-                    cands = parsed.get("candidates", []) if isinstance(parsed, dict) else []
+                    judge_msgs = [
+                        {"role": "system", "content": news_judge_sys(effective_orientation())},
+                        {"role": "user", "content": f"Today: {time.strftime('%Y-%m-%d')}.\n\n{corpus}"}]
+                    judged, _ = await structured.parsed(
+                        structured.repairable(_vera, judge_msgs, temperature=0.2, think="off"),
+                        structured.NewsJudge)
+                    cands = (judged or {}).get("candidates") or []
                     out["considered"] = cands
                     trips += _eval_news_candidates(cands)
             except Exception as e:
@@ -728,10 +730,14 @@ async def check(req: SignalsRequest):
     try:
         listing = json.dumps([{"i": i, "sentinel": t["sentinel"], "tier": t["tier"],
                                "title": t["title"], "detail": t["detail"]} for i, t in enumerate(trips)], indent=2)
-        raw = await _vera([{"role": "system", "content": CLUSTER_SYS},
-                           {"role": "user", "content": f"Today's trips:\n{listing}"}],
-                          temperature=0.2, think="off")
-        clusters = json.loads(raw[raw.index("{"):raw.rindex("}") + 1]).get("situations", [])
+        cluster_msgs = [{"role": "system", "content": CLUSTER_SYS},
+                        {"role": "user", "content": f"Today's trips:\n{listing}"}]
+        obj, cluster_errs = await structured.parsed(
+            structured.repairable(_vera, cluster_msgs, temperature=0.2, think="off"),
+            structured.Clusters)
+        clusters = (obj or {}).get("situations") or []
+        if obj is None and cluster_errs:
+            out["errors"].append(f"cluster: {'; '.join(cluster_errs)}")
     except Exception as e:
         out["errors"].append(f"cluster: {e}")
     if not clusters:

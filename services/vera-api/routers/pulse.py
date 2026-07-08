@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from . import pulse_veins
 from . import pulse_store as store
+from . import structured
 from . import user_profile_store as up
 from . import vera_interests_store as vi
 from .persona import think_kwargs, voiced
@@ -145,15 +146,6 @@ async def _vera(messages, temperature=0.4, think=None):
         ) as r:
             d = await r.json()
     return d["choices"][0]["message"]["content"]
-
-
-def _parse_topics(txt):
-    try:
-        j = json.loads(txt[txt.index("{"): txt.rindex("}") + 1])
-        topics = j.get("topics")
-        return topics if isinstance(topics, list) else []
-    except Exception:
-        return []
 
 
 def _marker_body(c):
@@ -1027,14 +1019,14 @@ async def _triage(who, persona, interests, memories, exclusions, want, rnd):
             + "\n- ".join(exclusions)) if exclusions else "")
         + (TRIAGE_RETRY if rnd > 0 and exclusions else "")
     )
-    raw = await _vera(
-        [
-            {"role": "system", "content": TRIAGE_SYS.format(today=time.strftime("%Y-%m-%d"), n=want, who=who)},
-            {"role": "user", "content": usr},
-        ],
-        temperature=_TRIAGE_TEMPS[min(rnd, len(_TRIAGE_TEMPS) - 1)],
-    )
-    return _parse_topics(raw)[:want]
+    msgs = [
+        {"role": "system", "content": TRIAGE_SYS.format(today=time.strftime("%Y-%m-%d"), n=want, who=who)},
+        {"role": "user", "content": usr},
+    ]
+    obj, _ = await structured.parsed(
+        structured.repairable(_vera, msgs, temperature=_TRIAGE_TEMPS[min(rnd, len(_TRIAGE_TEMPS) - 1)]),
+        structured.Topics)
+    return ((obj or {}).get("topics") or [])[:want]
 
 
 async def _audit_hook(url):

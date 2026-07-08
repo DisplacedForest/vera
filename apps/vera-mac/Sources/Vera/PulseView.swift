@@ -23,7 +23,7 @@ struct PulseView: View {
         ZStack {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
-                    Text("Today's pulse").font(.system(size: 22, weight: .bold))
+                    Text("Today's pulse").font(.title2.bold())
                     Text("\(store.feedCards.count)").font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 8).padding(.vertical, 3)
@@ -38,7 +38,7 @@ struct PulseView: View {
                     .buttonStyle(.plain).help("Veins (ambient watches pinned above the feed)")
                 }
                 .frame(maxWidth: pulseFeedWidth, alignment: .leading).frame(maxWidth: .infinity)
-                .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
+                .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 8)
 
                 // Pinned ambient veins — quiet chips above the feed; tap a lit one for its cards.
                 if !store.pulseVeins.isEmpty {
@@ -113,7 +113,6 @@ struct VeinsSheet: View {
         }
         .frame(width: 900, height: 680)
         .background(Theme.bg)
-        .preferredColorScheme(.dark)
     }
 }
 
@@ -172,9 +171,9 @@ struct PulseCardTile: View {
             .background(ZStack { panel; Color.black.opacity(0.32) })
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Theme.hairline, lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
         .onTapGesture { onTap?(card) }
     }
 
@@ -259,7 +258,7 @@ func pulseSeverityRank(_ s: String?) -> Int {
 func pulseSeverityColor(_ s: String?) -> Color {
     switch s {
     case "critical": return .red
-    case "alert": return .orange
+    case "alert": return Theme.accentGlow
     default: return Theme.accent
     }
 }
@@ -346,9 +345,9 @@ struct StatusCardTile: View {
             if let action = card.action { StatusActionAffordance(card: card, action: action) }
         }
         .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onTapGesture { onTap?(card) }
         .pointerCursor()
     }
@@ -406,8 +405,8 @@ struct StatusActionAffordance: View {
         }
         .foregroundStyle(filled ? Color.white : Theme.textPrimary)
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(filled ? Theme.accent : Theme.surfaceHover)
-        .clipShape(Capsule()).contentShape(Capsule())
+        .background(filled ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.quaternary), in: Capsule())
+        .contentShape(Capsule())
         .highPriorityGesture(TapGesture().onEnded(go))
         .pointerCursor()
     }
@@ -448,17 +447,14 @@ struct PulseVeinView: View {
                         ForEach(cards) { StatusCardTile(card: $0, onTap: { detail = $0 }) }
                     }
                 }
-                // 36 top (not 24) — the overlay sits under the hidden title bar, which
-                // otherwise slices the top of the vein header.
-                .padding(.horizontal, 24).padding(.bottom, 24).padding(.top, 36)
+                .padding(.horizontal, 24).padding(.bottom, 24).padding(.top, 16)
                 .frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity)
             }
             Button(action: onClose) {
                 Image(systemName: "xmark").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
                     .frame(width: 30, height: 30).background(Color.black.opacity(0.5)).clipShape(Circle())
             }
-            // 36 top — overlay controls clear the hidden title bar.
-            .buttonStyle(.plain).padding(.top, 36).padding(.horizontal, 16).padding(.bottom, 16)
+            .buttonStyle(.plain).padding(.top, 16).padding(.horizontal, 16).padding(.bottom, 16)
 
             if let c = detail {
                 PulseDetailView(card: c, token: store.apiToken,

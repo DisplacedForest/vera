@@ -9,7 +9,7 @@ struct JournalView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Journal").font(.system(size: 22, weight: .bold))
+                Text("Journal").font(.title2.bold())
                 Text("\(store.journalEntries.count)").font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 3)
@@ -18,7 +18,7 @@ struct JournalView: View {
                 Text("what Vera has committed to keep an eye on")
                     .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
-            .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
+            .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 8)
             ScrollView {
                 if store.journalEntries.isEmpty && store.journalArchive.isEmpty {
                     Text(store.isLive ? "Nothing on her journal right now. Commitments she takes on (from signals, or because you ask) appear here."
@@ -60,8 +60,7 @@ struct JournalList: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14)
-                    .background(Theme.surface.opacity(0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
             }
         }
@@ -98,7 +97,6 @@ struct JournalEntryCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

@@ -8,7 +8,7 @@ struct MemoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Memory").font(.system(size: 22, weight: .bold))
+                Text("Memory").font(.title2.bold())
                 Text("\(store.memories.count)").font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 3)
@@ -16,7 +16,7 @@ struct MemoryView: View {
                 Spacer()
                 Text("what Vera knows about you").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
-            .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
+            .padding(.horizontal, 28).padding(.top, 12).padding(.bottom, 8)
             ScrollView {
                 if store.memories.isEmpty {
                     Text(store.isLive ? "No memories yet. What Vera learns about you appears here."
@@ -61,7 +61,7 @@ struct MemoryRow: View {
                     ForEach(item.tags, id: \.self) { tag in
                         Text(tag).font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textSecondary)
                             .padding(.horizontal, 7).padding(.vertical, 2)
-                            .background(Theme.surfaceHover).clipShape(Capsule())
+                            .background(.quaternary, in: Capsule())
                     }
                     Text(item.bank).font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.accent)
                         .padding(.horizontal, 7).padding(.vertical, 2)
@@ -85,8 +85,7 @@ struct MemoryRow: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
     }
 }

@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime
 
 import aiohttp
 
@@ -195,8 +196,10 @@ async def _run_llm_judge(items, params, ctx):
         structured.repairable(_vera, msgs, temperature=0.2, think="off"), _Verdicts)
     if obj is None:
         raise BlockError("llm_judge", "; ".join(errs) or "unusable reply")
-    keep = {v.get("index") for v in (obj.get("verdicts") or []) if v.get("keep")}
-    return [it for i, it in enumerate(items) if i in keep]
+    keep = {v.get("index"): (v.get("reason") or "").strip()
+            for v in (obj.get("verdicts") or []) if v.get("keep")}
+    return [{**it, "judge_reason": keep[i]} if keep[i] else it
+            for i, it in enumerate(items) if i in keep]
 
 
 COMPOSE_SYS = (
@@ -211,12 +214,14 @@ COMPOSE_SYS = (
 
 async def _run_llm_compose(items, params, ctx):
     from . import persona
+    style = template(params.get("style", ""), ctx)
+    sys = COMPOSE_SYS + (f"\nStyle for the body: {style}" if style else "")
     out = []
     for it in items:
         facts = json.dumps({k: it.get(k) for k in
                             ("title", "content", "value", "side", "url", "published")
                             if it.get(k) is not None}, indent=2)
-        raw = (await _vera([{"role": "system", "content": persona.voiced(COMPOSE_SYS)},
+        raw = (await _vera([{"role": "system", "content": persona.voiced(sys)},
                             {"role": "user", "content": facts}], temperature=0.4)).strip()
         head, sep, rest = raw.partition("===")
         source = head if sep else raw
@@ -247,8 +252,13 @@ _REQUIRED_PARAMS = {
 }
 
 
-def register(name: str, runner) -> None:
+MONITOR_BLOCKS: set[str] = {"trip_band"}
+
+
+def register(name: str, runner, monitor: bool = False) -> None:
     BLOCKS[name] = runner
+    if monitor:
+        MONITOR_BLOCKS.add(name)
 
 
 def validate_pipeline(defn: dict) -> list[str]:
@@ -268,7 +278,7 @@ def validate_pipeline(defn: dict) -> list[str]:
 
 
 def is_monitor(pipeline) -> bool:
-    return any(s.get("block") == "trip_band" for s in pipeline)
+    return any(s.get("block") in MONITOR_BLOCKS for s in pipeline)
 
 
 def has_llm(pipeline) -> bool:
@@ -288,6 +298,12 @@ def _drop_seen(kind: str, items):
     return [it for it in items if it["key"] in unseen]
 
 
+def _content_sig(it: dict) -> str:
+    facts = {k: it.get(k) for k in ("title", "content", "value", "side")
+             if it.get(k) is not None}
+    return hashlib.sha1(json.dumps(facts, sort_keys=True).encode()).hexdigest()[:12]
+
+
 def _card_fields(it: dict) -> dict:
     body = it.get("body") or it.get("content") or ""
     if not body and it.get("value") is not None:
@@ -297,10 +313,33 @@ def _card_fields(it: dict) -> dict:
         "summary": it.get("summary") or "",
         "body": body,
         "severity": it.get("severity") or "notice",
-        "sources": ([{"n": 1, "title": it.get("title") or it["url"], "url": it["url"]}]
-                    if it.get("url") else []),
+        "sources": (it.get("sources")
+                    or ([{"n": 1, "title": it.get("title") or it["url"], "url": it["url"]}]
+                        if it.get("url") else [])),
         "situation_key": it["key"],
+        "category": it.get("category"),
+        "items": it.get("items"),
+        "change_set": _content_sig(it),
     }
+
+
+def _active_cards(kind: str) -> list[dict]:
+    from . import pulse
+    return [c for c in pulse.store.list_cards()
+            if c.get("kind") == kind and c.get("status") in ACTIVE_SWEEPABLE]
+
+
+def _split_standing(items, active):
+    _ensure_keys(items)
+    by_key = {c["situation_key"]: c for c in active if c.get("situation_key")}
+    fresh, standing = [], []
+    for it in items:
+        card = by_key.get(it["key"])
+        if card is not None and card.get("change_set") == _content_sig(it):
+            standing.append(card)
+        else:
+            fresh.append(it)
+    return fresh, standing
 
 
 async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False) -> dict:
@@ -320,14 +359,21 @@ async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False
            "options": pulse_veins.option_values_for(defn),
            "providers": pulse_veins.provider_values_for(defn)}
     items, seen_filtered, steps = [], False, []
+    standing, standing_split, llm_used = [], False, False
     for step in pipeline:
         name = step.get("block", "")
         runner = BLOCKS.get(name)
         if runner is None:
             return {"ok": False, "block": name, "detail": f"unknown block '{name}'"}
-        if not monitor and not seen_filtered and name in LLM_BLOCKS:
-            items = _drop_seen(kind, items)
-            seen_filtered = True
+        if not seen_filtered and not standing_split and name in LLM_BLOCKS:
+            if monitor:
+                items, standing = _split_standing(items, _active_cards(kind))
+                standing_split = True
+            else:
+                items = _drop_seen(kind, items)
+                seen_filtered = True
+        if name in LLM_BLOCKS and items:
+            llm_used = True
         try:
             items = await runner(items, step.get("params") or {}, ctx)
         except BlockError as e:
@@ -338,14 +384,18 @@ async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False
     _ensure_keys(items)
     if not monitor and not seen_filtered:
         items = _drop_seen(kind, items)
+    if monitor and not standing_split:
+        items, standing = _split_standing(items, _active_cards(kind))
     cards = [_card_fields(it) for it in items]
+    extra = {"standing": len(standing)} if standing else {}
     if dry_run:
-        return {"ok": True, "dry_run": True, "situations": len(cards), "cards": cards, "steps": steps}
-    if has_llm(pipeline):
+        return {"ok": True, "dry_run": True, "situations": len(cards) + len(standing),
+                "cards": cards, **extra, "steps": steps}
+    if llm_used:
         engine_store.mark_run(kind)
-    active = [c for c in pulse.store.list_cards()
-              if c.get("kind") == kind and c.get("status") in ACTIVE_SWEEPABLE]
-    current = {c["situation_key"] for c in cards}
+    active = _active_cards(kind)
+    current = ({c["situation_key"] for c in cards}
+               | {c["situation_key"] for c in standing})
     if monitor:
         for c in active:
             if c.get("situation_key") not in current:
@@ -356,10 +406,18 @@ async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False
                 pulse.store.delete_card(c["id"])
         await pulse._inject(card["title"], card["body"], kind=kind,
                             severity=card["severity"], summary=card["summary"],
-                            sources=card["sources"], situation_key=card["situation_key"])
+                            sources=card["sources"], situation_key=card["situation_key"],
+                            category=card["category"], change_set=card["change_set"],
+                            items=card["items"])
+    if standing:
+        today = datetime.now(pulse.TZ).date().isoformat()
+        for c in standing:
+            if (c.get("day") or "") < today:
+                pulse.store.insert_card({**c, "status": "new", "day": today})
     if not monitor:
         engine_store.record_seen(kind, sorted(current))
-    return {"ok": True, "situations": len(cards), "cards": len(cards)}
+    return {"ok": True, "situations": len(cards) + len(standing),
+            "cards": len(cards), **extra}
 
 
 async def run_vein(kind: str, dry_run: bool = False, manual: bool = False) -> dict:

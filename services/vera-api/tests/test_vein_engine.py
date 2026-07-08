@@ -128,11 +128,12 @@ def _fake_vera(keep=(0,)):
     return f
 
 
-def test_llm_judge_drops_non_keepers(monkeypatch):
+def test_llm_judge_drops_non_keepers_and_keeps_reasons(monkeypatch):
     monkeypatch.setattr(vein_engine, "_vera", _fake_vera(keep=(1,)))
     items = [{"key": "a", "title": "A"}, {"key": "b", "title": "B"}]
     out = _run(vein_engine._run_llm_judge(items, {"bar": "matters to {options.beat}"}, CTX))
     assert [i["key"] for i in out] == ["b"]
+    assert out[0]["judge_reason"] == "r"
 
 
 def test_llm_compose_parses_headline_summary_body(monkeypatch):
@@ -141,6 +142,22 @@ def test_llm_compose_parses_headline_summary_body(monkeypatch):
     assert out[0]["headline"] == "Gauge rising"
     assert out[0]["summary"] == "The river gauge crossed its band."
     assert out[0]["body"] == "Body text here."
+
+
+def test_llm_compose_honors_style_param(monkeypatch):
+    async def spy(messages, **kw):
+        spy.sys = messages[0]["content"]
+        return "HEADLINE: H\nSUMMARY: S.\n===\nB."
+    monkeypatch.setattr(vein_engine, "_vera", spy)
+    _run(vein_engine._run_llm_compose([{"key": "a", "title": "A"}],
+                                      {"style": "lead with {options.beat}"}, CTX))
+    assert "lead with earthquakes" in spy.sys
+
+
+def test_card_fields_pass_sources():
+    fields = vein_engine._card_fields({"key": "k", "title": "T",
+                                       "sources": [{"n": 1, "title": "Full forecast", "url": "https://f"}]})
+    assert fields["sources"] == [{"n": 1, "title": "Full forecast", "url": "https://f"}]
 
 
 def test_validate_pipeline_names_the_step():
@@ -219,16 +236,18 @@ def test_watcher_realerts_after_decay(monkeypatch):
     assert out["situations"] == 1
 
 
-def test_monitor_retires_cleared_and_upserts_standing(monkeypatch):
+def test_monitor_retires_cleared_and_leaves_standing_untouched(monkeypatch):
     _save_monitor()
     _stub_get(monkeypatch, 200, json.dumps({"level": 25}))
     out = _run(vein_engine.run_vein("gauge"))
     assert out == {"ok": True, "situations": 1, "cards": 1}
     first = _active("gauge")
     assert len(first) == 1 and first[0]["severity"] == "alert"
-    _run(vein_engine.run_vein("gauge"))
+    assert first[0]["change_set"]
+    again = _run(vein_engine.run_vein("gauge"))
+    assert again == {"ok": True, "situations": 1, "cards": 0, "standing": 1}
     second = _active("gauge")
-    assert len(second) == 1 and second[0]["id"] != first[0]["id"]
+    assert len(second) == 1 and second[0]["id"] == first[0]["id"]
     _stub_get(monkeypatch, 200, json.dumps({"level": 10}))
     cleared = _run(vein_engine.run_vein("gauge"))
     assert cleared["situations"] == 0
@@ -255,6 +274,15 @@ def test_floor_skips_scheduled_but_not_manual(monkeypatch):
     assert out["skipped"] == "schedule floor"
     manual = _run(vein_engine.run_vein("newswatch", manual=True))
     assert manual["situations"] == 1
+
+
+def test_floor_marks_only_when_llm_ran_on_items(monkeypatch):
+    _save_watcher()
+    _stub_search(monkeypatch, [])
+    monkeypatch.setattr(vein_engine, "_vera", _fake_vera())
+    out = _run(vein_engine.run_vein("newswatch"))
+    assert out["situations"] == 0
+    assert vein_engine_store.last_run("newswatch") is None
 
 
 def test_dry_run_persists_nothing(monkeypatch):
@@ -291,6 +319,132 @@ def test_dynamic_jobs_reflect_pipeline_definitions():
     assert cron == "*/30 * * * *"
     vein_defs.delete_custom("gauge")
     assert "vein_gauge" not in vein_engine.dynamic_jobs()
+
+
+def _register_feed(feed, name="feed_src", monitor=True):
+    async def src(items, params, ctx):
+        return items + [dict(i) for i in feed]
+    vein_engine.register(name, src, monitor=monitor)
+
+
+def _unregister(name="feed_src"):
+    vein_engine.BLOCKS.pop(name, None)
+    vein_engine.MONITOR_BLOCKS.discard(name)
+
+
+def _counting_vera():
+    async def f(messages, **kw):
+        f.calls += 1
+        return "HEADLINE: Service down\nSUMMARY: A watched service is down.\n===\nBody."
+    f.calls = 0
+    return f
+
+
+def _save_feed_monitor(kind="sys"):
+    return vein_defs.save_custom({
+        "kind": kind, "label": "Sys", "icon": "gearshape",
+        "pipeline": [{"block": "feed_src"}, {"block": "llm_compose"}],
+        "schedule": "*/30 * * * *",
+    })
+
+
+def test_registered_monitor_block_flags_pipeline():
+    _register_feed([], name="mon_probe")
+    try:
+        assert vein_engine.is_monitor([{"block": "mon_probe"}])
+        assert not vein_engine.is_monitor([{"block": "web_search"}])
+    finally:
+        _unregister("mon_probe")
+
+
+def test_card_fields_pass_category_items_and_signature():
+    fields = vein_engine._card_fields({"key": "k", "title": "T", "content": "c",
+                                       "category": "health", "items": [{"row": 1}]})
+    assert fields["category"] == "health"
+    assert fields["items"] == [{"row": 1}]
+    assert fields["change_set"]
+
+
+def test_monitor_standing_unchanged_card_is_untouched(monkeypatch):
+    feed = [{"key": "health:owui", "title": "owui", "content": "down",
+             "severity": "alert", "category": "health"}]
+    _register_feed(feed)
+    try:
+        _save_feed_monitor()
+        fake = _counting_vera()
+        monkeypatch.setattr(vein_engine, "_vera", fake)
+        out = _run(vein_engine.run_vein("sys", manual=True))
+        assert out == {"ok": True, "situations": 1, "cards": 1}
+        first = _active("sys")[0]
+        assert first["category"] == "health" and first["change_set"]
+        assert fake.calls == 1
+        again = _run(vein_engine.run_vein("sys", manual=True))
+        assert again == {"ok": True, "situations": 1, "cards": 0, "standing": 1}
+        assert fake.calls == 1
+        assert _active("sys")[0]["id"] == first["id"]
+        feed[0]["content"] = "down for 40 minutes"
+        changed = _run(vein_engine.run_vein("sys", manual=True))
+        assert changed["cards"] == 1
+        assert fake.calls == 2
+        latest = _active("sys")[0]
+        assert latest["id"] != first["id"]
+        assert latest["change_set"] != first["change_set"]
+    finally:
+        _unregister()
+
+
+def test_monitor_standing_resurfaces_on_day_rollover(monkeypatch):
+    feed = [{"key": "health:owui", "title": "owui", "content": "down", "severity": "alert"}]
+    _register_feed(feed)
+    try:
+        _save_feed_monitor()
+        fake = _counting_vera()
+        monkeypatch.setattr(vein_engine, "_vera", fake)
+        _run(vein_engine.run_vein("sys", manual=True))
+        card = _active("sys")[0]
+        pulse_store.insert_card({**card, "status": "seen", "day": "2000-01-01"})
+        _run(vein_engine.run_vein("sys", manual=True))
+        after = _active("sys")[0]
+        assert after["id"] == card["id"]
+        assert after["day"] != "2000-01-01"
+        assert after["status"] == "new"
+        assert fake.calls == 1
+    finally:
+        _unregister()
+
+
+def test_monitor_retires_cleared_but_keeps_standing(monkeypatch):
+    feed = [{"key": "health:owui", "title": "owui", "content": "down", "severity": "alert"},
+            {"key": "health:searxng", "title": "searxng", "content": "down", "severity": "alert"}]
+    _register_feed(feed)
+    try:
+        _save_feed_monitor()
+        monkeypatch.setattr(vein_engine, "_vera", _counting_vera())
+        _run(vein_engine.run_vein("sys", manual=True))
+        assert len(_active("sys")) == 2
+        del feed[1]
+        out = _run(vein_engine.run_vein("sys", manual=True))
+        assert out == {"ok": True, "situations": 1, "cards": 0, "standing": 1}
+        remaining = _active("sys")
+        assert [c["situation_key"] for c in remaining] == ["health:owui"]
+    finally:
+        _unregister()
+
+
+def test_dry_run_counts_standing_without_touching(monkeypatch):
+    feed = [{"key": "health:owui", "title": "owui", "content": "down", "severity": "alert"}]
+    _register_feed(feed)
+    try:
+        _save_feed_monitor()
+        fake = _counting_vera()
+        monkeypatch.setattr(vein_engine, "_vera", fake)
+        _run(vein_engine.run_vein("sys", manual=True))
+        out = _run(vein_engine.run_vein("sys", dry_run=True))
+        assert out["dry_run"] and out["standing"] == 1 and out["cards"] == []
+        assert out["situations"] == 1
+        assert fake.calls == 1
+    finally:
+        _unregister()
 
 
 def test_run_definition_executes_unsaved_draft_with_steps(monkeypatch):

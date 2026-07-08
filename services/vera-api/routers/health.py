@@ -1,22 +1,18 @@
 """Health checks — liveness for the load-bearing services.
 
-  GET  /health/services -> {ok, services:[{name,ok,detail}]}
-  POST /health/check     -> run checks; if anything is DOWN, inject a Pulse card alert
-                            (zero-floor: all healthy = no card).
+  GET /health/services -> {ok, services:[{name,ok,detail}]}
 
-Cron POST /health/check every ~15 min so a dead service surfaces proactively, instead of
-being discovered when you go to use Vera.
+The `service_health` vein block runs the same probe set for the System vein: one
+standing situation per down service, retired by the engine when it recovers.
 """
 import asyncio
 import os
 
 import aiohttp
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from . import env_compat
-from . import pulse_store as store
-from .pulse import _inject
+from . import vein_engine
 
 router = APIRouter()
 
@@ -96,44 +92,14 @@ async def services():
     return {"ok": all(r["ok"] for r in res), "services": res}
 
 
-class HealthCheck(BaseModel):
-    pulse_folder_id: str | None = None  # ignored (kept for cron compat)
-
-
-def _active_health_cards() -> list[dict]:
-    """The currently-active health producer cards (kind=status, category=health)."""
-    return [c for c in store.list_cards()
-            if c.get("kind") == "status" and c.get("category") == "health"]
-
-
-@router.post("/health/check", tags=["health"])
-async def check(req: HealthCheck):
-    """Fold service health into the System vein. A failed/degraded check injects a
-    kind=status, category=health card (lands under the System chip's Health group); when the
-    down-set changes or everything recovers, stale cards are cleared so the chip reflects live
-    state on the next pass (the daily sweep is just the overnight backstop)."""
-    from . import pulse_veins
-    if not pulse_veins.is_enabled("status"):
-        return {"ok": False, "disabled": True, "detail": pulse_veins.gate_reason("status")}
-    if pulse_veins.option_values("status").get("src_service_health") is False:
-        return {"ok": True, "disabled": True, "detail": "service-health probes are off in the System vein"}
+async def _block_service_health(items, params, ctx):
+    if (ctx.get("options") or {}).get("src_service_health") is False:
+        return items
     res = await _run()
-    down = [r for r in res if not r["ok"]]
-    title = ", ".join(d["name"] for d in down) + " down" if down else ""
-    out = {"ok": True, "down": [d["name"] for d in down], "alerted": False, "cleared": 0, "services": res}
+    return items + [{"key": f"health:{r['name']}", "title": f"{r['name']} down",
+                     "content": f"the `{r['name']}` service is not responding",
+                     "severity": "alert", "category": "health"}
+                    for r in res if not r["ok"]]
 
-    # Clear any health card whose down-set no longer matches current (a service recovered, or all
-    # green) — keeps the System chip honest. A still-matching card is left in place (dedup: a
-    # persistently-down service alerts ONCE, not every 15-min pass).
-    existing = _active_health_cards()
-    for c in existing:
-        if c["title"] != title:
-            store.delete_card(c["id"])
-            out["cleared"] += 1
 
-    if down and not any(c["title"] == title for c in existing):  # zero-floor + dedup
-        body = "**Service health alert**\n\n" + "\n".join(f"- `{d['name']}` is DOWN ({d['detail']})" for d in down)
-        await _inject(title, body, summary="A service Vera depends on is down.",
-                      kind="status", category="health", severity="alert")
-        out["alerted"] = True
-    return out
+vein_engine.register("service_health", _block_service_health, monitor=True)

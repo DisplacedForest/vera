@@ -113,15 +113,15 @@ def test_bool_and_number_coercion():
 # --------------------------------------------------------------------------- gates
 
 def test_scheduler_gates_follow_vein_state(monkeypatch):
-    assert "vein is off" in sch._gate_reason("weather")
+    assert "vein is off" in sch._gate_reason("vein_weather")
     assert "vein is off" in sch._gate_reason("signals")
-    assert "vein is off" in sch._gate_reason("updates")
+    assert "vein is off" in sch._gate_reason("vein_status")
     _put("signals", enabled=True)
     assert sch._gate_reason("signals") is None
     monkeypatch.setenv("WEATHER_LAT", "39.0")
     monkeypatch.setenv("WEATHER_LON", "-95.0")
     _put("weather", enabled=True)
-    assert sch._gate_reason("weather") is None
+    assert sch._gate_reason("vein_weather") is None
 
 
 def test_disabled_producer_refuses_directly():
@@ -278,7 +278,7 @@ def test_run_endpoint_statuses(monkeypatch, tmp_path):
         asyncio.run(pulse_veins.run_vein_now("nope"))
     assert e.value.status_code == 404
     with pytest.raises(HTTPException) as e:
-        asyncio.run(pulse_veins.run_vein_now("weather"))
+        asyncio.run(pulse_veins.run_vein_now("signals"))
     assert e.value.status_code == 422
     asyncio.run(pulse_veins.create_vein(_pipeline_defn()))
     with pytest.raises(HTTPException) as e:

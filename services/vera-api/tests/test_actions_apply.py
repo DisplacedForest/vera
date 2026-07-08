@@ -1,5 +1,5 @@
 """The card apply path: a failed apply stays retryable (the content-hash token is not burned),
-a successful update-card apply re-polls the updates check, and no LLM call lives in the path.
+a successful update-card apply re-runs the System vein, and no LLM call lives in the path.
 Run: python3 -m pytest tests/test_actions_apply.py
 """
 import asyncio
@@ -9,7 +9,7 @@ import pytest
 from routers import action_store as astore
 from routers import actions
 from routers import pulse
-from routers import updates
+from routers import vein_engine
 
 
 def run(coro):
@@ -88,11 +88,11 @@ def test_update_card_apply_repolls(monkeypatch):
 
     rechecked = []
 
-    async def fake_check(req):
-        rechecked.append(req)
+    async def fake_run(kind, **kw):
+        rechecked.append(kind)
         return {"ok": True}
 
-    monkeypatch.setattr(updates, "check", fake_check)
+    monkeypatch.setattr(vein_engine, "run_vein", fake_run)
 
     async def scenario():
         res = await actions.card_item(actions.CardItemDecision(
@@ -102,7 +102,7 @@ def test_update_card_apply_repolls(monkeypatch):
 
     res = run(scenario())
     assert res["ok"] is True and res["state"] == "approved"
-    assert len(rechecked) == 1     # the apply triggered a fresh updates check
+    assert len(rechecked) == 1     # the apply triggered a fresh System vein run
 
 
 def test_failed_update_apply_does_not_repoll(monkeypatch):
@@ -116,11 +116,11 @@ def test_failed_update_apply_does_not_repoll(monkeypatch):
 
     rechecked = []
 
-    async def fake_check(req):
-        rechecked.append(req)
+    async def fake_run(kind, **kw):
+        rechecked.append(kind)
         return {"ok": True}
 
-    monkeypatch.setattr(updates, "check", fake_check)
+    monkeypatch.setattr(vein_engine, "run_vein", fake_run)
 
     async def scenario():
         res = await actions.card_item(actions.CardItemDecision(

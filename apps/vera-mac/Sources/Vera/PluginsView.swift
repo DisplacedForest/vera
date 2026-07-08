@@ -166,7 +166,7 @@ struct PluginLogo: View {
                 Image(nsImage: img).resizable().interpolation(.high).scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
             } else {
-                RoundedRectangle(cornerRadius: size * 0.22).fill(Theme.surfaceHover)
+                RoundedRectangle(cornerRadius: size * 0.22).fill(.quaternary)
                     .overlay(Image(systemName: "shippingbox")
                         .font(.system(size: size * 0.42)).foregroundStyle(Theme.textSecondary))
             }
@@ -234,8 +234,8 @@ private struct PluginCard: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(entry.configured ? Theme.textPrimary : .white)
                     .padding(.horizontal, 14).padding(.vertical, 6)
-                    .background(entry.configured ? Theme.surfaceHover : Theme.accent)
-                    .clipShape(Capsule())
+                    .background(entry.configured ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Theme.accent),
+                                in: Capsule())
                 if pendingNote != nil {
                     Button("Retry OWUI step") { plugins.retryOWUI(entry) }
                         .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
@@ -264,10 +264,10 @@ private struct StatusChip: View {
         }
         switch entry.status {
         case "enabled":
-            return ("Connected", Color(red: 0.36, green: 0.78, blue: 0.5),
+            return ("Connected", .green,
                     entry.lastTestDetail.isEmpty ? "Connected" : entry.lastTestDetail)
         case "error":
-            return ("Error", Color(red: 0.92, green: 0.42, blue: 0.38),
+            return ("Error", .red,
                     entry.lastTestDetail.isEmpty ? "Connection error" : entry.lastTestDetail)
         case "configured":
             return ("Off", Theme.textSecondary, "Configured but switched off")
@@ -350,8 +350,7 @@ struct PluginSheet: View {
                     if let r = testResult {
                         HStack(spacing: 6) {
                             Image(systemName: r.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                .foregroundStyle(r.ok ? Color(red: 0.36, green: 0.78, blue: 0.5)
-                                                      : Color(red: 0.92, green: 0.42, blue: 0.38))
+                                .foregroundStyle(r.ok ? Color.green : Color.red)
                             Text(r.detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                         }
                     }

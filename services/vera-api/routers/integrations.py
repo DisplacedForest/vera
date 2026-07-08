@@ -52,6 +52,17 @@ REGISTRY: dict[str, dict] = {
         "unlocks": ["nightly dreaming consolidation and grooming",
                     "fact verification research with web search"],
     },
+    "sandbox": {
+        "display_name": "Code sandbox",
+        "fields": [
+            {"id": "url", "env": "VERA_SANDBOX_URL", "label": "Jupyter base URL", "secret": False,
+             "hint": "the hardened kernel container from scripts/vera-sandbox-setup.sh "
+                     "(reachable from vera-api, e.g. over the sandbox network)"},
+            {"id": "token", "env": "VERA_SANDBOX_TOKEN", "label": "Jupyter token",
+             "secret": True, "optional": True},
+        ],
+        "unlocks": ["code_interpreter tool for capability-gap tasks"],
+    },
     "image_gen": {
         "display_name": "Image generation",
         "fields": [

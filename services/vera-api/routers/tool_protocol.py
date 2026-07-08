@@ -43,6 +43,27 @@ def loop_budget(name: str, default: int) -> int:
         return default
 
 
+_TOOLS: dict[str, dict] = {}
+
+
+def register_tool(schema: dict, handler, available=None, last_resort: bool = False) -> None:
+    name = schema["function"]["name"]
+    _TOOLS[name] = {"schema": schema, "handler": handler,
+                    "available": available, "last_resort": last_resort}
+
+
+def tool_schemas() -> list[dict]:
+    entries = sorted(_TOOLS.values(), key=lambda e: e["last_resort"])
+    return [e["schema"] for e in entries if e["available"] is None or e["available"]()]
+
+
+async def dispatch(name: str, arguments: dict) -> str | None:
+    entry = _TOOLS.get(name)
+    if entry is None or (entry["available"] is not None and not entry["available"]()):
+        return None
+    return await entry["handler"](arguments)
+
+
 def render_tools(schemas: list[dict]) -> str:
     return _INSTRUCTIONS.format(schemas=json.dumps(schemas))
 

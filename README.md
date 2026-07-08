@@ -70,7 +70,7 @@ Vera researches overnight — topics drawn from her own accumulating interests a
 
 ### Veins — opt-in ambient monitoring
 
-A row of status chips above the feed — System, Weather, Signals, Media — each an independently configured monitor that stays quiet until a configured threshold is crossed. **None are enabled by default.** Each vein is scoped: the Signals vein can watch only financial stress indicators; the System vein can monitor only Home Assistant. Thresholds determine what surfaces; the model only explains what crossed them.
+A row of status chips above the feed — System, Weather, Signals, Media — each an independently configured monitor that stays quiet until a configured threshold is crossed. **None are enabled by default.** Each vein is scoped: the Signals vein can watch only financial stress indicators; the System vein can monitor only Home Assistant. Thresholds determine what surfaces; the model only explains what crossed them. Veins are also user-buildable: a JSON definition with a block pipeline (search, fetch, threshold math, LLM judge/compose) and a schedule becomes a running monitor with the same quiet discipline as the built-ins.
 
 <div align="center"><img src="docs/assets/pulse.png" alt="The Pulse surface with its vein chips" width="850"></div>
 

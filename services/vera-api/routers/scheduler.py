@@ -152,6 +152,11 @@ def _vein_gate(kind: str):
     return gate
 
 
+def _registry() -> dict[str, tuple[str, str, object]]:
+    from . import vein_engine
+    return {**REGISTRY, **vein_engine.dynamic_jobs()}
+
+
 def _gate_media() -> str | None:
     return _vein_gate("media")() or _gate_media_curation()
 
@@ -186,11 +191,13 @@ def _env_enabled(job_id: str) -> bool | None:
 
 def _gate_reason(job_id: str) -> str | None:
     gate = GATES.get(job_id)
+    if gate is None and job_id.startswith("vein_"):
+        gate = _vein_gate(job_id.removeprefix("vein_"))
     return gate() if gate else None
 
 
-def _effective(job_id: str, row: dict | None) -> dict:
-    label, default_cron, _ = REGISTRY[job_id]
+def _effective(job_id: str, row: dict | None, reg: dict | None = None) -> dict:
+    label, default_cron, _ = (reg or _registry())[job_id]
     env_cron, env_enabled = _env_cron(job_id), _env_enabled(job_id)
     cron = env_cron or (row or {}).get("cron") or default_cron
     if env_enabled is not None:
@@ -217,8 +224,9 @@ def jobs_view() -> list[dict]:
     rows = store.overrides()
     out = []
     now = datetime.now(TZ)
-    for job_id in REGISTRY:
-        j = _effective(job_id, rows.get(job_id))
+    reg = _registry()
+    for job_id in reg:
+        j = _effective(job_id, rows.get(job_id), reg)
         try:
             j["next_run"] = _next_fire(j["cron"], now).isoformat() if j["enabled"] and ENABLED else None
         except (ValueError, KeyError):
@@ -251,10 +259,24 @@ def summarize_outcome(job_id: str, result) -> str:
     if not isinstance(result, dict):
         return "Completed."
     r = result
-    label = REGISTRY[job_id][0] if job_id in REGISTRY else job_id
+    reg = _registry()
+    label = reg[job_id][0] if job_id in reg else job_id
     if r.get("disabled"):
         why = (r.get("detail") or "").strip()
         return f"Skipped: {why}" if why else "Skipped: the controlling vein or feature is off."
+
+    if job_id.startswith("vein_"):
+        if r.get("skipped"):
+            why = (r.get("detail") or r["skipped"]).strip()
+            return f"Skipped: {why}."
+        if r.get("ok") is False:
+            where = f" at {r['block']}" if r.get("block") else ""
+            why = (r.get("detail") or "").strip()
+            return f"Vein run failed{where}" + (f": {why}." if why else ".")
+        n = int(r.get("situations") or 0)
+        if not n:
+            return "Vein checked: quiet, nothing cleared the bar."
+        return f"Vein checked: {_plural(n, 'situation')}, {_plural(int(r.get('cards') or 0), 'card')} posted."
 
     if job_id == "pulse":
         state = r.get("state") or "done"
@@ -321,7 +343,11 @@ async def _fire(job_id: str, manual: bool = False):
         if gated:
             log.info("job %s skipped: %s", job_id, gated)
             return
-        handler = REGISTRY[job_id][2]
+        reg = _registry()
+        if job_id not in reg:
+            store.record_outcome(job_id, False, "skipped: the job's definition is gone")
+            return
+        handler = reg[job_id][2]
         result = await handler()
         store.record_outcome(job_id, True, summarize_outcome(job_id, result))
         log.info("job %s ok%s", job_id, " (manual)" if manual else "")
@@ -354,8 +380,13 @@ def fail_streak(job_id: str) -> int:
     return n
 
 
+def _job_label(job_id: str) -> str:
+    reg = _registry()
+    return reg[job_id][0] if job_id in reg else job_id
+
+
 def _failure_card_title(job_id: str) -> str:
-    return f"{REGISTRY[job_id][0]} keeps failing"
+    return f"{_job_label(job_id)} keeps failing"
 
 
 async def escalate_failures(job_id: str):
@@ -374,7 +405,7 @@ async def escalate_failures(job_id: str):
         return
     last_detail = next((r["detail"] for r in store.recent_runs(72) if r["job_id"] == job_id), "")
     from .pulse import _inject
-    label = REGISTRY[job_id][0]
+    label = _job_label(job_id)
     body = (f"**{label}** has failed {streak} runs in a row.\n\n"
             f"Last error: {last_detail or 'no detail recorded'}\n\n"
             "The flow's node on the Agentic canvas carries the same state.")
@@ -390,8 +421,9 @@ async def _loop():
         await asyncio.sleep(_POLL_SECONDS)
         now = datetime.now(TZ)
         rows = store.overrides()
-        for job_id in REGISTRY:
-            j = _effective(job_id, rows.get(job_id))
+        reg = _registry()
+        for job_id in reg:
+            j = _effective(job_id, rows.get(job_id), reg)
             if not j["enabled"]:
                 continue
             try:
@@ -437,7 +469,7 @@ async def list_jobs():
 
 @router.put("/scheduler/jobs/{job_id}", tags=["scheduler"])
 async def update_job(job_id: str, req: JobUpdate):
-    if job_id not in REGISTRY:
+    if job_id not in _registry():
         raise HTTPException(status_code=404, detail=f"unknown job '{job_id}'")
     if req.cron is not None:
         if not croniter.is_valid(req.cron):
@@ -454,7 +486,7 @@ async def update_job(job_id: str, req: JobUpdate):
 
 @router.post("/scheduler/jobs/{job_id}/run", tags=["scheduler"])
 async def run_job(job_id: str):
-    if job_id not in REGISTRY:
+    if job_id not in _registry():
         raise HTTPException(status_code=404, detail=f"unknown job '{job_id}'")
     gated = _gate_reason(job_id)
     if gated:

@@ -66,6 +66,8 @@ struct VeinsView: View {
     @Environment(\.openSettings) private var openSettings
     @StateObject private var veins = VeinsStore()
     @State private var editing: VeinEntry?
+    @State private var builderConfigured = false
+    @State private var builderModel: BuilderModel?
 
     // A vein's unmet requirement points at Plugins, now a Settings tab: select it, then open Settings.
     private func openPlugins() {
@@ -90,6 +92,7 @@ struct VeinsView: View {
         .background(Theme.bg)
         .task {
             veins.configure(base: config.resolved?.veraAPIBase)
+            builderConfigured = await BuilderModel.probe(base: config.resolved?.veraAPIBase)
             await veins.refresh()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
@@ -99,6 +102,10 @@ struct VeinsView: View {
         .sheet(item: $editing) { entry in
             VeinSheet(entry: entry, veins: veins,
                       openPlugins: openPlugins)
+        }
+        .sheet(item: $builderModel) { model in
+            VeinBuilderView(model: model,
+                            onCreated: { Task { await veins.refresh() } })
         }
     }
 
@@ -113,6 +120,13 @@ struct VeinsView: View {
                     .background(Theme.surface).clipShape(Capsule())
             }
             Spacer()
+            if builderConfigured, case .ready = veins.phase {
+                Button { builderModel = BuilderModel(base: config.resolved?.veraAPIBase) } label: {
+                    Label("Build a new vein", systemImage: "wand.and.stars")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(.plain).foregroundStyle(Theme.accent)
+            }
         }
         .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 8)
         .frame(maxWidth: 860, alignment: .leading)

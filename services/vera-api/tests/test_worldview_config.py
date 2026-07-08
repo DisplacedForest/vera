@@ -4,35 +4,8 @@ Covers sentinel gating, temperature-unit threshold semantics, US-region detectio
 orthogonal Mealie axes, and the neutral fallbacks. Run under pytest."""
 import pytest
 
-from routers import persona, signals, units, weather
+from routers import persona, units, weather
 from routers.kitchen import _orthogonal_categories
-
-
-# --------------------------------------------------------------------------- sentinel gating
-
-def test_sentinels_default_us_includes_us_centric_sources():
-    got = signals.enabled_sentinels(allow="", us=True, fred_key="k", eia_ok=True)
-    assert got == set(signals.COLLECTORS)
-
-
-def test_sentinels_default_non_us_drops_us_centric_sources():
-    got = signals.enabled_sentinels(allow="", us=False, fred_key="k", eia_ok=True)
-    assert got == {"usgs", "gdacs", "fred_hy", "eia_grid"}
-
-
-def test_sentinels_key_gated_sources_skip_quietly_without_keys():
-    got = signals.enabled_sentinels(allow="", us=True, fred_key="", eia_ok=False)
-    assert "fred_hy" not in got and "eia_grid" not in got
-    assert {"usgs", "gdacs", "fema", "federal_register", "treasury", "vix"} <= got
-
-
-def test_sentinels_explicit_allowlist_wins_over_region():
-    got = signals.enabled_sentinels(allow="usgs, vix", us=False, fred_key="", eia_ok=False)
-    assert got == {"usgs", "vix"}
-
-
-def test_sentinels_allowlist_ignores_unknown_names():
-    assert signals.enabled_sentinels(allow="usgs,bogus", us=True) == {"usgs"}
 
 
 # --------------------------------------------------------------------------- temperature unit
@@ -88,22 +61,13 @@ def test_unconfigured_location_is_not_us(monkeypatch):
 # --------------------------------------------------------------------------- config fallbacks
 
 def test_orientation_neutral_default(monkeypatch):
-    monkeypatch.delenv("SIGNALS_ORIENTATION", raising=False)
+    monkeypatch.delenv("WATCH_ORIENTATION", raising=False)
     assert persona.orientation() == "change what a reasonable household should know or do this week"
 
 
 def test_orientation_from_env(monkeypatch):
-    monkeypatch.setenv("SIGNALS_ORIENTATION", "shift the harvest plan")
+    monkeypatch.setenv("WATCH_ORIENTATION", "shift the harvest plan")
     assert persona.orientation() == "shift the harvest plan"
-
-
-def test_env_list_fallback_and_split(monkeypatch):
-    monkeypatch.delenv("SIGNALS_NEWS_QUERIES", raising=False)
-    assert signals._env_list("SIGNALS_NEWS_QUERIES", ["a", "b"]) == ["a", "b"]
-    monkeypatch.setenv("SIGNALS_NEWS_QUERIES", "one, with comma; two ;; three")
-    assert signals._env_list("SIGNALS_NEWS_QUERIES", []) == ["one, with comma", "two", "three"]
-
-
 def test_forecast_link_template_and_region(monkeypatch):
     monkeypatch.setattr(weather, "FORECAST_URL_TMPL", "https://example.com/{lat}/{lon}")
     assert weather._forecast_sources(1.5, 2.5)[0]["url"] == "https://example.com/1.5/2.5"

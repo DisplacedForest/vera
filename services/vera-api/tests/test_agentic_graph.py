@@ -94,7 +94,7 @@ def test_drill_in_topology():
     assert hb["stage_layout"] == "fan"
     assert [s["id"] for s in hb["stages"]] == ["learn", "refine", "propose", "watch", "foryou"]
     # Simple jobs carry no stages: the manifest decides depth.
-    assert "stages" not in _flow(out, "signals")
+    assert "stages" not in _flow(out, "memory_groom")
 
 
 def test_pulse_stage_state_idle_is_none():

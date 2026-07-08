@@ -91,6 +91,7 @@ class VeinDefinition(BaseModel):
     requires: list[Requirement] = Field(default_factory=list)
     providers: list[ProviderSlot] = Field(default_factory=list)
     options: list[OptionGroup] = Field(default_factory=list)
+    journal: bool = False
     producer_jobs: Optional[list[str]] = None
     pipeline: Optional[list[PipelineStep]] = None
     schedule: Optional[str] = None

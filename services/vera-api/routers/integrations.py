@@ -142,7 +142,7 @@ REGISTRY: dict[str, dict] = {
             {"id": "url", "env": "SEARXNG_BASE", "label": "Search endpoint", "secret": False,
              "hint": "the /search endpoint of your SearXNG instance"},
         ],
-        "unlocks": ["web search for chat, research, Pulse, and signals news"],
+        "unlocks": ["web search for chat, research, Pulse, and watcher veins"],
     },
     "embeddings": {
         "display_name": "Embeddings",

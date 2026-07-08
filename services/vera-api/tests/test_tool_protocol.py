@@ -1,6 +1,3 @@
-"""Hermes tool-calling contract — parsing, validation, and rendering are deterministic
-code; every malformed block becomes a corrective reason, never an exception. Run under
-pytest."""
 import json
 
 from routers import tool_protocol as tp
@@ -23,8 +20,6 @@ SCHEMAS = [{
 def _block(payload):
     return f"<tool_call>\n{payload}\n</tool_call>"
 
-
-# --------------------------------------------------------------------------- parsing
 
 def test_valid_call_parses():
     calls, errors = tp.parse_tool_calls(_block('{"arguments": {"query": "alpha"}, "name": "web_search"}'))
@@ -63,8 +58,6 @@ def test_no_blocks_returns_empty():
     assert tp.parse_tool_calls("") == ([], [])
 
 
-# --------------------------------------------------------------------------- rejection
-
 def test_malformed_json_rejects_deterministically():
     calls, errors = tp.parse_tool_calls(_block('{"arguments": {"query": '))
     assert calls == []
@@ -98,8 +91,6 @@ def test_mixed_valid_and_malformed_blocks():
     assert len(calls) == 1 and calls[0].arguments == {"query": "good"}
     assert len(errors) == 1
 
-
-# --------------------------------------------------------------------------- rendering
 
 def test_render_tools_embeds_schemas_verbatim():
     out = tp.render_tools(SCHEMAS)

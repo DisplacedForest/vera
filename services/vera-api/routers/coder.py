@@ -1,23 +1,3 @@
-"""Agentic tool-use for the dream/coder endpoint (any OpenAI-compatible /v1).
-
-Two tool-call transports, selected by DREAM_TOOL_PROTOCOL:
-
-  openai (default) — standard OpenAI tool calling: the request advertises `tools`, the model
-      returns `tool_calls`, and results go back as `role: "tool"` messages. Works with any
-      server that implements the spec.
-
-  hermes — the plaintext Hermes contract (tool_protocol.py) for servers that pass the
-      model's text through untouched: tools are advertised in the system prompt and the
-      reply text is parsed for <tool_call> blocks. The deprecated value `mlx` resolves to
-      `openai` (current mlx_lm.server emits native OpenAI tool_calls).
-
-Either way the loop is ours: execute the search through our SearXNG backend, feed results
-back, and continue until the model answers without a tool call (or the step budget forces a
-final answer). `web_search` is the single tool, expressed per-protocol. Everything runs on
-the coder endpoint — the integrations registry's 'coder' entry (env-seeded by DREAM_BASE /
-DREAM_MODEL / DREAM_TOOL_PROTOCOL, editable in the plugin store); the primary model server
-is never touched.
-"""
 import json
 import os
 
@@ -48,11 +28,6 @@ def _endpoint() -> tuple[str, str]:
 
 
 def tool_protocol() -> str:
-    """The active tool-call transport: 'openai' unless the coder integration's tool_protocol
-    field (pinned by DREAM_TOOL_PROTOCOL when set in env) selects the hermes text protocol.
-    The deprecated value 'mlx' resolves to 'openai': current mlx_lm.server emits native
-    OpenAI tool_calls and intercepts tool-syntax text, so the text protocol cannot round-trip
-    there. Read at call time — the one place the flag is interpreted."""
     raw = (_registry_values().get("tool_protocol") or os.environ.get("DREAM_TOOL_PROTOCOL", "")).strip().lower()
     return "hermes" if raw == "hermes" else "openai"
 
@@ -158,8 +133,6 @@ async def _chat_agent_openai(system, user, max_steps, temperature):
 
 
 async def _hermes_response(call):
-    """Execute one validated hermes call, tolerantly: an unknown tool name or unusable
-    arguments produce a corrective <tool_response>, never an exception."""
     if call.name != "web_search":
         return render_response(call.name, f"unknown tool '{call.name}' — only web_search exists")
     query = str(call.arguments.get("query") or "").strip()
@@ -170,9 +143,6 @@ async def _hermes_response(call):
 
 
 async def _chat_agent_hermes(system, user, max_steps, temperature):
-    """Hermes text-protocol loop: the tool contract is prepended to the system prompt and
-    each reply is parsed for <tool_call> blocks; a reply with none is the final answer.
-    Malformed blocks are answered with a corrective <tool_response> so the model can retry."""
     messages = [
         {"role": "system", "content": f"{render_tools(TOOLS)}\n\n{system}"},
         {"role": "user", "content": user},
@@ -181,7 +151,7 @@ async def _chat_agent_hermes(system, user, max_steps, temperature):
         text = (await _llm(messages, temperature)).get("content") or ""
         calls, errors = parse_tool_calls(text)
         if not calls and not errors:
-            return text  # final answer
+            return text
         responses = [await _hermes_response(c) for c in calls]
         responses += [render_response("error", f'{reason}; emit {{"arguments": {{...}}, "name": "..."}}')
                       for reason in errors]
@@ -189,6 +159,5 @@ async def _chat_agent_hermes(system, user, max_steps, temperature):
         messages.append({"role": "user", "content":
                          "\n".join(responses) + "\n\n"
                          "Call another tool if you still need to, or give your final answer now."})
-    # out of steps — force a final answer with no more tools
     messages.append({"role": "user", "content": "Give your final answer now — do not call the tool again."})
     return (await _llm(messages, temperature)).get("content") or ""

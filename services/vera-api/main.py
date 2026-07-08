@@ -4,6 +4,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+import data_root
+
+DATA_ROOT = data_root.apply()
+
 from routers import actions, agentic, authoring, config_report, dreaming, feedback, groom_session, health, heartbeat, home, home_events, home_model, home_reconcile, images, integrations, journal, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, memory, overseerr, pulse, pulse_veins, reminders, research, scheduler, signals, updates, user_profile, vera_memory, vera_memory_groom, weather, websearch
 
 # vera-api: ONE container, many capabilities.
@@ -34,7 +38,7 @@ VERSION = _version()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    config_report.report(VERSION)
+    config_report.report(VERSION, data_root=DATA_ROOT)
     # The home-events supervisor (starts capture only while the home_modeling feature
     # is enabled) + the built-in scheduler run for the app's lifetime.
     await home_events.start()
@@ -97,3 +101,14 @@ async def health_root():
 @app.get("/version")
 async def version():
     return {"version": VERSION}
+
+
+def serve():
+    import uvicorn
+    host = os.environ.get("VERA_BIND", "").strip() or "127.0.0.1"
+    port = int(os.environ.get("VERA_PORT", "").strip() or 8089)
+    uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    serve()

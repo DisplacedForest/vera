@@ -1,10 +1,10 @@
 """Coder-agent tool transports. The live loop is exercised at deploy; everything
-deterministic — protocol selection, the openai tool_calls loop, the mlx text-protocol
-parser — lives here. Run under pytest."""
+deterministic — protocol selection, the openai tool_calls loop, the hermes text-protocol
+loop — lives here. Run under pytest."""
 import asyncio
 import json
 
-from routers import coder
+from routers import coder, tool_protocol
 
 
 # --------------------------------------------------------------------------- protocol selection
@@ -14,30 +14,16 @@ def test_protocol_defaults_to_openai(monkeypatch):
     assert coder.tool_protocol() == "openai"
 
 
-def test_protocol_mlx_opt_in(monkeypatch):
-    monkeypatch.setenv("DREAM_TOOL_PROTOCOL", "MLX")
-    assert coder.tool_protocol() == "mlx"
+def test_protocol_hermes_opt_in(monkeypatch):
+    monkeypatch.setenv("DREAM_TOOL_PROTOCOL", "HERMES")
+    assert coder.tool_protocol() == "hermes"
     monkeypatch.setenv("DREAM_TOOL_PROTOCOL", "anything-else")
     assert coder.tool_protocol() == "openai"
 
 
-# --------------------------------------------------------------------------- mlx text parser
-
-def test_parse_inline_call():
-    text = ('I should check this.\n'
-            '<function=web_search><parameter=query>Ashvale Rovers 2025-26 final position</parameter></function>')
-    assert coder.parse_search_call(text) == "Ashvale Rovers 2025-26 final position"
-
-
-def test_parse_multiline_call_with_tool_call_wrapper():
-    text = ('<function=web_search>\n<parameter=query>\nUniFi 9.0 release notes\n</parameter>\n</function>\n</tool_call>')
-    assert coder.parse_search_call(text) == "UniFi 9.0 release notes"
-
-
-def test_no_call_returns_none():
-    assert coder.parse_search_call("Here is my final answer, no tool needed.") is None
-    assert coder.parse_search_call('{"supported": true, "reason": "confirmed"}') is None
-    assert coder.parse_search_call("") is None
+def test_protocol_mlx_is_deprecated_alias_for_hermes(monkeypatch):
+    monkeypatch.setenv("DREAM_TOOL_PROTOCOL", "mlx")
+    assert coder.tool_protocol() == "hermes"
 
 
 # --------------------------------------------------------------------------- loop harness
@@ -133,25 +119,76 @@ def test_openai_out_of_steps_forces_final_without_tools(monkeypatch):
     assert "final answer now" in final_messages[-1]["content"]
 
 
-# --------------------------------------------------------------------------- mlx strategy
+# --------------------------------------------------------------------------- hermes strategy
 
-def test_mlx_loop_uses_text_protocol(monkeypatch):
+def _hermes_call(query):
+    return f'<tool_call>\n{{"arguments": {{"query": "{query}"}}, "name": "web_search"}}\n</tool_call>'
+
+
+def test_hermes_loop_uses_text_protocol(monkeypatch):
     answer, requests = _agent(monkeypatch, [
-        {"content": "<function=web_search><parameter=query>beta</parameter></function>"},
+        {"content": _hermes_call("beta")},
         {"content": "text-protocol answer."},
-    ], protocol="mlx")
+    ], protocol="hermes")
     assert answer == "text-protocol answer."
     first_messages, first_tools = requests[0]
-    assert first_tools is None                         # mlx requests never advertise tools
-    assert first_messages[0]["content"].startswith(coder.TOOL_SYS)  # protocol prepended
+    assert first_tools is None                         # hermes requests never advertise tools
+    assert first_messages[0]["content"].startswith(tool_protocol.render_tools(coder.TOOLS))
+    assert first_messages[0]["content"].endswith("sys prompt")
     follow = requests[1][0][-1]
-    assert follow["role"] == "user" and "results for <beta>" in follow["content"]
+    assert follow["role"] == "user" and "<tool_response>" in follow["content"]
+    assert "results for <beta>" in follow["content"]
 
 
-def test_mlx_plain_reply_is_final(monkeypatch):
-    answer, requests = _agent(monkeypatch, [{"content": "no tool needed."}], protocol="mlx")
+def test_hermes_plain_reply_is_final(monkeypatch):
+    answer, requests = _agent(monkeypatch, [{"content": "no tool needed."}], protocol="hermes")
     assert answer == "no tool needed."
     assert len(requests) == 1
+
+
+def test_hermes_legacy_mlx_value_runs_the_hermes_loop(monkeypatch):
+    answer, requests = _agent(monkeypatch, [
+        {"content": _hermes_call("gamma")},
+        {"content": "done."},
+    ], protocol="mlx")
+    assert answer == "done."
+    assert "results for <gamma>" in requests[1][0][-1]["content"]
+
+
+def test_hermes_unknown_tool_gets_corrective_response(monkeypatch):
+    answer, requests = _agent(monkeypatch, [
+        {"content": '<tool_call>{"arguments": {}, "name": "frobnicate"}</tool_call>'},
+        {"content": "recovered."},
+    ], protocol="hermes")
+    assert answer == "recovered."
+    follow = requests[1][0][-1]["content"]
+    assert "unknown tool" in follow and "<tool_response>" in follow
+
+
+def test_hermes_malformed_call_gets_corrective_response(monkeypatch):
+    answer, requests = _agent(monkeypatch, [
+        {"content": '<tool_call>{"name": "web_search"}</tool_call>'},
+        {"content": "recovered."},
+    ], protocol="hermes")
+    assert answer == "recovered."
+    assert "invalid tool_call" in requests[1][0][-1]["content"]
+
+
+def test_hermes_multiple_calls_all_answered(monkeypatch):
+    answer, requests = _agent(monkeypatch, [
+        {"content": _hermes_call("one") + "\n" + _hermes_call("two")},
+        {"content": "combined."},
+    ], protocol="hermes")
+    assert answer == "combined."
+    follow = requests[1][0][-1]["content"]
+    assert "results for <one>" in follow and "results for <two>" in follow
+
+
+def test_hermes_out_of_steps_forces_final(monkeypatch):
+    looping = {"content": _hermes_call("again")}
+    answer, requests = _agent(monkeypatch, [looping, looping, looping, {"content": "forced."}], protocol="hermes")
+    assert answer == "forced."
+    assert "final answer now" in requests[-1][0][-1]["content"]
 
 
 # --------------------------------------------------------------------------- registry resolution
@@ -167,13 +204,13 @@ def test_registry_coder_entry_resolves_endpoint_and_protocol(monkeypatch, tmp_pa
     assert r["configured"] and r["enabled"]
     assert coder._endpoint() == ("http://coder.example/v1", "coder-model")
     assert coder.tool_protocol() == "openai"
-    monkeypatch.setenv("DREAM_TOOL_PROTOCOL", "mlx")
-    assert coder.tool_protocol() == "mlx"
+    monkeypatch.setenv("DREAM_TOOL_PROTOCOL", "hermes")
+    assert coder.tool_protocol() == "hermes"
 
 
 def test_env_fallback_when_registry_unconfigured(monkeypatch):
     monkeypatch.delenv("DREAM_BASE", raising=False)
     monkeypatch.delenv("DREAM_MODEL", raising=False)
-    monkeypatch.setenv("DREAM_TOOL_PROTOCOL", "mlx")
+    monkeypatch.setenv("DREAM_TOOL_PROTOCOL", "hermes")
     # no registry entry resolves -> the DREAM_* env (module fallbacks) still decides
-    assert coder.tool_protocol() == "mlx"
+    assert coder.tool_protocol() == "hermes"

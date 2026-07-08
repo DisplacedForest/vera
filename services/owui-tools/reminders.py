@@ -69,7 +69,8 @@ class Tools:
             return f"Could not reach the reminders service: {e}"
         if r.status_code != 200:
             return f"Could not add the reminder: {data.get('detail', r.status_code)}"
-        return f"Added '{title}' to {target}."
+        stored = (data.get("reminder") or {}).get("title", title)
+        return f"Added '{stored}' to {target}."
 
     def complete_reminder(self, title: str, list_name: str = "") -> str:
         """Mark an item on a Reminders list as done, matched by its title. list_name is optional when a default list is configured."""

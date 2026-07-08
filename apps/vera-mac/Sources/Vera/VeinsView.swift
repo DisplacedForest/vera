@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 /// Live state for the Veins pane — vera-api's vein catalog (manifests merged with
 /// runtime state). Cards render purely from the API; the app hardcodes no vein list,
@@ -65,6 +67,20 @@ final class VeinsStore: ObservableObject {
         }
         return []
     }
+
+    func export(_ kind: String) async -> Data? {
+        guard let client else { return nil }
+        return await client.export(kind: kind)
+    }
+
+    func importFile(_ fileBody: Data) async -> VeinImportResult {
+        guard let client else { return .failure("vera-api isn't configured") }
+        let result = await client.importVein(fileBody)
+        if case .ok = result { await refresh() }
+        return result
+    }
+
+    func entry(kind: String) -> VeinEntry? { entries.first { $0.kind == kind } }
 }
 
 /// The Veins pane — which ambient watch veins run, each scoped and scheduled to taste.
@@ -113,7 +129,11 @@ struct VeinsView: View {
         }
         .sheet(isPresented: $browsing) {
             VeinBrowseSheet(veins: veins, base: config.resolved?.veraAPIBase,
-                            builderConfigured: builderConfigured, openPlugins: openPlugins)
+                            builderConfigured: builderConfigured, openPlugins: openPlugins,
+                            onOpenVein: { entry in
+                                browsing = false
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { editing = entry }
+                            })
         }
     }
 
@@ -358,6 +378,7 @@ struct VeinSheet: View {
             HStack(spacing: 10) {
                 Button(testing ? "Testing…" : "Test") { test() }
                     .disabled(testing || saving)
+                Button("Export") { exportVein() }.disabled(saving)
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 if entry.enabled {
@@ -485,6 +506,22 @@ struct VeinSheet: View {
         }
     }
 
+    private func exportVein() {
+        Task {
+            let data = await veins.export(entry.kind)
+            await MainActor.run {
+                guard let data else { error = "Couldn't export this vein."; return }
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = "\(entry.kind).vein.json"
+                panel.allowedContentTypes = [.json]
+                panel.canCreateDirectories = true
+                guard panel.runModal() == .OK, let url = panel.url else { return }
+                do { try data.write(to: url) }
+                catch { self.error = "Couldn't save the file. \(error.localizedDescription)" }
+            }
+        }
+    }
+
     private func save(enable: Bool) {
         saving = true; error = nil
         let payload = editedPayload()
@@ -503,11 +540,15 @@ struct VeinBrowseSheet: View {
     let base: URL?
     let builderConfigured: Bool
     var openPlugins: () -> Void
+    var onOpenVein: (VeinEntry) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
 
     @State private var unexposed: [VeinEntry] = []
     @State private var loading = true
     @State private var builder: BuilderModel?
+    @State private var importing = false
+    @State private var importReview: VeinImportReview?
+    @State private var importError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -526,8 +567,13 @@ struct VeinBrowseSheet: View {
                              note: "Describe a watch in your own words and Vera drafts it.",
                              enabled: builderConfigured) { builder = BuilderModel(base: base) }
                     startRow(icon: "square.and.arrow.down", title: "Import from file",
-                             note: "Add a vein someone shared with you. Coming soon.",
-                             enabled: false) {}
+                             note: "Add a vein someone shared with you. It lands disabled for review.",
+                             enabled: !importing) { pickAndImport() }
+
+                    if let importError {
+                        Text(importError).font(.system(size: 12)).foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     if loading {
                         HStack(spacing: 8) {
@@ -559,6 +605,40 @@ struct VeinBrowseSheet: View {
                 builder = nil
                 dismiss()
             })
+        }
+        .sheet(item: $importReview) { review in
+            VeinImportReviewSheet(review: review, openPlugins: openPlugins, onDone: {
+                let entry = veins.entry(kind: review.kind)
+                importReview = nil
+                dismiss()
+                if let entry { onOpenVein(entry) }
+            })
+        }
+    }
+
+    private func pickAndImport() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [.json]
+        panel.message = "Choose a vein file to import"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        importError = nil
+        importing = true
+        Task { @MainActor in
+            defer { importing = false }
+            guard let data = try? Data(contentsOf: url),
+                  let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                importError = "That file isn't a valid vein file."
+                return
+            }
+            switch await veins.importFile(data) {
+            case .ok(let kind, let warnings):
+                importReview = VeinImportReview(definition: dict, kind: kind, warnings: warnings)
+            case .failure(let detail):
+                importError = detail
+            }
         }
     }
 
@@ -617,6 +697,115 @@ struct VeinBrowseSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+    }
+}
+
+struct VeinImportReview: Identifiable {
+    let id = UUID()
+    let definition: [String: Any]
+    let kind: String
+    let warnings: [VeinImportWarning]
+
+    var label: String { (definition["label"] as? String) ?? kind }
+    var blurb: String { (definition["blurb"] as? String) ?? "" }
+    var schedule: String { (definition["schedule"] as? String) ?? "" }
+    var blocks: [String] {
+        (definition["pipeline"] as? [[String: Any]] ?? []).compactMap { $0["block"] as? String }
+    }
+}
+
+struct VeinImportReviewSheet: View {
+    let review: VeinImportReview
+    var openPlugins: () -> Void
+    var onDone: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "square.and.arrow.down").font(.system(size: 16))
+                Text("Review import").font(.system(size: 16, weight: .semibold))
+                Spacer()
+            }
+            .padding(16)
+            Divider().overlay(Theme.hairline)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(review.label).font(.system(size: 15, weight: .semibold))
+                        if !review.blurb.isEmpty {
+                            Text(review.blurb).font(.system(size: 12))
+                                .foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    if !review.schedule.isEmpty {
+                        labeled("SCHEDULE") {
+                            Text(review.schedule).font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                    if !review.blocks.isEmpty {
+                        labeled("PIPELINE") {
+                            Text(review.blocks.joined(separator: " -> "))
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    if !review.warnings.isEmpty {
+                        labeled("WARNINGS") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(review.warnings) { w in warningRow(w) }
+                            }
+                        }
+                    }
+                    Text("This vein was added disabled. Review its settings, then enable it when you're ready.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(16)
+            }
+
+            Divider().overlay(Theme.hairline)
+            HStack {
+                Spacer()
+                Button("Done") { onDone() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+        }
+        .frame(width: 460)
+        .frame(minHeight: 300, maxHeight: 560)
+        .background(Theme.bg)
+    }
+
+    @ViewBuilder private func labeled<Content: View>(_ title: String,
+                                                     @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                .foregroundStyle(Theme.textSecondary)
+            content()
+        }
+    }
+
+    private func warningRow(_ w: VeinImportWarning) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
+            if w.type == "requirement" {
+                Text("Needs \(w.label)").font(.system(size: 12))
+                if !w.idValue.isEmpty {
+                    Button("Open Plugins") { dismiss(); openPlugins() }
+                        .buttonStyle(.plain).font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+            } else {
+                Text("Unknown block \(w.label). It stays inert until this Vera has it.")
+                    .font(.system(size: 12))
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(.orange)
     }
 }
 

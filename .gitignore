@@ -28,3 +28,5 @@ venv/
 # Agent directives — local working files, never tracked, never published
 /AGENTS.md
 /CLAUDE.md
+/.mcp.json
+/.repowise/

@@ -33,6 +33,7 @@ from . import heartbeat_store as hb
 from . import journal
 from . import structured
 from . import units
+from .tool_protocol import LOOP_RULES, loop_budget
 from . import vera_memory_store as vm
 from . import user_profile_store as up
 from . import vera_interests_store as vi
@@ -107,6 +108,7 @@ async def _ha_summary() -> str:
 
 
 DECIDE_SYS = (
+    f"{LOOP_RULES}\n\n"
     f"You're on a heartbeat for {owner()} — a private tick, just you, not a chat. This is YOUR "
     "time. Four things you can do, your call:\n"
     "1) LEARN / EXPLORE (free, and the heart of this) — be genuinely curious. Catch up on the world "
@@ -141,6 +143,7 @@ DECIDE_SYS = (
 )
 
 GROUND_SYS = (
+    f"{LOOP_RULES}\n\n"
     "You're recording what you learned, working from the numbered sources below — a careful "
     "researcher, not a pundit. RULES:\n"
     "- Every factual specific (a version number, release, date, statistic, named feature, product, "
@@ -421,10 +424,47 @@ async def _curate(items, errors):
     return done
 
 
-@router.post("/heartbeat/tick", tags=["heartbeat"])
-async def tick(req: TickRequest):
-    if os.environ.get("HEARTBEAT_ENABLED", "true").lower() == "false":
-        return {"ok": True, "disabled": True}
+def _interests_text(active_interests):
+    return "\n".join(
+        f"- {i['topic']}" + (f" — {i['stance']}" if i.get("stance") else "") for i in active_interests
+    ) or "(none yet — range freely and start forming some)"
+
+
+def _decision_prompt(now, doc, interests_txt, core, ha, dev_txt, mems, recent_txt):
+    return (
+        f"Now: {now}\n\n"
+        f"## Your HEARTBEAT.md (your standing instructions)\n{doc}\n\n"
+        f"## Your current interests (pick one to go deeper, or range onto something new)\n{interests_txt}\n\n"
+        f"## Your world-model core (what you currently believe)\n{core}\n\n"
+        f"## Live home state\n{ha}\n\n"
+        f"## Rhythm deviations right now\n{dev_txt}\n\n"
+        f"## What you know about {owner()} (memory)\n- " + ("\n- ".join(mems) if mems else "(none)") + "\n\n"
+        f"## Recent outcomes (don't repeat these)\n{recent_txt}"
+    )
+
+
+def _learn_candidates(decision):
+    picked = []
+    for item in (decision.get("learn") or [])[: loop_budget("HEARTBEAT_MAX_LEARN", 2)]:
+        topic, query = item.get("topic"), item.get("query")
+        if topic and query:
+            picked.append((topic, query))
+    return picked
+
+
+def _refine_candidate(decision, doc):
+    refine = decision.get("refine") or {}
+    new_doc = refine.get("content") if isinstance(refine, dict) else None
+    if new_doc and new_doc.strip() and new_doc.strip() != doc.strip():
+        return new_doc
+    return None
+
+
+def _proposal_target(act):
+    return (act.get("args", {}).get("data", {}) or {}).get("entity_id") or json.dumps(act.get("args", {}))
+
+
+async def _gather_context():
     now = datetime.now(TZ).strftime("%A %Y-%m-%d %H:%M %Z")
     ha = await _ha_summary()
     try:
@@ -454,34 +494,13 @@ async def tick(req: TickRequest):
         active_interests = vi.active(limit=15)
     except Exception:
         active_interests = []
-    interests_txt = "\n".join(
-        f"- {i['topic']}" + (f" — {i['stance']}" if i.get("stance") else "") for i in active_interests
-    ) or "(none yet — range freely and start forming some)"
 
-    usr = (
-        f"Now: {now}\n\n"
-        f"## Your HEARTBEAT.md (your standing instructions)\n{doc}\n\n"
-        f"## Your current interests (pick one to go deeper, or range onto something new)\n{interests_txt}\n\n"
-        f"## Your world-model core (what you currently believe)\n{core}\n\n"
-        f"## Live home state\n{ha}\n\n"
-        f"## Rhythm deviations right now\n{dev_txt}\n\n"
-        f"## What you know about {owner()} (memory)\n- " + ("\n- ".join(mems) if mems else "(none)") + "\n\n"
-        f"## Recent outcomes (don't repeat these)\n{recent_txt}"
-    )
-    decision, _ = await structured.parsed(
-        structured.repairable(_vera, [{"role": "system", "content": DECIDE_SYS},
-                                      {"role": "user", "content": usr}],
-                              temperature=0.5, think="off"),
-        structured.Decide)
-    decision = decision or {}
+    usr = _decision_prompt(now, doc, _interests_text(active_interests), core, ha, dev_txt, mems, recent_txt)
+    return now, doc, recent, usr
 
-    out = {"ok": True, "now": now, "learned": [], "refined": False, "proposed": None, "errors": []}
 
-    # 1) LEARN (free) — research + write to her world-model
-    for item in (decision.get("learn") or [])[:2]:
-        topic, query = item.get("topic"), item.get("query")
-        if not topic or not query:
-            continue
+async def _do_learn(decision, now, out):
+    for topic, query in _learn_candidates(decision):
         # Register the chosen topic as an interest and cool it down up front, so even a
         # barren topic isn't re-picked next tick (anti-fixation regardless of grounding outcome).
         vi.observe(topic, source="self", salience_bump=0.5)
@@ -501,17 +520,61 @@ async def tick(req: TickRequest):
         except Exception as e:
             out["errors"].append(f"learn {topic}: {e}")
 
+
+async def _do_refine(decision, doc, out):
+    new_doc = _refine_candidate(decision, doc)
+    if not new_doc:
+        return
+    try:
+        authoring_store.snapshot("skill:heartbeat", new_doc, "heartbeat self-refine")
+        await authoring._skill_upsert("heartbeat", "Vera Heartbeat", HB_DESC, new_doc)
+        hb.log("refine", "heartbeat")
+        out["refined"] = True
+    except Exception as e:
+        out["errors"].append(f"refine: {e}")
+
+
+async def _do_propose(act, recent, out):
+    if not (isinstance(act, dict) and act.get("verb")):
+        return
+    target = _proposal_target(act)
+    if _recently_proposed(recent, act["verb"], target):
+        out["proposed"] = "(skipped, already proposed recently)"
+        return
+    try:
+        r = await actions.propose_card(actions.ProposeCard(
+            verb=act["verb"], args=act.get("args", {}),
+            title=("Heartbeat · " + (act.get("title") or "home action"))[:60],
+            body=act.get("body") or "Proposed home action.",
+            source="heartbeat", actor="vera", kind="status", severity=act.get("severity")))
+        if r.get("ok"):
+            hb.log("propose", f"{act['verb']}:{target}", extra={"token": r.get("token")})
+            out["proposed"] = act.get("title")
+        else:
+            out["errors"].append(f"propose: {r.get('error')}")
+    except Exception as e:
+        out["errors"].append(f"propose: {e}")
+
+
+@router.post("/heartbeat/tick", tags=["heartbeat"])
+async def tick(req: TickRequest):
+    if os.environ.get("HEARTBEAT_ENABLED", "true").lower() == "false":
+        return {"ok": True, "disabled": True}
+    now, doc, recent, usr = await _gather_context()
+    decision, _ = await structured.parsed(
+        structured.repairable(_vera, [{"role": "system", "content": DECIDE_SYS},
+                                      {"role": "user", "content": usr}],
+                              temperature=0.5, think="off"),
+        structured.Decide)
+    decision = decision or {}
+
+    out = {"ok": True, "now": now, "learned": [], "refined": False, "proposed": None, "errors": []}
+
+    # 1) LEARN (free) — research + write to her world-model
+    await _do_learn(decision, now, out)
+
     # 2) REFINE (free) — rewrite her own HEARTBEAT.md
-    refine = decision.get("refine") or {}
-    new_doc = refine.get("content") if isinstance(refine, dict) else None
-    if new_doc and new_doc.strip() and new_doc.strip() != doc.strip():
-        try:
-            authoring_store.snapshot("skill:heartbeat", new_doc, "heartbeat self-refine")
-            await authoring._skill_upsert("heartbeat", "Vera Heartbeat", HB_DESC, new_doc)
-            hb.log("refine", "heartbeat")
-            out["refined"] = True
-        except Exception as e:
-            out["errors"].append(f"refine: {e}")
+    await _do_refine(decision, doc, out)
 
     # 3) CURATE (free lane) — autonomous recipe imports, post-hoc oversight via status cards
     try:
@@ -522,25 +585,7 @@ async def tick(req: TickRequest):
         out["errors"].append(f"curate: {e}")
 
     # 4) PROPOSE (gated) — stage a confirm→execute action card, with dedup
-    act = decision.get("action") or {}
-    if isinstance(act, dict) and act.get("verb"):
-        target = (act.get("args", {}).get("data", {}) or {}).get("entity_id") or json.dumps(act.get("args", {}))
-        if _recently_proposed(recent, act["verb"], target):
-            out["proposed"] = "(skipped, already proposed recently)"
-        else:
-            try:
-                r = await actions.propose_card(actions.ProposeCard(
-                    verb=act["verb"], args=act.get("args", {}),
-                    title=("Heartbeat · " + (act.get("title") or "home action"))[:60],
-                    body=act.get("body") or "Proposed home action.",
-                    source="heartbeat", actor="vera", kind="status", severity=act.get("severity")))
-                if r.get("ok"):
-                    hb.log("propose", f"{act['verb']}:{target}", extra={"token": r.get("token")})
-                    out["proposed"] = act.get("title")
-                else:
-                    out["errors"].append(f"propose: {r.get('error')}")
-            except Exception as e:
-                out["errors"].append(f"propose: {e}")
+    await _do_propose(decision.get("action") or {}, recent, out)
 
     # 5) FOR-YOU (free, per-user) — chase one person's interests this tick. Fully isolated:
     # a failure here never touches the shared self-education above.

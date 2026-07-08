@@ -1,4 +1,5 @@
 import json
+import os
 import re
 
 from pydantic import BaseModel, ValidationError
@@ -20,6 +21,26 @@ _INSTRUCTIONS = (
     "Each result arrives inside <tool_response></tool_response> tags. Never state or use a "
     "result you have not received. When no function is needed, answer directly."
 )
+
+
+LOOP_RULES = (
+    "Loop discipline, non-negotiable:\n"
+    "- Make at most one tool call per turn.\n"
+    "- A result you have not been handed does not exist: never state or use a tool result "
+    "before its <tool_response> arrives, and never cite a source you were not given.\n"
+    "- After each result, keep a short running summary of what is established so far.\n"
+    "- At the step limit, give your final answer from what is established, never from guesses."
+)
+
+
+def loop_budget(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
 
 
 def render_tools(schemas: list[dict]) -> str:

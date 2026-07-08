@@ -68,7 +68,7 @@ def test_jobs_view_covers_registry_with_next_runs():
             assert j["next_run"] is not None
 
 
-def test_outcome_recording():
+def test_outcome_recording(vein_shapes):
     store.record_outcome("vein_weather", True, "ok: 0 concerns")
     j = sch._effective("vein_weather", store.overrides()["vein_weather"])
     assert j["last_run"]["ok"] is True

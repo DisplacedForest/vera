@@ -53,8 +53,17 @@ def test_every_registry_job_is_a_flow():
 
 def test_every_registry_job_has_an_authored_face():
     # A new job must get a deliberate canvas face, not the fallback.
-    assert set(REGISTRY) <= set(agentic.FLOW_FACE)
-    assert set(agentic.FLOW_FACE) - set(REGISTRY) == {"vein_status", "vein_weather", "vein_media"}
+    assert set(agentic.FLOW_FACE) == set(REGISTRY)
+
+
+def test_vein_jobs_get_faces_from_their_definitions(vein_shapes, monkeypatch, tmp_path):
+    from routers import vein_store
+    monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "veins.json"))
+    out = _graph()
+    flow = _flow(out, "vein_weather")
+    assert flow["label"] == "Weather"
+    assert flow["icon"] == "cloud.sun"
+    assert flow["group"] == "Ambient" and flow["feeds"] == ["veins"]
 
 
 def test_feeds_reference_declared_surfaces():

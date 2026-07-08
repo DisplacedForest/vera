@@ -169,6 +169,7 @@ enum PluginOWUI {
         "grocy": ["kitchen"],
         "mealie": ["kitchen"],
         "overseerr": ["media_request"],
+        "apple_reminders": ["reminders"],
     ]
 }
 

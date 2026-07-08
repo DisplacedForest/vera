@@ -75,6 +75,11 @@ final class PluginsStore: ObservableObject {
     /// Toggle a whole plugin on/off from its card.
     func setEnabled(_ entry: PluginEntry, _ on: Bool) {
         guard let client else { return }
+        if entry.id == "apple_reminders" {
+            busy.insert(entry.id)
+            Task { await applyReminders(entry, enable: on); busy.remove(entry.id) }
+            return
+        }
         busy.insert(entry.id)
         Task {
             if let detail = await client.save(id: entry.id, enabled: on) {
@@ -85,6 +90,49 @@ final class PluginsStore: ObservableObject {
             }
             busy.remove(entry.id)
         }
+    }
+
+    /// Apple Reminders is hosted by the app itself: enabling starts the in-app EventKit
+    /// bridge (which triggers the macOS permission prompt), points vera-api at this Mac's
+    /// LAN address, and installs + attaches the OWUI tool — no URL to type, no manual paste.
+    /// Disabling reverses it and stops the listener.
+    func applyReminders(_ entry: PluginEntry, enable: Bool) async {
+        guard let client else { return }
+        if !enable {
+            _ = await client.save(id: entry.id, enabled: false)
+            RemindersBridge.shared.stop()
+            await refresh()
+            if let e = entries.first(where: { $0.id == entry.id }) { await runOWUIStep(for: e, enable: false) }
+            return
+        }
+
+        do { try RemindersBridge.shared.start() } catch {
+            self.error = "Couldn't start the reminders bridge: \(error.localizedDescription)"
+            return
+        }
+        guard let bridgeHost = reachableSelfHost() else {
+            self.error = "Couldn't determine this Mac's network address for vera-api to reach."
+            return
+        }
+        let url = "http://\(bridgeHost):\(RemindersBridge.shared.port)"
+        if let detail = await client.save(id: entry.id, fields: ["url": url], enabled: true) {
+            self.error = detail
+            return
+        }
+        await refresh()
+        // Give the permission grant a moment so the default-list guess can read the lists.
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        if let tools {
+            _ = await tools.installReminders(veraApiURL: client.base.absoluteString,
+                                             defaultList: RemindersBridge.shared.suggestedDefaultList())
+        }
+        if let e = entries.first(where: { $0.id == entry.id }) { await runOWUIStep(for: e, enable: true) }
+    }
+
+    /// The LAN address vera-api can reach this app on. When vera-api is local, loopback is fine.
+    private func reachableSelfHost() -> String? {
+        guard let client else { return nil }
+        return LANAddress.selfHost(for: client.base)
     }
 
     /// Toggle an experimental feature. `ack` must be true on a first-time enable —

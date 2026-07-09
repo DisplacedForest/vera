@@ -340,6 +340,55 @@ async def _run_situation_cluster(items, params, ctx):
     return out
 
 
+_DATA_PLACEHOLDER = re.compile(r"\{data\.([A-Za-z0-9_.]+)\}")
+
+
+def _fill_data(value: str, data) -> str:
+    def _sub(m):
+        if data is None:
+            return "N/A"
+        try:
+            leaf = _walk(data, m.group(1))
+        except ValueError:
+            return "N/A"
+        if isinstance(leaf, float) and leaf == int(leaf):
+            return str(int(leaf))
+        return str(leaf)
+    return _DATA_PLACEHOLDER.sub(_sub, value)
+
+
+async def _run_present(items, params, ctx):
+    stats = params.get("stats") or []
+    chart = params.get("chart")
+    if not stats and not chart:
+        raise BlockError("present", "params.stats or params.chart is required")
+    out = []
+    for it in items:
+        try:
+            data = json.loads(it.get("content") or "")
+        except ValueError:
+            data = None
+        cards = []
+        for tile in stats:
+            card = {}
+            for k in ("value", "label", "sub"):
+                if tile.get(k) is None:
+                    continue
+                card[k] = _fill_data(template(str(tile[k]), ctx), data)
+            if not card.get("value"):
+                card["value"] = "N/A"
+            cards.append(card)
+        fenced = []
+        if cards:
+            fenced.append("```vera:stats\n" + json.dumps({"cards": cards}) + "\n```")
+        if chart:
+            fenced.append("```vera:chart\n" + json.dumps(chart) + "\n```")
+        block_text = "\n\n".join(fenced)
+        body = (it.get("body") or "").strip()
+        out.append({**it, "body": f"{body}\n\n{block_text}" if body else block_text})
+    return out
+
+
 BLOCKS = {
     "web_search": _run_web_search,
     "http_fetch": _run_http_fetch,
@@ -348,6 +397,7 @@ BLOCKS = {
     "llm_judge": _run_llm_judge,
     "llm_compose": _run_llm_compose,
     "situation_cluster": _run_situation_cluster,
+    "present": _run_present,
 }
 
 _REQUIRED_PARAMS = {
@@ -406,6 +456,8 @@ def validate_pipeline(defn: dict) -> list[str]:
             errors.append(f"step {i}: {name} needs params.{need}")
         if name == "trip_band" and params.get("hi") is None and params.get("lo") is None:
             errors.append(f"step {i}: trip_band needs params.hi or params.lo")
+        if name == "present" and not (params.get("stats") or params.get("chart")):
+            errors.append(f"step {i}: present needs params.stats or params.chart")
     return errors
 
 

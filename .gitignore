@@ -32,3 +32,5 @@ venv/
 /.repowise/
 /.claude/
 /.vscode/
+
+.worktrees/

@@ -296,15 +296,21 @@ struct VeinChip: View {
     private var unread: Bool { vein.unread > 0 }
     private var dotColor: Color { pulseSeverityColor(vein.maxSeverity) }
 
+    private func clipped(_ text: String, max: Int = 24) -> String {
+        text.count > max ? String(text.prefix(max - 1)).trimmingCharacters(in: .whitespaces) + "…" : text
+    }
+
     var body: some View {
         HStack(spacing: 9) {
             Image(systemName: vein.icon).font(.system(size: 13, weight: .medium))
                 .foregroundStyle(unread ? Theme.textPrimary : Theme.textSecondary)
             VStack(alignment: .leading, spacing: 1) {
-                Text(vein.label).font(.system(size: 13, weight: .semibold))
+                Text(clipped(vein.label)).font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(unread ? Theme.textPrimary : Theme.textSecondary)
-                Text(unread ? "\(vein.unread) unread" : vein.nominalLabel)
+                    .lineLimit(1)
+                Text(clipped(unread ? "\(vein.unread) unread" : vein.nominalLabel))
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
             }
             if unread { Circle().fill(dotColor).frame(width: 8, height: 8) }
         }

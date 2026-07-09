@@ -430,8 +430,16 @@ struct PulseVeinView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Theme.bg.ignoresSafeArea()
+            Button(action: onClose) { EmptyView() }
+                .keyboardShortcut(.cancelAction)
+                .buttonStyle(.plain)
+                .frame(width: 0, height: 0)
+                .opacity(0)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    VeinChipRow(veins: store.pulseVeins, cards: store.pulseCards,
+                                onTap: { store.pulseVeinDetail = $0 })
+                        .padding(.bottom, 4)
                     HStack(spacing: 10) {
                         Image(systemName: vein.icon).font(.system(size: 18, weight: .semibold))
                         Text(vein.label).font(.system(size: 22, weight: .bold))

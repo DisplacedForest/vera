@@ -125,6 +125,9 @@ private struct Sidebar: View {
             } else {
                 Section {
                     Label("Pulse", systemImage: "newspaper").tag(SidebarItem.pulse)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .simultaneousGesture(TapGesture().onEnded { store.goToPulse() })
                     Label("Journal", systemImage: "book.closed").tag(SidebarItem.journal)
                     Label("Memory", systemImage: "tray.full").tag(SidebarItem.memory)
                 }

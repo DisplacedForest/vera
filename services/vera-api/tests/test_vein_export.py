@@ -186,3 +186,15 @@ def test_import_invalid_definition_422():
     with pytest.raises(HTTPException) as e:
         asyncio.run(pulse_veins.import_vein({**_watcher(schedule="whenever"), "format": vein_defs.FORMAT}))
     assert e.value.status_code == 422
+
+
+def test_raw_definition_read_is_unsanitized():
+    vein_defs.save_custom(_watcher())
+    raw = asyncio.run(pulse_veins.read_definition("rivergauge"))
+    _, exported = _export("rivergauge")
+    raw_default = raw["providers"][0]["default"]
+    assert raw_default
+    assert exported["providers"][0]["default"] in (None, "")
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(pulse_veins.read_definition("nope"))
+    assert e.value.status_code == 404

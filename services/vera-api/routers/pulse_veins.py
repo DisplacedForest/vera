@@ -321,6 +321,15 @@ async def import_vein(definition: dict):
     return {"ok": True, "kind": saved["kind"], "warnings": warnings}
 
 
+@router.get("/pulse/veins/{kind}/definition", tags=["pulse"])
+async def read_definition(kind: str):
+    from fastapi import HTTPException
+    spec = manifest(kind)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
+    return spec
+
+
 @router.put("/pulse/veins/{kind}/definition", tags=["pulse"])
 async def replace_definition(kind: str, defn: dict):
     """Replace a custom vein's definition (shipped definitions are read-only)."""

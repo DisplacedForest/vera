@@ -225,4 +225,5 @@ async def _block_weather_conditions(items, params, ctx):
     return items + [item]
 
 
-vein_engine.register("weather_conditions", _block_weather_conditions, monitor=True)
+vein_engine.register("weather_conditions", _block_weather_conditions, monitor=True,
+                     describe="emits at most one standing item when the forecast crosses the configured wind, heat, or freeze thresholds; forecast endpoint from providers.forecast_url, coordinates from env")

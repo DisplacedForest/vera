@@ -171,6 +171,7 @@ struct PulseVein: Identifiable, Hashable {
             PulseVein(kind: "status", label: "Status", icon: "gauge", order: 0, nominalLabel: "nominal"),
             PulseVein(kind: "rivergauge", label: "River gauge", icon: "water.waves", order: 1, nominalLabel: "steady"),
             PulseVein(kind: "geopolitics", label: "Geopolitics", icon: "globe", order: 2, nominalLabel: "quiet"),
+            PulseVein(kind: "orchard", label: "Orchard frost and irrigation watch", icon: "leaf", order: 3, nominalLabel: "dormant"),
         ]
     }
 }

@@ -5,7 +5,8 @@ a = Analysis(
     datas=[
         ("SOUL.md", "."),
         ("HEARTBEAT.md", "."),
-        ("veins", "veins"),
+        ("BUILDER.md", "."),
+        ("routers/leak_patterns.txt", "routers"),
         ("../../VERSION", "."),
     ],
     hiddenimports=[

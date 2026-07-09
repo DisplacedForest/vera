@@ -102,4 +102,5 @@ async def _block_service_health(items, params, ctx):
                     for r in res if not r["ok"]]
 
 
-vein_engine.register("service_health", _block_service_health, monitor=True)
+vein_engine.register("service_health", _block_service_health, monitor=True,
+                     describe="emits one standing item per currently down service from the deployment's configured health probes")

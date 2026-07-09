@@ -265,6 +265,14 @@ struct VeinsClient: Sendable {
         return data
     }
 
+    func definition(kind: String) async -> Data? {
+        var req = URLRequest(url: base.appendingPathComponent("/pulse/veins/\(kind)/definition"))
+        req.timeoutInterval = 10
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (200..<300).contains((resp as? HTTPURLResponse)?.statusCode ?? 0) else { return nil }
+        return data
+    }
+
     func importVein(_ fileBody: Data) async -> VeinImportResult {
         var req = URLRequest(url: base.appendingPathComponent("/pulse/veins/import"))
         req.httpMethod = "POST"

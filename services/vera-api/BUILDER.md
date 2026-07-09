@@ -43,6 +43,9 @@ Deciding numbers (thresholds, bands) belong in trip_band params or options the p
 - trip_band {hi, lo, field, severity}: pure math. Keeps only items whose number crosses hi or lo; severity is notice, alert, or critical. The only thing that decides a trip.
 - llm_judge {bar}: drops items that do not clear the bar. The bar completes the sentence "keep this when it ...". Relevance only; it cannot add items or numbers.
 - llm_compose {}: writes the card headline, summary, and body from what survived. Always the last step when prose quality matters.
+- situation_cluster {deepen_query}: groups surviving findings into distinct situations, one item each with a stable situation key, merging their sources and researching each situation's own query; deepen_query adds one extra research query per situation when it resolves. For multi-source watchers whose findings describe events.
+
+A deployment may register additional code-backed blocks; when present they appear under "Registered blocks on this deployment" after this document and are equally valid steps.
 
 String params may reference the vein's own configuration with {options.<id>} and {providers.<id>} placeholders. Prefer an option or provider slot over a hardcoded value whenever the person might want to tune it later: endpoints belong in providers, judgment knobs and query subjects in options.
 

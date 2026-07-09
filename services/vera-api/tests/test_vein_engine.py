@@ -674,3 +674,30 @@ def test_standing_definition_keeps_one_card_updated(monkeypatch):
 def test_compose_prompt_teaches_stats_blocks():
     assert "vera:stats" in vein_engine.COMPOSE_SYS
     assert "vera:chart" in vein_engine.COMPOSE_SYS
+
+
+def test_present_builds_stat_tiles_from_data_paths():
+    items = [{"key": "k", "title": "Reading", "body": "Composed prose.",
+              "content": json.dumps({"daily": {"tmax": [82.0, 79.5],
+                                               "time": ["2026-07-09", "2026-07-10"]}})}]
+    out = _run(vein_engine._run_present(items, {"stats": [
+        {"value": "{data.daily.tmax.0}", "label": "{data.daily.time.0}", "sub": "{options.beat}"},
+        {"value": "{data.daily.tmax.1}", "label": "{data.daily.time.1}"},
+        {"value": "{data.daily.nope.0}", "label": "missing"},
+    ]}, CTX))
+    body = out[0]["body"]
+    assert body.startswith("Composed prose.")
+    cards = json.loads(body.split("```vera:stats\n")[1].split("\n```")[0])["cards"]
+    assert cards[0] == {"value": "82", "label": "2026-07-09", "sub": "earthquakes"}
+    assert cards[1]["value"] == "79.5"
+    assert cards[2]["value"] == "N/A"
+
+
+def test_present_chart_passthrough_and_validation():
+    items = [{"key": "k", "title": "T", "content": "not json"}]
+    spec = {"series": [{"name": "level", "points": [1, 2]}]}
+    out = _run(vein_engine._run_present(items, {"chart": spec}, CTX))
+    body = out[0]["body"]
+    assert json.loads(body.split("```vera:chart\n")[1].split("\n```")[0]) == spec
+    errors = vein_engine.validate_pipeline({"pipeline": [{"block": "present"}]})
+    assert errors and "present" in errors[0]

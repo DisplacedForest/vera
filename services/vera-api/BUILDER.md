@@ -43,6 +43,7 @@ Deciding numbers (thresholds, bands) belong in trip_band params or options the p
 - trip_band {hi, lo, field, severity}: pure math. Keeps only items whose number crosses hi or lo; severity is notice, alert, or critical. The only thing that decides a trip.
 - llm_judge {bar}: drops items that do not clear the bar. The bar completes the sentence "keep this when it ...". Relevance only; it cannot add items or numbers.
 - llm_compose {}: writes the card headline, summary, and body from what survived. Always the last step when prose quality matters.
+- present {stats, chart}: deterministically writes the card's stat tiles and chart. stats is a list of {value, label, sub} tiles whose strings may use {data.<path>} (a dotted path into the JSON the source step fetched), {options.<id>}, and {providers.<id>}; chart is passed through verbatim as the card's chart spec. Nothing executes; an unresolved path renders N/A. Place it after llm_compose when prose is also wanted, or alone for a pure tile card.
 - situation_cluster {deepen_query}: groups surviving findings into distinct situations, one item each with a stable situation key, merging their sources and researching each situation's own query; deepen_query adds one extra research query per situation when it resolves. For multi-source watchers whose findings describe events.
 
 A deployment may register additional code-backed blocks; when present they appear under "Registered blocks on this deployment" after this document and are equally valid steps.
@@ -51,7 +52,7 @@ String params may reference the vein's own configuration with {options.<id>} and
 
 ## Dashboards versus watches
 
-A watch or monitor stays quiet until something crosses its bar. When the person wants something always visible (a running figure, a daily digest tile, a status readout), set "standing": true on the definition and use a source step that emits every run (http_fetch is the usual one): the engine then keeps exactly one card per situation permanently present, updating it in place when the content changes and leaving it untouched when it does not. For tile-style presentation, instruct llm_compose through its style param to include a vera:stats block with the finding's numbers.
+A watch or monitor stays quiet until something crosses its bar. When the person wants something always visible (a running figure, a daily digest tile, a status readout), set "standing": true on the definition and use a source step that emits every run (http_fetch is the usual one): the engine then keeps exactly one card per situation permanently present, updating it in place when the content changes and leaving it untouched when it does not. For tile-style or chart presentation, add a present step with tiles mapped from the data by path; a style hint to llm_compose is the fallback when an authored spec is not worth it.
 
 Describe a block's behavior only from its palette entry above or its registered note; when the entry does not say, say you are unsure rather than improvising semantics.
 

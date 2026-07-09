@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from routers import pulse, pulse_store, vein_builder, vein_engine_store
+from routers import pulse, pulse_store, vein_builder, vein_engine, vein_engine_store
 
 
 @pytest.fixture(autouse=True)
@@ -136,3 +136,16 @@ def test_status_probe_reports_configured(monkeypatch):
     assert asyncio.run(vein_builder.status()) == {"configured": True}
     monkeypatch.setattr(pulse, "VERA_BASE", "")
     assert asyncio.run(vein_builder.status()) == {"configured": False}
+
+
+def test_builder_prompt_lists_registered_blocks(monkeypatch):
+    async def custom(items, params, ctx):
+        return items
+    vein_engine.register("tide_gauge", custom, describe="reads the tide gauge feed")
+    try:
+        prompt = vein_builder.builder_prompt()
+        assert "Registered blocks on this deployment" in prompt
+        assert "tide_gauge: reads the tide gauge feed" in prompt
+    finally:
+        vein_engine.BLOCKS.pop("tide_gauge", None)
+        vein_engine.BLOCK_NOTES.pop("tide_gauge", None)

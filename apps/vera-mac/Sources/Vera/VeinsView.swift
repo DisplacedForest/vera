@@ -81,6 +81,11 @@ final class VeinsStore: ObservableObject {
         return await client.export(kind: kind)
     }
 
+    func definition(_ kind: String) async -> Data? {
+        guard let client else { return nil }
+        return await client.definition(kind: kind)
+    }
+
     func importFile(_ fileBody: Data) async -> VeinImportResult {
         guard let client else { return .failure("vera-api isn't configured") }
         let result = await client.importVein(fileBody)
@@ -578,7 +583,7 @@ struct VeinSheet: View {
     private func editDefinition() {
         error = nil
         Task {
-            guard let data = await veins.export(entry.kind),
+            guard let data = await veins.definition(entry.kind),
                   let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
                 error = "Couldn't load this vein's definition to edit."
                 return

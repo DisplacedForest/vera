@@ -353,11 +353,15 @@ _REQUIRED_PARAMS = {
 
 MONITOR_BLOCKS: set[str] = {"trip_band", "situation_cluster"}
 
+BLOCK_NOTES: dict[str, str] = {}
 
-def register(name: str, runner, monitor: bool = False) -> None:
+
+def register(name: str, runner, monitor: bool = False, describe: str = "") -> None:
     BLOCKS[name] = runner
     if monitor:
         MONITOR_BLOCKS.add(name)
+    if describe:
+        BLOCK_NOTES[name] = describe
 
 
 def load_block_modules() -> list[str]:

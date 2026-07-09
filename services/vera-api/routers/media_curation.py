@@ -164,7 +164,9 @@ async def _block_media_digest(items, params, ctx):
              "items": await _build_digest_items(rows)}]
 
 
-vein_engine.register("media_candidates", _block_media_candidates)
-vein_engine.register("media_digest", _block_media_digest)
+vein_engine.register("media_candidates", _block_media_candidates,
+                     describe="emits one item per media candidate from the connected media server's discovery, deduplicated against past decisions")
+vein_engine.register("media_digest", _block_media_digest,
+                     describe="collapses judged media candidates into one weekly digest item with per row add or skip actions; params: cap")
 
 

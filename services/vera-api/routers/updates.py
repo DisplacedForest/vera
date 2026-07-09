@@ -284,4 +284,5 @@ async def _block_stack_updates(items, params, ctx):
     return items + [item]
 
 
-vein_engine.register("stack_updates", _block_stack_updates, monitor=True)
+vein_engine.register("stack_updates", _block_stack_updates, monitor=True,
+                     describe="emits one standing item summarizing pending component updates from the connected integrations, with per row apply actions")

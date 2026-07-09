@@ -32,8 +32,26 @@ def _skill_text() -> str:
     return _FALLBACK
 
 
+_DOCUMENTED_BLOCKS = {"web_search", "http_fetch", "ha_state", "trip_band",
+                      "llm_judge", "llm_compose", "situation_cluster"}
+
+
+def _registered_palette() -> str:
+    extras = [n for n in sorted(vein_engine.BLOCKS) if n not in _DOCUMENTED_BLOCKS]
+    if not extras:
+        return ""
+    lines = [f"- {n}: {vein_engine.BLOCK_NOTES[n]}" if n in vein_engine.BLOCK_NOTES else f"- {n}"
+             for n in extras]
+    return ("\n\n## Registered blocks on this deployment\n\n"
+            "These code-backed blocks are also valid pipeline steps here, exactly like the "
+            "palette above (they take no params unless their note says otherwise; never "
+            "remove one from a working pipeline in favor of a generic reconstruction):\n"
+            + "\n".join(lines))
+
+
 def builder_prompt() -> str:
-    return _skill_text().replace("<<SCHEMA>>", json.dumps(vein_schema.json_schema()))
+    return (_skill_text().replace("<<SCHEMA>>", json.dumps(vein_schema.json_schema()))
+            + _registered_palette())
 
 
 async def _vera(messages, **kw):

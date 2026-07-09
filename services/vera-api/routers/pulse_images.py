@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 import aiohttp
 
 from .images import ImageSearchRequest, search as image_search
-from .pulse_llm import OWUI_BASE, OWUI_KEY
+from .pulse_llm import OWUI_BASE, OWUI_KEY, _request_json
 
 log = logging.getLogger("vera.pulse")
 
@@ -86,10 +86,7 @@ async def _gen_image(prompt, style, idx):
     try:
         proto = image_protocol()
         path, payload = _image_request(prompt, style, idx, proto)
-        async with aiohttp.ClientSession() as s:
-            async with s.post(f"{_image_base()}{path}", json=payload,
-                              timeout=aiohttp.ClientTimeout(total=1200)) as r:
-                d = await r.json()
+        d = await _request_json("POST", f"{_image_base()}{path}", timeout=1200, json=payload)
         b64 = _image_b64(d, proto)
         if not b64:
             return None, None
@@ -119,14 +116,8 @@ async def _upload_image(img_bytes, filename, content_type="image/png"):
     """Upload an image to OWUI files → its content URL (or None)."""
     form = aiohttp.FormData()
     form.add_field("file", img_bytes, filename=filename, content_type=content_type)
-    async with aiohttp.ClientSession() as s:
-        async with s.post(
-            f"{OWUI_BASE}/api/v1/files/",
-            headers={"Authorization": f"Bearer {OWUI_KEY}"},
-            data=form,
-            timeout=aiohttp.ClientTimeout(total=60),
-        ) as r:
-            obj = await r.json()
+    obj = await _request_json("POST", f"{OWUI_BASE}/api/v1/files/", timeout=60,
+                              headers={"Authorization": f"Bearer {OWUI_KEY}"}, data=form)
     fid = obj.get("id")
     return f"{OWUI_BASE}/api/v1/files/{fid}/content" if fid else None
 

@@ -59,6 +59,9 @@ struct VeinEntry: Identifiable, Hashable, Sendable {
     var jobs: [VeinJob]
     var exposed: Bool = true
     var requiresUnmet: [VeinRequirement] = []
+    var origin: String = "custom"
+
+    var isCustom: Bool { origin == "custom" }
 
     /// Tolerant decode of one catalog entry. Unknown fields degrade to blanks, never fake data.
     static func parse(_ j: [String: Any]) -> VeinEntry? {
@@ -115,7 +118,8 @@ struct VeinEntry: Identifiable, Hashable, Sendable {
                          enabled: (j["enabled"] as? Bool) ?? false,
                          canEnable: (j["can_enable"] as? Bool) ?? false,
                          requires: requires, providers: providers, options: options, jobs: jobs,
-                         exposed: (j["exposed"] as? Bool) ?? true, requiresUnmet: requiresUnmet)
+                         exposed: (j["exposed"] as? Bool) ?? true, requiresUnmet: requiresUnmet,
+                         origin: (j["origin"] as? String) ?? "custom")
     }
 
     static func mock() -> [VeinEntry] {
@@ -219,6 +223,17 @@ struct VeinsClient: Sendable {
         req.timeoutInterval = 10
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let code = (resp as? HTTPURLResponse)?.statusCode else { return "vera-api unreachable" }
+        if (200..<300).contains(code) { return nil }
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (json?["detail"] as? String) ?? "HTTP \(code)"
+    }
+
+    func delete(kind: String) async -> String? {
+        var req = URLRequest(url: base.appendingPathComponent("/pulse/veins/\(kind)"))
+        req.httpMethod = "DELETE"
+        req.timeoutInterval = 10
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               let code = (resp as? HTTPURLResponse)?.statusCode else { return "vera-api unreachable" }
         if (200..<300).contains(code) { return nil }

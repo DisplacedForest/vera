@@ -33,7 +33,7 @@ struct VeinBuilderView: View {
     private var header: some View {
         HStack(spacing: 10) {
             Image(systemName: "wand.and.stars").font(.system(size: 16)).foregroundStyle(Theme.accent)
-            Text("Build a new vein").font(.system(size: 16, weight: .semibold))
+            Text(model.isEditing ? "Edit definition" : "Build a new vein").font(.system(size: 16, weight: .semibold))
             Spacer()
         }
         .padding(16)
@@ -89,6 +89,11 @@ struct VeinBuilderView: View {
 
     private var canSend: Bool {
         !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !model.sending
+    }
+
+    private var saveTitle: String {
+        if model.isEditing { return model.creating ? "Saving…" : "Save changes" }
+        return model.creating ? "Creating…" : "Create vein"
     }
 
     private func sendInput() {
@@ -313,10 +318,10 @@ struct VeinBuilderView: View {
             }
             .keyboardShortcut(.cancelAction)
             Spacer()
-            if model.kindConflict {
+            if model.kindConflict && !model.isEditing {
                 Text("That name is taken. Rename it above.").font(.system(size: 12)).foregroundStyle(.orange)
             }
-            Button(model.creating ? "Creating…" : "Create vein") {
+            Button(saveTitle) {
                 model.onCreated = { dismiss(); onCreated() }
                 model.create()
             }

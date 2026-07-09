@@ -335,12 +335,15 @@ final class BuilderModel: ObservableObject, Identifiable {
         transcript.append(BuilderTranscriptEntry(role: "user", content: trimmed))
         sending = true
         error = nil
-        let history = transcript.map { ["role": $0.role, "content": $0.content] }
-            .dropLast().map { $0 } + [["role": "user", "content": content]]
+        let history = historyPayload().dropLast().map { $0 } + [["role": "user", "content": content]]
         Task {
             await self.turn(history)
             self.sending = false
         }
+    }
+
+    private func historyPayload() -> [[String: String]] {
+        transcript.map { ["role": $0.role == "event" ? "user" : $0.role, "content": $0.content] }
     }
 
     private func turn(_ messages: [[String: String]]) async {
@@ -410,6 +413,24 @@ final class BuilderModel: ObservableObject, Identifiable {
             }
             let errs = (j["errors"] as? [String]) ?? []
             self.error = errs.isEmpty ? nil : errs.joined(separator: "\n")
+            let steps = self.stepTrace.map { "\($0.block) \($0.items)" }.joined(separator: ", ")
+            let stepsNote = steps.isEmpty ? "" : " Steps: \(steps)."
+            if errs.isEmpty {
+                let titles = self.wouldPost.map(\.title).joined(separator: "; ")
+                let outcome = self.wouldPost.isEmpty
+                    ? "Dry run finished: nothing would post (the quiet state)."
+                    : "Dry run finished: would post \(self.wouldPost.count) card\(self.wouldPost.count == 1 ? "" : "s"): \(titles)."
+                self.transcript.append(BuilderTranscriptEntry(role: "event", content: outcome + stepsNote))
+            } else {
+                self.transcript.append(BuilderTranscriptEntry(
+                    role: "event",
+                    content: "Dry run failed: \(errs.joined(separator: "; ")).\(stepsNote) Revise the draft to fix this."))
+                if !self.sending {
+                    self.sending = true
+                    await self.turn(self.historyPayload())
+                    self.sending = false
+                }
+            }
         }
     }
 

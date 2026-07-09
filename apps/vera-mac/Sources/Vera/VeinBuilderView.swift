@@ -74,17 +74,31 @@ struct VeinBuilderView: View {
         }
     }
 
+    @ViewBuilder
     private func transcriptRow(_ entry: BuilderTranscriptEntry) -> some View {
-        VStack(alignment: entry.role == "user" ? .trailing : .leading, spacing: 2) {
-            Text(entry.role == "user" ? "You" : "Vera")
-                .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-            Text(entry.content).font(.system(size: 13))
-                .padding(10)
-                .background(entry.role == "user" ? Theme.userBubble.opacity(0.18) : Theme.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .fixedSize(horizontal: false, vertical: true)
+        if entry.role == "event" {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "bolt.horizontal").font(.system(size: 9)).padding(.top, 2)
+                Text(entry.content).font(.system(size: 11))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(Theme.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 2)
+        } else {
+            VStack(alignment: entry.role == "user" ? .trailing : .leading, spacing: 2) {
+                Text(entry.role == "user" ? "You" : "Vera")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                Text(entry.content).font(.system(size: 13))
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .background(entry.role == "user" ? Theme.userBubble.opacity(0.18) : Theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: entry.role == "user" ? .trailing : .leading)
         }
-        .frame(maxWidth: .infinity, alignment: entry.role == "user" ? .trailing : .leading)
     }
 
     private var canSend: Bool {
@@ -259,6 +273,7 @@ struct VeinBuilderView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if let err = model.error {
                         Text(err).font(.system(size: 12)).foregroundStyle(.red)
+                            .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if model.dryRanOnce && model.wouldPost.isEmpty && model.error == nil {
@@ -280,8 +295,10 @@ struct VeinBuilderView: View {
     private func previewCard(_ card: WouldPostCard) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(card.title).font(.system(size: 13, weight: .semibold))
+                .textSelection(.enabled)
             if !card.summary.isEmpty {
                 Text(card.summary).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

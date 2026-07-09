@@ -4,20 +4,16 @@ One endpoint, POST /pulse/run, does the whole pipeline:
   cleanup sweep -> gather memories -> triage (Vera) -> per-topic search + synthesize
   -> inject one card per topic into the Pulse store.
 
-The scheduler's only job is to trigger this each morning. All logic lives here, in Python.
+The scheduler's only job is to trigger this each morning.
 """
 
 import asyncio
-import base64
-import json
 import logging
 import os
 import re
 import time
 import uuid
 from datetime import datetime
-from urllib.parse import urljoin
-from zoneinfo import ZoneInfo
 
 import aiohttp
 from fastapi import APIRouter
@@ -25,23 +21,42 @@ from pydantic import BaseModel
 
 from . import pulse_veins
 from . import pulse_store as store
-from . import structured
 from . import user_profile_store as up
 from . import vera_interests_store as vi
-from .persona import think_kwargs, voiced
-from .images import ImageSearchRequest, search as image_search
-from .websearch import SearchRequest, search as web_search
+from . import pulse_llm
+from . import pulse_images
+from . import pulse_gates
+from . import pulse_synthesis
+from . import pulse_audit
+from .websearch import search as web_search
+from .pulse_llm import (
+    OWUI_BASE, OWUI_KEY, VERA_BASE, MODEL, TZ,
+    _vera, _chat_payload, _headers, _get_memories, _active_users, _parse_template_kwargs,
+)
+from .pulse_images import (
+    VERA_IMAGE_BASE, STYLE_PALETTE, IMAGE_SYS,
+    image_protocol, _image_base, _image_registry, _image_request, _image_b64,
+    _gen_image, _gather_images, _upload_image, _clean_caption, _vision, make_cover,
+)
+from .pulse_gates import (
+    already_covered, is_stale_news, is_off_topic, _recent_for_user,
+    _newest_published, _corpus_overview, _gate_kind, _GATE_MARKERS,
+    DEDUP_SYS, FRESH_SYS, COHERENT_SYS,
+)
+from .pulse_synthesis import (
+    TRIAGE_SYS, TRIAGE_RETRY, THREAD_SYS, CARD_SYS, SUMMARY_SYS,
+    _numbered_corpus, _split_headline, _parse_threads, _synthesis_user_prompt,
+    _select_topics, _triage, _source_adder,
+    _collect_broad_sources, _deepen_sources, _synthesize_body, _summarize,
+)
+from .pulse_audit import (
+    AUDIT_SYS, REVISE_SYS, _auditor, _parse_audit, audit_claims, _audit_hook, _audit_phase,
+)
 
 router = APIRouter()
 log = logging.getLogger("vera.pulse")
 
-OWUI_BASE = os.environ.get("OWUI_BASE", "").rstrip("/")          # Open WebUI (memory, chat promotion)
-OWUI_KEY = os.environ.get("OWUI_KEY", "")
-VERA_BASE = os.environ.get("VERA_BASE", "").rstrip("/")          # main LLM, any OpenAI-compatible /v1
-MODEL = os.environ.get("VERA_MODEL", "")
 DEFAULT_FOLDER = os.environ.get("PULSE_FOLDER_ID", "")
-VERA_IMAGE_BASE = os.environ.get("VERA_IMAGE_BASE", "")          # optional image-gen service; cards skip cover art without it
-TZ = ZoneInfo(os.environ.get("HOME_TZ", "UTC"))  # untouched cards expire the day after creation (ChatGPT-Pulse daily freshness)
 
 # The delivery contract per run: keep re-triaging (bounded rounds) until at least the floor
 # of NOVEL cards lands; the ceiling caps a run no matter how much looks interesting. The
@@ -60,57 +75,7 @@ PULSE_MAX_PER_INTEREST = int(os.environ.get("PULSE_MAX_PER_INTEREST", "1"))
 AUDIT_WAKE_URL = os.environ.get("AUDIT_WAKE_URL", "").strip()
 AUDIT_RELEASE_URL = os.environ.get("AUDIT_RELEASE_URL", "").strip()
 
-# Image generation resolves through the integrations registry's 'image_gen' entry
-# (env-seeded by VERA_IMAGE_BASE / IMAGE_PROTOCOL, editable in the plugin store) — the
-# same pattern as the coder's tool protocol. Protocol: the standard OpenAI Images API
-# unless 'vera' selects the bespoke reference contract (style/steps/seed determinism +
-# the vision pause/resume extension).
-def _image_registry() -> dict:
-    try:
-        from . import integrations
-        return integrations.integration("image_gen") or {}
-    except Exception:
-        return {}
-
-
-def _image_base() -> str:
-    """The image endpoint base — registry value, else VERA_IMAGE_BASE directly."""
-    return (_image_registry().get("url") or VERA_IMAGE_BASE).rstrip("/")
-
-
-def image_protocol() -> str:
-    """The active image protocol: 'openai' unless the image_gen integration's protocol
-    field (pinned by IMAGE_PROTOCOL when set in env) says 'vera'. Read at call time —
-    the one place the flag is interpreted."""
-    raw = _image_registry().get("protocol") or os.environ.get("IMAGE_PROTOCOL", "")
-    return "vera" if raw.strip().lower() == "vera" else "openai"
-
-
-def _parse_template_kwargs() -> dict | None:
-    """Server-specific chat-template options (VERA_CHAT_TEMPLATE_KWARGS, JSON object —
-    e.g. a hybrid-thinking toggle on llama.cpp/vLLM). Unset/invalid/empty means the
-    chat request stays pure OpenAI: the field is omitted entirely."""
-    raw = os.environ.get("VERA_CHAT_TEMPLATE_KWARGS", "").strip()
-    if not raw:
-        return None
-    try:
-        v = json.loads(raw)
-    except ValueError:
-        return None
-    return v if isinstance(v, dict) and v else None
-
-
 CHAT_TEMPLATE_KWARGS = _parse_template_kwargs()
-
-# Rotated per card so the feed feels fresh (ChatGPT-Pulse varies art styles deliberately).
-STYLE_PALETTE = [
-    "photorealistic product photography, soft natural daylight, shallow depth of field",
-    "clean single continuous-line art on warm cream paper, minimal",
-    "soft painterly gouache illustration, muted earthy palette",
-    "mixed-media collage, torn paper and natural textures, editorial",
-    "isometric 3D miniature diorama, tilt-shift, soft studio light",
-    "flat vector illustration, bold simple shapes, muted retro palette",
-]
 
 
 class PulseRequest(BaseModel):
@@ -120,32 +85,6 @@ class PulseRequest(BaseModel):
     sweep_only: bool = False  # run just the cleanup sweep, skip generation
     user_id: str | None = None    # who this briefing is for (defaults to the household owner)
     user_name: str | None = None  # display name for the briefing voice
-
-
-def _headers():
-    return {"Authorization": f"Bearer {OWUI_KEY}", "Content-Type": "application/json"}
-
-
-def _chat_payload(messages, temperature, think=None) -> dict:
-    """The /chat/completions body — pure OpenAI unless template kwargs are configured.
-    An explicit `think` mode ("on"/"off") resolves per-mode kwargs via persona.think_kwargs;
-    no mode means the global kwargs."""
-    p = {"model": MODEL, "stream": False, "temperature": temperature, "messages": messages}
-    kwargs = think_kwargs(think) if think else CHAT_TEMPLATE_KWARGS
-    if kwargs:
-        p["chat_template_kwargs"] = kwargs
-    return p
-
-
-async def _vera(messages, temperature=0.4, think=None):
-    async with aiohttp.ClientSession() as s:
-        async with s.post(
-            f"{VERA_BASE}/chat/completions",
-            json=_chat_payload(messages, temperature, think),
-            timeout=aiohttp.ClientTimeout(total=300),
-        ) as r:
-            d = await r.json()
-    return d["choices"][0]["message"]["content"]
 
 
 def _marker_body(c):
@@ -226,563 +165,27 @@ async def _inject(title, body, folder_id=None, image_url=None, tint=None, source
     return {"ok": True, "id": cid}
 
 
-async def _get_memories():
-    async with aiohttp.ClientSession() as s:
-        async with s.get(
-            f"{OWUI_BASE}/api/v1/memories/",
-            headers=_headers(),
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as r:
-            return await r.json()
-
-
-TRIAGE_SYS = (
-    'You\'re planning {who}\'s proactive morning briefing ("Pulse") for {today}. '
-    "From their standing interests and what you know about them, pick AT MOST {n} topics "
-    "genuinely worth briefing on today. Quality over quantity, and SPREAD: never two topics "
-    "serving the same interest. If nothing is genuinely worth surfacing, return an empty "
-    "list. No filler. For each topic give a concise web search query that surfaces the "
-    "latest on it, and name the standing interest it serves (copied verbatim from the list, "
-    "or null when it serves none). Return ONLY JSON: "
-    '{{"topics":[{{"title":"short card title","angle":"why it matters today",'
-    '"query":"web search query","interest":"the standing interest it serves or null"}}]}}.'
-)
-
-TRIAGE_RETRY = (
-    "\n\nEverything in the excluded list above is already covered. Do NOT propose a rewording "
-    "of any of them — branch instead: an adjacent subject, a different facet of an interest, "
-    "or a genuinely new development."
-)
-
-_TRIAGE_TEMPS = (0.4, 0.7, 0.9)  # hotter each round to break convergence on the same proposals
-
-THREAD_SYS = (
-    "Today is {today}. You're planning how to deepen one Pulse briefing into real research. "
-    "From the topic and corpus, identify the 2-4 SPECIFIC threads most worth digging into: "
-    "concrete entities, claims, numbers, or people that deserve expansion (e.g. a record transfer fee, "
-    "a named signing, a release statistic, a key person). Only include a thread if there is genuinely more "
-    "worth knowing; return fewer, or an empty list, if the corpus already covers it. For each thread give a "
-    "focused web search query that would surface details and statistics. "
-    'Return ONLY JSON: {{"threads":[{{"focus":"what to deepen","query":"search query"}}]}}.'
-)
-
-CARD_SYS = (
-    "Today is {today}. Write one deep-research Pulse briefing for {who}, in the first person, "
-    "like a sharp analyst who knows them.\n"
-    "FIRST line of your output: 'HEADLINE: ' followed by a short card headline derived from the "
-    "sources. Every person, organization, and competition named in the headline must appear in "
-    "the numbered sources verbatim — when the sources disagree with the topic title you were "
-    "given, the sources win. Then a blank line, then the briefing.\n"
-    "Open the briefing with ONE sentence beginning 'I'm surfacing this because' that says why it matters to them today.\n"
-    "Then write the briefing as GitHub-flavored markdown. Expand the key claims with concrete numbers, names, "
-    "dates, and context drawn ONLY from the numbered sources. Do not invent facts; people, organizations, and "
-    "competition names may be used only as they appear in the sources. Current-state attributions — who "
-    "holds a role, who manages, who employs whom — may be stated only when a numbered source establishes "
-    "them as current; otherwise leave the holder unnamed. When a claim is notable "
-    "(a record, a stat, a named person), say the actual figure or detail rather than gesturing at it.\n"
-    "Anchor the briefing in time: state when events happened, prefer the most recent sources when they "
-    "conflict, and never present a dated event as current. Every dated event gets an absolute date — "
-    "month and year (e.g. 'in January 2025'), never a bare month or 'recently'. If everything in the "
-    "sources predates today by a season or more, present the briefing as background or a retrospective, "
-    "not as news.\n"
-    "End EVERY paragraph with citation references to the sources you used for it, in square brackets: [2] or [1,4].\n"
-    "Close with a short 'so what' paragraph: the implication, or what to watch next.\n"
-    "Let depth follow the evidence. Write only as many paragraphs as the sources genuinely support (hard ceiling: "
-    "9). Never pad to reach a length; a tight 3-paragraph brief beats a padded one.\n"
-    "When the material is genuinely quantitative, present it by shape (at most one or two blocks, only when they "
-    "beat prose; never decorate): comparing the same metrics across 2+ ENTITIES -> a GitHub-flavored markdown "
-    "table; tracking ONE metric across an ordered SEQUENCE (seasons, months, years) -> a chart, not a table. If "
-    "you catch yourself listing a metric season-by-season, emit a chart:\n"
-    "```vera:chart\n"
-    "{{\"type\":\"bar|line|groupedBar\",\"title\":\"...\",\"yLabel\":\"goals\",\"series\":[{{\"name\":\"Openda\",\"points\":[{{\"x\":\"23-24\",\"y\":14}}]}}]}}\n"
-    "```\n"
-    "OR stat cards for 2-4 headline numbers as a fenced block:\n"
-    "```vera:stats\n"
-    "{{\"cards\":[{{\"value\":\"33\",\"label\":\"goals\",\"sub\":\"69 games\"}}]}}\n"
-    "```\n"
-    "Use real values only.\n"
-    "{img_instr}"
-    "Output only the briefing markdown. No title heading, no separate Sources list (the app renders sources)."
-)
-
-IMAGE_SYS = (
-    "You write a single vivid image prompt for a briefing card's cover art. Given the card, output ONE "
-    "sentence describing a concrete subject/scene that captures its vibe — objects, setting, mood, light. "
-    "Ground the scene in what the story is actually about. Disambiguate proper nouns: an organization, "
-    "team, or place whose name contains a common noun must be depicted as that entity's world (a football "
-    "club named after a forest gets a stadium scene, never trees). "
-    "No text, words, letters, logos, charts, or UI in the image. No art-style words (style is set separately). "
-    "Output only the sentence."
-)
-
-SUMMARY_SYS = (
-    "Summarize this briefing for a card preview. ONE complete sentence, max 28 words, plain text only "
-    "(no markdown, no links, no quotes). It must read as a finished sentence, not a fragment. Output only it."
-)
-
-
-def _image_request(prompt, style, idx, protocol) -> tuple[str, dict]:
-    """(path, payload) for the given image protocol. openai: the standard Images API —
-    style folds into the prompt text; seed/steps determinism is a vera-protocol feature."""
-    if protocol == "vera":
-        return "/generate", {"prompt": prompt, "style": style, "width": 1024, "height": 768,
-                             "steps": 20, "seed": 1000 + idx}
-    full = f"{prompt}. Art style: {style}." if style else prompt
-    return "/v1/images/generations", {"prompt": full, "size": "1024x768", "n": 1,
-                                      "response_format": "b64_json"}
-
-
-def _image_b64(d: dict, protocol) -> str | None:
-    """The base64 image out of either protocol's response shape (None if absent)."""
-    if protocol == "vera":
-        return d.get("image_base64")
-    data = d.get("data") or []
-    return (data[0] or {}).get("b64_json") if data else None
-
-
-async def _gen_image(prompt, style, idx):
-    """Call the image-gen endpoint → returns (content_url, tint) or (None, None). The card
-    tint only exists in the vera protocol's response; openai-mode cards tint client-side."""
-    try:
-        proto = image_protocol()
-        path, payload = _image_request(prompt, style, idx, proto)
-        async with aiohttp.ClientSession() as s:
-            async with s.post(f"{_image_base()}{path}", json=payload,
-                              timeout=aiohttp.ClientTimeout(total=1200)) as r:
-                d = await r.json()
-        b64 = _image_b64(d, proto)
-        if not b64:
-            return None, None
-        png = base64.b64decode(b64)
-        url = await _upload_image(png, f"pulse-{idx}.png")
-        return url, d.get("dominant")
-    except Exception:
-        return None, None
-
-
-async def _vision(pause: bool):
-    """The vera image protocol's vision pause/resume extension: ask the image service to
-    pause / resume its resident vision model around a generation batch, per that contract.
-    The standard Images API has no such concept, so this is a no-op in openai mode.
-    Best-effort — never blocks the run."""
-    if image_protocol() != "vera":
-        return
-    try:
-        async with aiohttp.ClientSession() as s:
-            await s.post(f"{_image_base()}/vision/{'pause' if pause else 'resume'}",
-                         timeout=aiohttp.ClientTimeout(total=40))
-    except Exception:
-        pass
-
-
-async def _upload_image(img_bytes, filename, content_type="image/png"):
-    """Upload an image to OWUI files → its content URL (or None)."""
-    form = aiohttp.FormData()
-    form.add_field("file", img_bytes, filename=filename, content_type=content_type)
-    async with aiohttp.ClientSession() as s:
-        async with s.post(
-            f"{OWUI_BASE}/api/v1/files/",
-            headers={"Authorization": f"Bearer {OWUI_KEY}"},
-            data=form,
-            timeout=aiohttp.ClientTimeout(total=60),
-        ) as r:
-            obj = await r.json()
-    fid = obj.get("id")
-    return f"{OWUI_BASE}/api/v1/files/{fid}/content" if fid else None
-
-
-# ---- deep-research helpers ----
-
-_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Vera"
-_OG_PATTERNS = [
-    r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-    r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
-    r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
-]
-
-
-def _img_kind(b):
-    """Sniff image type from magic bytes → (ext, mime). Defaults to png."""
-    if b[:3] == b"\xff\xd8\xff":
-        return "jpg", "image/jpeg"
-    if b[:8] == b"\x89PNG\r\n\x1a\n":
-        return "png", "image/png"
-    if b[:6] in (b"GIF87a", b"GIF89a"):
-        return "gif", "image/gif"
-    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
-        return "webp", "image/webp"
-    return "png", "image/png"
-
-
-def _clean_caption(s):
-    return re.sub(r"\s+", " ", (s or "").replace("|", " ")).strip()[:120]
-
-
-def _numbered_corpus(sources):
-    return "\n\n".join(
-        f"[{s['n']}] {s['title']}"
-        + (f" (published {s['published']})" if s.get("published") else "")
-        + f"\nURL: {s['url']}\n{(s.get('content') or '')[:1500]}"
-        for s in sources
-    )
-
-
-def _split_headline(body):
-    """Pull the 'HEADLINE: ...' first line off a synthesis output. Returns (headline|None, rest).
-    A missing or empty headline leaves the body untouched — the caller keeps its working title."""
-    m = re.match(r"\s*HEADLINE:\s*(.+?)\s*\n+(.*)", body or "", re.S)
-    if not m or not m.group(1).strip():
-        return None, body
-    return m.group(1).strip(), m.group(2).strip()
-
-
-def _parse_threads(txt):
-    try:
-        j = json.loads(txt[txt.index("{"): txt.rindex("}") + 1])
-        th = j.get("threads")
-        return th if isinstance(th, list) else []
-    except Exception:
-        return []
-
-
-async def _download(url):
-    """Fetch an image URL → (bytes, mime) or (None, None)."""
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(
-                url, headers={"User-Agent": _UA}, timeout=aiohttp.ClientTimeout(total=25)
-            ) as r:
-                if r.status != 200:
-                    return None, None
-                data = await r.read()
-        if len(data) < 2048:  # skip 1x1 trackers / broken thumbs
-            return None, None
-        ext, mime = _img_kind(data)
-        return data, mime
-    except Exception:
-        return None, None
-
-
-async def _fetch_og_image(page_url):
-    """Pull a page's og:image / twitter:image (absolute URL), or None."""
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(
-                page_url, headers={"User-Agent": _UA}, timeout=aiohttp.ClientTimeout(total=12)
-            ) as r:
-                html = await r.text(errors="ignore")
-    except Exception:
-        return None
-    for pat in _OG_PATTERNS:
-        m = re.search(pat, html, re.IGNORECASE)
-        if m:
-            img = m.group(1).strip()
-            if img.startswith("//"):
-                img = "https:" + img
-            elif img.startswith("/"):
-                img = urljoin(page_url, img)
-            if img.startswith("http"):
-                return img
-    return None
-
-
-async def _gather_images(idx, entity_query, top_sources):
-    """Retrieve 2-4 real photos (image search + og:images), re-hosted in OWUI.
-
-    Returns [{url, caption, srcN}] — srcN links an og:image to its numbered source (0 if none).
-    """
-    images, seen = [], set()
-    # 1) image search for the key entity (real subject photos)
-    try:
-        hits = (await image_search(ImageSearchRequest(query=entity_query, max_results=6))).results
-    except Exception:
-        hits = []
-    for h in hits:
-        if len(images) >= 2:
-            break
-        if not h.img_src or h.img_src in seen:
-            continue
-        data, mime = await _download(h.img_src)
-        if not data:
-            continue
-        ext, _ = _img_kind(data)
-        url = await _upload_image(data, f"pulse-{idx}-img{len(images)}.{ext}", mime)
-        if url:
-            images.append({"url": url, "caption": _clean_caption(h.title), "srcN": 0})
-            seen.add(h.img_src)
-    # 2) og:image from the top cited sources (context imagery)
-    for n, title, src_url in top_sources[:3]:
-        if len(images) >= 4:
-            break
-        og = await _fetch_og_image(src_url)
-        if not og or og in seen:
-            continue
-        data, mime = await _download(og)
-        if not data:
-            continue
-        ext, _ = _img_kind(data)
-        url = await _upload_image(data, f"pulse-{idx}-src{n}.{ext}", mime)
-        if url:
-            images.append({"url": url, "caption": _clean_caption(title), "srcN": n})
-            seen.add(og)
-    return images
-
-
-def _recent_for_user(user_id, days=7):
-    """Active cards + anything injected in the last `days`, deduped by id. The corpus the
-    dedup gate checks a candidate against — so 'I did this yesterday' still counts after it sweeps."""
-    cutoff = int(time.time()) - days * 86400
-    active = store.list_cards(include_expired=False, user_id=user_id)
-    recent = [c for c in store.list_cards(include_expired=True, user_id=user_id)
-              if (c.get("created_at") or 0) >= cutoff]
-    seen, out = set(), []
-    for c in active + recent:
-        if c["id"] in seen:
-            continue
-        seen.add(c["id"])
-        out.append(c)
-    return out
-
-
-DEDUP_SYS = (
-    "You are deduplicating a research feed. Given a CANDIDATE topic and a numbered list of cards "
-    "ALREADY in the feed, decide whether any existing card already covers the same thing — same "
-    "subject AND claim. Reworded titles still count as the same (e.g. 'New study on X' is the same "
-    "as 'Recent findings on X'). A genuinely different angle on a shared interest is NOT the same. "
-    "Reply with ONLY 'YES <n>' naming the matching card number, or 'NO'."
-)
-
-
-async def already_covered(topic, user_id):
-    """Has Vera already produced a card for this candidate? Returns the matching card dict,
-    or None. The deterministic dedup gate — semantic (catches re-wording), per-user, fail-open."""
-    cards = _recent_for_user(user_id)
-    if not cards:
-        return None
-    listing = "\n".join(f"{i + 1}. {c['title']} — {(c.get('summary') or '')[:200]}"
-                        for i, c in enumerate(cards))
-    cand = f"{topic.get('title')} | {topic.get('angle', '')} | {topic.get('query', '')}"
-    try:
-        raw = await _vera(
-            [{"role": "system", "content": DEDUP_SYS},
-             {"role": "user", "content": f"CANDIDATE: {cand}\n\nEXISTING:\n{listing}"}],
-            temperature=0.0,
-        )
-        m = re.match(r"\s*YES\s+(\d+)", raw or "", re.I)
-        if m and 1 <= int(m.group(1)) <= len(cards):
-            return cards[int(m.group(1)) - 1]
-    except Exception:
-        return None  # fail-open: a gate error must never silently suppress all research
-    return None
-
-
-FRESH_SYS = (
-    "Today is {today}. You judge whether a Pulse briefing topic is STALE NEWS: a time-sensitive "
-    "news topic (a signing, a release, an announcement, a result) whose newest available coverage "
-    "is too old for the event to still be briefed as news today. Evergreen subjects — research "
-    "findings, techniques, background, analysis of standing situations — are NEVER stale, whatever "
-    "their source age. Answer ONLY the single word STALE or FRESH."
-)
-
-
-def _newest_published(sources):
-    """The newest publish date (YYYY-MM-DD) across the corpus, or None when nothing is dated."""
-    return max((s["published"] for s in sources if s.get("published")), default=None)
-
-
-COHERENT_SYS = (
-    "You check whether a research corpus actually covers a proposed briefing topic. Adjacent "
-    "context is fine — coverage of the topic's club, field, or surrounding situation counts. "
-    "The bar is whether the corpus is SUBSTANTIALLY about a different subject than the topic. "
-    'Answer ONLY one line: "ON-TOPIC" or "OFF-TOPIC <what the corpus is actually about>".'
-)
-
-
-def _corpus_overview(sources, chars=200):
-    """The corpus as numbered titles + snippet heads — enough for a subject check, not a read."""
-    return "\n".join(f"[{s['n']}] {s['title']}: {(s.get('content') or '')[:chars]}" for s in sources)
-
-
-async def is_off_topic(topic, sources):
-    """The coherence gate — (True, what the corpus is about) when the broad search drifted to a
-    different subject than the topic; (False, None) otherwise. Fail-open: an error can never
-    suppress research."""
-    try:
-        raw = await _vera(
-            [{"role": "system", "content": COHERENT_SYS},
-             {"role": "user", "content": (f"Topic: {topic.get('title')}\n"
-                                          f"Angle: {topic.get('angle', '')}\n\n"
-                                          f"Corpus:\n{_corpus_overview(sources)}")}],
-            temperature=0.0,
-        )
-        m = re.match(r"\s*OFF-TOPIC\b[:\s]*(.*)", raw or "", re.I)
-        if m:
-            return True, (m.group(1).strip() or "a different subject")
-    except Exception:
-        pass
-    return False, None
-
-
-async def is_stale_news(topic, newest):
-    """The freshness gate — True only when the topic is time-sensitive news whose newest coverage
-    (`newest`, a YYYY-MM-DD string or None) is too old to brief as news today. An undated corpus
-    passes without consulting the model: with no date evidence there is nothing to judge, and
-    engines that omit dates must never read as staleness. Fail-open: an error or an unparseable
-    verdict can never suppress research."""
-    if not newest:
-        return False
-    try:
-        raw = await _vera(
-            [{"role": "system", "content": FRESH_SYS.format(today=time.strftime("%Y-%m-%d"))},
-             {"role": "user", "content": (f"Topic: {topic.get('title')}\n"
-                                          f"Angle: {topic.get('angle', '')}\n"
-                                          f"Newest source date: {newest or 'no dated sources'}")}],
-            temperature=0.0,
-        )
-        return bool(re.match(r"\s*STALE\b", raw or "", re.I))
-    except Exception:
-        return False
-
-
-AUDIT_SYS = (
-    "You are a strict fact auditor. Given a briefing and its numbered sources, list the briefing's "
-    "key factual assertions — above all CURRENT-STATE claims (who holds a role, who manages, who "
-    "employs whom, who plays where today), plus headline figures and named events. For each, give "
-    "the number of one source that supports it, or the word UNSUPPORTED when no source does. Judge "
-    "ONLY against the sources; what you believe about the world does not count. Return ONLY JSON: "
-    '{"claims":[{"claim":"...","source":3},{"claim":"...","source":"UNSUPPORTED"}]}'
-)
-
-REVISE_SYS = (
-    "Revise the briefing below with surgical precision: the listed claims are NOT supported by its "
-    "sources and must be removed or hedged — drop the unsupported attribution, never substitute a "
-    "different specific. Change nothing else: keep every other sentence, citation marker, image "
-    "token, and block exactly as written. Output starts with the same 'HEADLINE: ' line (rewritten "
-    "only if it contains an unsupported claim), then a blank line, then the briefing."
-)
-
-
-async def _auditor(messages):
-    """The audit model: the coder endpoint when configured AND reachable — a DIFFERENT model
-    than the writer, so the writer's priors can't validate their own fabrication. The coder is
-    typically an on-demand server, so unreachable is a normal state, not an error: fall back to
-    a main-model self-audit (weaker, still better than none) and name the fallback. Returns
-    (reply_text, auditor_name, provenance_stamp) — the stamp is what the card records."""
-    from . import coder  # lazy: avoids a circular load at import time
-    base, model = coder._endpoint()
-    if base:
-        try:
-            # Explicit generation budget: a full claims enumeration overruns the small
-            # default cap some servers apply, truncating the verdict JSON mid-object.
-            msg = await coder._llm(messages, 0.0, max_tokens=3000)
-            return (msg.get("content") or ""), "coder", f"cross-model ({model or 'coder'})"
-        except Exception:
-            return await _vera(messages, temperature=0.0), "main model (coder unreachable)", "self (fallback)"
-    return await _vera(messages, temperature=0.0), "main model (coder unconfigured)", "self (fallback)"
-
-
-def _parse_audit(raw):
-    """The audit verdict's unsupported claims, or None when the reply is unparseable."""
-    try:
-        j = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
-        claims = j.get("claims")
-        if not isinstance(claims, list):
-            return None
-        return [str(c.get("claim", "")).strip() for c in claims
-                if str(c.get("source", "")).strip().upper() == "UNSUPPORTED"
-                and str(c.get("claim", "")).strip()]
-    except Exception:
-        return None
-
-
-async def audit_claims(headline, body, sources, errs, title):
-    """Cross-model claim validation: the auditor checks the body against its own corpus;
-    unsupported claims go back to the main model for ONE surgical revision (re-audited for the
-    record only — the revision ships regardless). Returns (headline, body, audit_stamp, info), the
-    text possibly revised; the stamp is 'none' when no effective audit happened, and info is
-    {verdict (clean|revised|unavailable), unsupported (count), auditor}. Machinery failure ships
-    the original: the feed never starves on audit plumbing."""
-    corpus = _numbered_corpus(sources)
-
-    async def verdict():
-        raw, auditor, stamp = await _auditor(
-            [{"role": "system", "content": AUDIT_SYS},
-             {"role": "user", "content": f"Numbered sources:\n{corpus}\n\nBriefing:\n{body}"}])
-        return _parse_audit(raw), auditor, stamp
-
-    from . import editor
-    today = datetime.now(TZ).date().isoformat()
-    stale = editor.stale_current_claims(body, sources, today)
-
-    try:
-        unsupported, auditor, stamp = await verdict()
-        parse_failed = unsupported is None
-        flagged = list(dict.fromkeys((unsupported or []) + stale))
-        if not flagged:
-            if parse_failed:
-                errs.append(f"claim audit: {title} — audit unavailable (unparseable verdict from {auditor})")
-                return headline, body, "none", {"verdict": "unavailable", "unsupported": 0, "auditor": auditor}
-            errs.append(f"claim audit: {title} — clean ({auditor})")
-            return headline, body, stamp, {"verdict": "clean", "unsupported": 0, "auditor": auditor}
-        eff_stamp = stamp if not parse_failed else "date check (verdict unparseable)"
-        revised = (await _vera(
-            [{"role": "system", "content": REVISE_SYS},
-             {"role": "user", "content": ("Unsupported claims:\n- " + "\n- ".join(flagged)
-                                          + f"\n\nBriefing:\nHEADLINE: {headline or title}\n\n{body}")}],
-            temperature=0.2,
-        )).strip()
-        new_headline, new_body = _split_headline(revised)
-        info = {"verdict": "revised", "unsupported": len(flagged), "auditor": auditor}
-        if not new_body:
-            errs.append(f"claim audit: {title} — {len(flagged)} unsupported, revision empty; shipped original")
-            return headline, body, eff_stamp, info
-        stale_note = f", {len(stale)} stale-dated" if stale else ""
-        record = f"claim audit: {title} — {len(flagged)} unsupported{stale_note}, revised ({auditor})"
-        try:
-            body = new_body  # re-audit the revision for the record only
-            still, _, _ = await verdict()
-            if still:
-                record += f"; {len(still)} still flagged"
-        except Exception:
-            pass
-        errs.append(record)
-        return (new_headline or headline), new_body, eff_stamp, info
-    except Exception as e:
-        errs.append(f"claim audit: {title} — audit unavailable ({e})")
-        return headline, body, "none", {"verdict": "unavailable", "unsupported": 0, "auditor": None}
-
-
-async def _select_topics(rnd, *, who, persona, all_interests, memories, exclusions, want,
-                         recent_texts=None):
-    """The run's topic source. When the Profile Graph has live nodes the selection is the
-    Scout -> Analyst pipeline (cheap-rank-first: rank hundreds, keep the top `want`); the
-    Analyst delivers its ranked best in one pass, so later rounds yield nothing. With an empty
-    graph it falls back to v1 `_triage`, so the feed keeps running until extraction is deployed."""
-    from . import scout, analyst, editor
-    try:
-        live = scout.select_live_nodes()
-    except Exception:
-        live = []
-    if live:
-        if rnd > 0:
-            return []
-        found = await scout.scout()
-        ranked = await analyst.rank(found.get("candidates", []), recent_card_texts=recent_texts or [],
-                                    max_cards=want)
-        return editor.survivors_to_topics(ranked.get("chosen", []))
-    return await _triage(who, persona, all_interests, memories, exclusions, want, rnd)
-
-
-def _synthesis_user_prompt(topic, sources, who):
-    """The synthesis user message: the topic, its numbered sources, and (when the topic carries
-    a Profile Graph seed) the active neighbour nodes the LLM may draw a cross-domain link to."""
-    usr = (f"Topic: {topic.get('title')}\nWhy it surfaced: {topic.get('angle', '')}\n\n"
-           f"Numbered sources:\n{_numbered_corpus(sources)}")
-    seed = topic.get("seed_node_id")
-    if seed:
-        from . import editor
-        usr += editor.connections_block(who, editor.cross_domain_links(seed))
-    return usr
+def _assemble_card(headline, topic, summary, body, image_url, tint, sources, inline_images,
+                   provenance, user_id, audit_stamp):
+    return {
+        "id": str(uuid.uuid4()),
+        "created_at": int(time.time()),
+        "day": datetime.now(TZ).date().isoformat(),
+        "status": "new",
+        "title": headline or topic.get("title"),
+        "summary": summary or "",
+        "body": body,
+        "image_url": image_url,
+        "tint": tint,
+        "sources": [{"n": s["n"], "title": s["title"], "url": s["url"]} for s in sources],
+        "inline_images": [{"n": i, "url": im["url"], "caption": im["caption"], "sourceN": im.get("srcN", 0)}
+                          for i, im in enumerate(inline_images, start=1)],
+        "promoted_chat_id": None,
+        "kind": "research",
+        "provenance": provenance,
+        "user_id": user_id,
+        "audit": audit_stamp,
+    }
 
 
 async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", errors=None,
@@ -816,23 +219,8 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
 
     # Numbered, deduped master source list accumulated across all searches.
     sources, url_to_n = [], {}
-
-    def add_sources(results):
-        for x in results:
-            u = getattr(x, "url", None)
-            if not u or u in url_to_n:
-                continue
-            n = len(sources) + 1
-            url_to_n[u] = n
-            sources.append({"n": n, "title": getattr(x, "title", "") or u,
-                            "url": u, "content": getattr(x, "content", ""),
-                            "published": getattr(x, "published", None)})
-
-    # broad search
-    broad = await web_search(
-        SearchRequest(query=topic.get("query") or topic.get("title"), fetch_pages=4, max_results=8)
-    )
-    add_sources(broad.results)
+    add_sources = _source_adder(sources, url_to_n)
+    await _collect_broad_sources(topic, add_sources)
 
     # Freshness gate — stale news skips like a dup, before any expensive work; the delivery
     # loop backfills the slot with a replacement topic.
@@ -850,29 +238,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
         oc.update({"gate": "coherence", "reason": "off-topic corpus", "detail": found})
         return None
 
-    # thread extraction — what's worth deepening (may be empty)
-    threads = []
-    try:
-        traw = await _vera(
-            [{"role": "system", "content": THREAD_SYS.format(today=time.strftime("%Y-%m-%d"))},
-             {"role": "user", "content": f"Topic: {topic.get('title')}\nAngle: {topic.get('angle', '')}\n\n"
-                                          f"Corpus:\n{_numbered_corpus(sources)}"}],
-            temperature=0.3,
-        )
-        threads = _parse_threads(traw)[:4]
-    except Exception as e:
-        errs.append(f"threads {topic.get('title')}: {e}")
-
-    # follow-up searches per thread (fold into master sources)
-    for th in threads:
-        try:
-            fu = await web_search(
-                SearchRequest(query=th.get("query") or th.get("focus") or topic.get("title"),
-                              fetch_pages=2, max_results=4)
-            )
-            add_sources(fu.results)
-        except Exception:
-            pass
+    threads = await _deepen_sources(topic, sources, add_sources, errs)
 
     # real imagery: image search on the key entity + og:images from top sources
     entity_query = (threads[0].get("focus") if threads else None) or topic.get("title")
@@ -883,26 +249,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
         inline_images = []
         errs.append(f"images {topic.get('title')}: {e}")
 
-    # first-person deep synthesis with numbered citations + inline-image tokens
-    img_instr = ""
-    if inline_images:
-        caps = "; ".join(f"{i + 1}: {im['caption']}" for i, im in enumerate(inline_images))
-        span = "[[img:1]]" if len(inline_images) == 1 else f"[[img:1]] through [[img:{len(inline_images)}]]"
-        img_instr = (f"There are {len(inline_images)} images available. Place each where it best "
-                     f"illustrates the text, as a token on its own line: {span}. Use each token at most "
-                     f"once. The images show: {caps}.\n")
-    card_usr = _synthesis_user_prompt(topic, sources, who)
-    body = (
-        await _vera(
-            [{"role": "system", "content": voiced(CARD_SYS.format(
-                img_instr=img_instr, who=who, today=time.strftime("%Y-%m-%d")))},
-             {"role": "user", "content": card_usr}],
-            temperature=0.5,
-        )
-    ).strip()
-    # The display headline comes from the synthesis (source-grounded); the triage title was
-    # only the search plan and may name things that don't exist. Fall back to it if absent.
-    headline, body = _split_headline(body)
+    headline, body = await _synthesize_body(topic, sources, who, inline_images)
     if not body:
         errs.append(f"skipped (empty synthesis): {topic.get('title')}")
         oc.update({"gate": "empty", "reason": "empty synthesis", "detail": None})
@@ -916,85 +263,17 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     if not defer_audit:
         headline, body, audit_stamp, _audit_info = await audit_claims(headline, body, sources, errs, topic.get("title"))
 
-    # Short, complete preview blurb (so the card face never truncates mid-word). Generated
-    # before cover art so the image prompt can be built from the synthesis.
-    try:
-        summary = (
-            await _vera(
-                [{"role": "system", "content": SUMMARY_SYS}, {"role": "user", "content": body[:1500]}],
-                temperature=0.3,
-            )
-        ).strip().strip('"').replace("\n", " ")
-    except Exception:
-        summary = None
+    summary = await _summarize(body)
 
-    # Cover art: Vera writes a vibe-matching prompt from the card's own synthesis (headline +
-    # summary + story), not the triage working title; style rotates for a fresh feed.
-    image_url = tint = None
-    cover_generated = False
-    try:
-        img_usr = (f"Headline: {headline or topic.get('title')}\n"
-                   f"Summary: {summary or ''}\n"
-                   f"Story: {body[:600]}")
-        log.info("cover prompt input: %s", img_usr.replace("\n", " | "))
-        img_prompt = (
-            await _vera(
-                [{"role": "system", "content": IMAGE_SYS},
-                 {"role": "user", "content": img_usr}],
-                temperature=0.8,
-            )
-        ).strip().strip('"')
-        image_url, tint = await _gen_image(img_prompt, STYLE_PALETTE[idx % len(STYLE_PALETTE)], idx)
-        cover_generated = image_url is not None
-    except Exception as e:
-        errs.append(f"cover {topic.get('title')}: {e}")
-    # Fallback: if generation failed (image service offline/contended), promote the best real
-    # image we already gathered to the cover so cards are never imageless.
-    if not image_url and inline_images:
-        image_url = inline_images[0]["url"]
+    image_url, tint, cover_generated = await make_cover(headline, summary, body, topic, inline_images, idx, errs)
     oc["cover_generated"] = cover_generated
 
-    card = {
-        "id": str(uuid.uuid4()),
-        "created_at": int(time.time()),
-        "day": datetime.now(TZ).date().isoformat(),
-        "status": "new",
-        "title": headline or topic.get("title"),
-        "summary": summary or "",
-        "body": body,
-        "image_url": image_url,
-        "tint": tint,
-        "sources": [{"n": s["n"], "title": s["title"], "url": s["url"]} for s in sources],
-        "inline_images": [{"n": i, "url": im["url"], "caption": im["caption"], "sourceN": im.get("srcN", 0)}
-                          for i, im in enumerate(inline_images, start=1)],
-        "promoted_chat_id": None,
-        "kind": "research",
-        "provenance": provenance,
-        "user_id": user_id,
-        "audit": audit_stamp,
-    }
+    card = _assemble_card(headline, topic, summary, body, image_url, tint, sources, inline_images,
+                          provenance, user_id, audit_stamp)
     store.insert_card(card)
     if defer_audit:
         card["_corpus"] = sources  # full texts for the end-of-run audit; never persisted
     return card
-
-
-# Skip-marker prefix -> gate name, for the per-run kill tally that makes a starved run
-# (gates ate the proposals) distinguishable from a quiet news day (triage had nothing).
-_GATE_MARKERS = (
-    ("skipped (already covered)", "dedup"),
-    ("skipped (stale news)", "freshness"),
-    ("skipped (off-topic corpus)", "coherence"),
-    ("skipped (empty synthesis)", "empty"),
-)
-
-
-def _gate_kind(new_errors):
-    for e in new_errors:
-        for prefix, kind in _GATE_MARKERS:
-            if e.startswith(prefix):
-                return kind
-    return "empty"
 
 
 def _stamp_interest(interest):
@@ -1007,95 +286,7 @@ def _stamp_interest(interest):
         pass
 
 
-async def _triage(who, persona, interests, memories, exclusions, want, rnd):
-    """One triage round: propose up to `want` topics, avoiding `exclusions`. Retry rounds
-    (rnd > 0) carry an explicit branch-out instruction and a hotter temperature so the model
-    stops converging on its favorite proposals."""
-    usr = (
-        (f"About {who}: {persona}\n\n" if persona else "")
-        + "Standing interests:\n- "
-        + ("\n- ".join(interests) if interests else "(none yet)")
-        + "\n\nWhat I know about them (memory):\n- "
-        + ("\n- ".join(memories) if memories else "(none)")
-        + (("\n\nAlready in the feed (do NOT repeat these — pick different topics):\n- "
-            + "\n- ".join(exclusions)) if exclusions else "")
-        + (TRIAGE_RETRY if rnd > 0 and exclusions else "")
-    )
-    msgs = [
-        {"role": "system", "content": TRIAGE_SYS.format(today=time.strftime("%Y-%m-%d"), n=want, who=who)},
-        {"role": "user", "content": usr},
-    ]
-    obj, _ = await structured.parsed(
-        structured.repairable(_vera, msgs, temperature=_TRIAGE_TEMPS[min(rnd, len(_TRIAGE_TEMPS) - 1)]),
-        structured.Topics)
-    return ((obj or {}).get("topics") or [])[:want]
-
-
-async def _audit_hook(url):
-    """POST one of the configured audit warm-up/release hooks. The timeout is generous because
-    a wake may cold-load a model. A non-2xx reply raises — an error body is JSON too, and a
-    failed wake must read as failed, never as success. Returns the response JSON when there is
-    any ({} otherwise) — a wake reply may carry {"already_up": true}."""
-    async with aiohttp.ClientSession() as s:
-        async with s.post(url, timeout=aiohttp.ClientTimeout(total=600)) as r:
-            r.raise_for_status()
-            try:
-                return await r.json()
-            except Exception:
-                return {}
-
-
-async def _audit_phase(pending, errs, items_by_card=None):
-    """The batched end-of-run claim audit: one optional model wake amortized across every card
-    injected this run. `pending` is [(card, full_sources)]. Each card is audited with the same
-    audit_claims machinery as the inline path; revisions and the provenance stamp are applied
-    to the stored card. The release hook fires only if this run's wake actually started the
-    model — a model that was already up belongs to whoever started it.
-
-    `items_by_card`, if given, maps card id -> the run record's structured item, and each card's
-    audit verdict is written onto its item so the drill-in can show per-card audit detail."""
-    if not pending:
-        return
-    woke = False
-    if AUDIT_WAKE_URL:
-        try:
-            reply = await _audit_hook(AUDIT_WAKE_URL)
-            woke = not reply.get("already_up")
-            errs.append("audit wake: ok" + ("" if woke else " (already up — not ours to release)"))
-        except Exception as e:
-            errs.append(f"audit wake failed: {e} — auditing via fallback")
-    try:
-        for card, sources in pending:
-            try:
-                headline, body, stamp, info = await audit_claims(
-                    card["title"], card["body"], sources, errs, card["title"])
-                store.apply_audit(card["id"], headline or card["title"], body, stamp)
-                if items_by_card and card["id"] in items_by_card:
-                    items_by_card[card["id"]]["audit"] = info
-            except Exception as e:
-                errs.append(f"claim audit: {card.get('title')} — audit phase error ({e})")
-    finally:
-        if AUDIT_RELEASE_URL and woke:
-            try:
-                await _audit_hook(AUDIT_RELEASE_URL)
-            except Exception as e:
-                errs.append(f"audit release failed: {e}")
-
-
-async def _do_run(req: PulseRequest):
-    """The full synchronous Pulse pipeline (sweep -> triage -> per-topic research/inject). Returns the
-    result dict. The HTTP endpoint runs this in the background so no caller holds a long request open."""
-    out = {"ok": True, "topics": [], "injected": [], "skipped": [], "expired": 0, "errors": []}
-
-    # 0) cleanup sweep (best-effort): expire untouched prior-day cards in the store
-    try:
-        out["expired"] = store.sweep(datetime.now(TZ).date().isoformat())
-    except Exception as e:
-        out["errors"].append(f"sweep: {e}")
-
-    if req.sweep_only:
-        return out
-
+async def _build_run_context(req, out):
     # Who is this briefing for? Default to the household owner for backward-compat.
     user_id = req.user_id or store.DEFAULT_USER
     profile = up.get(user_id)
@@ -1121,7 +312,10 @@ async def _do_run(req: PulseRequest):
     if cooling:
         all_interests = [t for t in all_interests if t not in cooling]
     persona = profile.get("persona")
+    return user_id, who, persona, all_interests, memories
 
+
+async def _run_novelty_loop(req, out, user_id, who, persona, all_interests, memories, target):
     # 2) the novelty loop: triage -> per-topic research (deep-research -> illustrate ->
     # synthesize -> cover art -> inject; the per-topic pipeline lives in research_topic() so
     # the heartbeat shares it). When the dedup gate kills proposals, re-triage — up to
@@ -1130,7 +324,6 @@ async def _do_run(req: PulseRequest):
     # triage->gate round trips), and every proposal joins it so a retry can't re-pitch a
     # rewording of a topic the gate just killed.
     exclusions = [c["title"] for c in _recent_for_user(user_id)]
-    target = min(req.max_cards or PULSE_MAX_CARDS, PULSE_MAX_CARDS)
     out["rounds"] = []
     out["items"] = []  # structured per-candidate outcomes for the drill-in (additive to rounds/gates)
     items_by_card = {}  # card id -> its item, so the audit phase can stamp per-card verdicts
@@ -1215,7 +408,10 @@ async def _do_run(req: PulseRequest):
         await _audit_phase(pending_audit, out["errors"], items_by_card)
     finally:
         await _vision(pause=False)  # bring the vision model back up after the image batch
+    return gates
 
+
+def _finalize_run(out, gates, target):
     out["gates"] = gates
     if len(out["injected"]) < target and any(gates.values()):
         msg = (f"starved run: {len(out['injected'])}/{target} cards after "
@@ -1229,6 +425,26 @@ async def _do_run(req: PulseRequest):
             f"under floor: {len(out['injected'])}/{floor} novel cards "
             f"after {len(out['rounds'])} triage round(s)")
     return out
+
+
+async def _do_run(req: PulseRequest):
+    """The full synchronous Pulse pipeline (sweep -> triage -> per-topic research/inject). Returns the
+    result dict. The HTTP endpoint runs this in the background so no caller holds a long request open."""
+    out = {"ok": True, "topics": [], "injected": [], "skipped": [], "expired": 0, "errors": []}
+
+    # 0) cleanup sweep (best-effort): expire untouched prior-day cards in the store
+    try:
+        out["expired"] = store.sweep(datetime.now(TZ).date().isoformat())
+    except Exception as e:
+        out["errors"].append(f"sweep: {e}")
+
+    if req.sweep_only:
+        return out
+
+    user_id, who, persona, all_interests, memories = await _build_run_context(req, out)
+    target = min(req.max_cards or PULSE_MAX_CARDS, PULSE_MAX_CARDS)
+    gates = await _run_novelty_loop(req, out, user_id, who, persona, all_interests, memories, target)
+    return _finalize_run(out, gates, target)
 
 
 # ---- async run trigger + status (the scheduler triggers, then polls run_status to completion) ----
@@ -1320,19 +536,6 @@ async def run_outcome(trigger, poll_secs=10, timeout=2700):
                 "gates": st.get("gates") or {},
                 "injected": st.get("injected") or []}
     return {"state": "running", "warnings": [f"run still going after {timeout}s — see /pulse/run_status"]}
-
-
-async def _active_users():
-    """OWUI accounts — the people Vera serves. Each gets their own briefing/feed."""
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"{OWUI_BASE}/api/v1/users/", headers=_headers(),
-                             timeout=aiohttp.ClientTimeout(total=20)) as r:
-                d = await r.json()
-        users = d.get("users") if isinstance(d, dict) else d
-        return [{"id": u.get("id"), "name": u.get("name")} for u in (users or []) if u.get("id")]
-    except Exception:
-        return []
 
 
 class RunAllRequest(BaseModel):

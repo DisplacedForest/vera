@@ -29,6 +29,8 @@ struct DraftOptionGroup: Identifiable {
 }
 
 struct VeinDraft {
+    static let carriedKeys = ["standing", "journal", "requires", "order"]
+
     var kind: String
     var label: String
     var icon: String
@@ -38,6 +40,7 @@ struct VeinDraft {
     var steps: [DraftStep]
     var providers: [DraftProvider]
     var options: [DraftOptionGroup]
+    var carried: [String: Any] = [:]
 
     static func parse(_ j: [String: Any]) -> VeinDraft? {
         guard let kind = j["kind"] as? String else { return nil }
@@ -69,13 +72,18 @@ struct VeinDraft {
             }
             return DraftOptionGroup(group: name, fields: fields)
         }
+        var carried: [String: Any] = [:]
+        for key in carriedKeys where j[key] != nil && !(j[key] is NSNull) {
+            carried[key] = j[key]
+        }
         return VeinDraft(kind: kind,
                          label: (j["label"] as? String) ?? kind,
                          icon: (j["icon"] as? String) ?? "sparkles",
                          blurb: (j["blurb"] as? String) ?? "",
                          nominalLabel: (j["nominal_label"] as? String) ?? "quiet",
                          schedule: (j["schedule"] as? String) ?? "0 */6 * * *",
-                         steps: steps, providers: providers, options: options)
+                         steps: steps, providers: providers, options: options,
+                         carried: carried)
     }
 
     func encode() -> [String: Any] {
@@ -85,6 +93,9 @@ struct VeinDraft {
             "schedule": schedule,
             "pipeline": steps.map { ["block": $0.block, "params": $0.params] },
         ]
+        for (key, value) in carried {
+            out[key] = value
+        }
         if !providers.isEmpty {
             out["providers"] = providers.map { ["id": $0.id, "label": $0.label,
                                                 "hint": $0.hint, "default": $0.defaultValue] }
@@ -356,7 +367,12 @@ final class BuilderModel: ObservableObject, Identifiable {
         problems = (j["problems"] as? [String]) ?? []
         done = (j["done"] as? Bool) ?? false
         recommended = (j["recommended"] as? [String]) ?? recommended
-        if let rawDraft = j["draft"] as? [String: Any], let parsed = VeinDraft.parse(rawDraft) {
+        if let rawDraft = j["draft"] as? [String: Any], var parsed = VeinDraft.parse(rawDraft) {
+            if let prior = draft {
+                for (key, value) in prior.carried where parsed.carried[key] == nil {
+                    parsed.carried[key] = value
+                }
+            }
             applyingServerDraft = true
             draft = parsed
             applyingServerDraft = false

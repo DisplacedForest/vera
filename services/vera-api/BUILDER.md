@@ -49,6 +49,12 @@ A deployment may register additional code-backed blocks; when present they appea
 
 String params may reference the vein's own configuration with {options.<id>} and {providers.<id>} placeholders. Prefer an option or provider slot over a hardcoded value whenever the person might want to tune it later: endpoints belong in providers, judgment knobs and query subjects in options.
 
+## Dashboards versus watches
+
+A watch or monitor stays quiet until something crosses its bar. When the person wants something always visible (a running figure, a daily digest tile, a status readout), set "standing": true on the definition and use a source step that emits every run (http_fetch is the usual one): the engine then keeps exactly one card per situation permanently present, updating it in place when the content changes and leaving it untouched when it does not. For tile-style presentation, instruct llm_compose through its style param to include a vera:stats block with the finding's numbers.
+
+Describe a block's behavior only from its palette entry above or its registered note; when the entry does not say, say you are unsure rather than improvising semantics.
+
 ## Discipline is the engine's
 
 The engine already keeps one card per distinct situation (updated, never stacked), remembers what a watcher has posted so it does not re-alert, and floors how often LLM-bearing pipelines run. Design intent only: never add dedup logic, cooldown options, repeat-suppression instructions, or anti-spam rules to a definition. A vein that would fire constantly needs a higher bar or a tighter band, not a cooldown.

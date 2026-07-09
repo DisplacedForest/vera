@@ -214,7 +214,14 @@ COMPOSE_SYS = (
     "SUMMARY: <one complete sentence>\n"
     "===\n"
     "<the card body in markdown: a short briefing grounded ONLY in the finding, "
-    "in your voice, plain punctuation, no invented facts>"
+    "in your voice, plain punctuation, no invented facts>\n"
+    "When the finding carries a series of numbers worth showing as tiles, the body may "
+    "include ONE fenced block:\n"
+    "```vera:stats\n"
+    '{"cards":[{"value":"<big number>","label":"<short label>","sub":"<small detail>"}]}\n'
+    "```\n"
+    "with 2 to 6 cards, every value drawn from the finding, never invented. A "
+    "```vera:chart block is also available for series data when the style asks for it."
 )
 
 
@@ -482,7 +489,7 @@ async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False
     if not defn.get("pipeline"):
         return {"ok": False, "detail": f"vein '{kind}' has no pipeline"}
     pipeline = defn["pipeline"]
-    monitor = is_monitor(pipeline)
+    monitor = bool(defn.get("standing")) or is_monitor(pipeline)
     if has_llm(pipeline) and not manual and not dry_run:
         last = engine_store.last_run(kind)
         if last is not None and time.time() - last < FLOOR_MINUTES * 60:

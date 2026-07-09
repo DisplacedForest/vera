@@ -642,3 +642,35 @@ def test_block_modules_load_from_dir(monkeypatch, tmp_path):
         assert "my_source" in vein_engine.BLOCKS
     finally:
         vein_engine.BLOCKS.pop("my_source", None)
+
+
+def test_standing_definition_keeps_one_card_updated(monkeypatch):
+    defn = vein_defs.save_custom({
+        "kind": "ticker", "label": "Ticker", "icon": "chart.xyaxis.line", "standing": True,
+        "pipeline": [
+            {"block": "http_fetch", "params": {"url": "https://feed.example/now.json",
+                                               "label": "Reading"}},
+            {"block": "llm_compose"},
+        ],
+        "schedule": "*/30 * * * *",
+    })
+    assert defn["standing"] is True
+    monkeypatch.setattr(vein_engine, "_vera", _fake_vera())
+    _stub_get(monkeypatch, 200, "reading one")
+    out = _run(vein_engine.run_vein("ticker", manual=True))
+    assert out["cards"] == 1
+    first = _active("ticker")
+    assert len(first) == 1
+    again = _run(vein_engine.run_vein("ticker", manual=True))
+    assert again == {"ok": True, "situations": 1, "cards": 0, "standing": 1}
+    assert [c["id"] for c in _active("ticker")] == [first[0]["id"]]
+    _stub_get(monkeypatch, 200, "reading two")
+    changed = _run(vein_engine.run_vein("ticker", manual=True))
+    assert changed["cards"] == 1
+    second = _active("ticker")
+    assert len(second) == 1 and second[0]["id"] != first[0]["id"]
+
+
+def test_compose_prompt_teaches_stats_blocks():
+    assert "vera:stats" in vein_engine.COMPOSE_SYS
+    assert "vera:chart" in vein_engine.COMPOSE_SYS

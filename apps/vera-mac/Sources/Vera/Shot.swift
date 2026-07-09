@@ -174,6 +174,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "vein-configure" || view == "vein-configure-delete" {
+            content = AnyView(
+                ShotVeinConfigureView(confirmingDelete: view == "vein-configure-delete")
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "veins" || view == "vein-browse" || view == "vein-import"
                     || view == "settings-plugins" || view == "settings-mcp" {
             // Veins is now a sheet over Pulse; Plugins and MCP are Settings tabs.
@@ -275,6 +281,132 @@ private struct ShotPluginSheetView: View {
                 .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline, lineWidth: 1))
         }
+    }
+
+    private func pill(_ title: String, filled: Bool) -> some View {
+        Text(title).font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(filled ? .white : Theme.textPrimary)
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .background(filled ? Theme.accent : Theme.surfaceHover)
+            .clipShape(Capsule())
+    }
+}
+
+private struct ShotVeinConfigureView: View {
+    var confirmingDelete: Bool
+    private let entry = VeinEntry.mock()[0]
+
+    var body: some View {
+        ZStack {
+            VStack(spacing: 0) { Spacer(); sheet; Spacer() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.bg)
+                .blur(radius: confirmingDelete ? 2 : 0)
+            if confirmingDelete {
+                Color.black.opacity(0.35)
+                confirmDialog
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(Theme.textPrimary)
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var sheet: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: entry.icon).font(.system(size: 16))
+                Text("Configure \(entry.label)").font(.system(size: 16, weight: .semibold))
+            }
+            .padding(16)
+            Divider().overlay(Theme.hairline)
+
+            VStack(alignment: .leading, spacing: 16) {
+                fieldBox(entry.providers[0].label, value: entry.providers[0].value)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(entry.options[0].group.uppercased())
+                        .font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                        .foregroundStyle(Theme.textSecondary)
+                    fieldBox("Flood stage (ft)", value: "21.5")
+                    toggleRow("Rapid-rise alert", on: true)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("SCHEDULE").font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("*/30 * * * *").font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Divider().overlay(Theme.hairline)
+                    Text("DEFINITION").font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                        .foregroundStyle(Theme.textSecondary)
+                    HStack(spacing: 10) {
+                        pill("Edit definition", filled: false)
+                        Spacer()
+                        Text("Delete").font(.system(size: 12, weight: .semibold)).foregroundStyle(.red)
+                    }
+                }
+            }
+            .padding(16)
+
+            Divider().overlay(Theme.hairline)
+            HStack(spacing: 10) {
+                pill("Test", filled: false)
+                pill("Export", filled: false)
+                Spacer()
+                Text("Cancel").font(.system(size: 12))
+                Text("Disable").font(.system(size: 12, weight: .semibold)).foregroundStyle(.red)
+                pill("Save", filled: true)
+            }
+            .padding(12)
+        }
+        .frame(width: 500)
+        .background(Theme.bg)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    private var confirmDialog: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Delete \(entry.label)?").font(.system(size: 15, weight: .semibold))
+            Text("Its definition and all of its settings are removed. Export it first if you might want it back.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Spacer()
+                pill("Cancel", filled: false)
+                Text("Delete").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(Color.red.opacity(0.9)).clipShape(Capsule())
+            }
+        }
+        .padding(18).frame(width: 360)
+        .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    private func fieldBox(_ label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 12, weight: .medium))
+            Text(value).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline, lineWidth: 1))
+        }
+    }
+
+    private func toggleRow(_ label: String, on: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(.system(size: 12, weight: .medium))
+            Spacer(minLength: 8)
+            Capsule().fill(on ? Theme.accent : Theme.surfaceHover)
+                .frame(width: 28, height: 16)
+                .overlay(Circle().fill(.white).frame(width: 12, height: 12)
+                    .offset(x: on ? 6 : -6))
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Theme.bg.opacity(0.5)).clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func pill(_ title: String, filled: Bool) -> some View {

@@ -17,6 +17,7 @@ final class VeinsStore: ObservableObject {
 
     private var client: VeinsClient?
     var baseDescription: String { client?.base.absoluteString ?? "vera-api" }
+    var apiBase: URL? { client?.base }
 
     func configure(base: URL?) {
         client = base.map { VeinsClient(base: $0) }
@@ -51,6 +52,13 @@ final class VeinsStore: ObservableObject {
         guard let client else { return "vera-api isn't configured" }
         let detail = await client.save(kind: kind, enabled: enabled, options: options,
                                        providers: providers, cron: cron)
+        if detail == nil { await refresh() }
+        return detail
+    }
+
+    func deleteVein(_ kind: String) async -> String? {
+        guard let client else { return "vera-api isn't configured" }
+        let detail = await client.delete(kind: kind)
         if detail == nil { await refresh() }
         return detail
     }
@@ -323,6 +331,9 @@ struct VeinSheet: View {
     @State private var testResults: [(slot: String, ok: Bool, detail: String)] = []
     @State private var saving = false
     @State private var error: String?
+    @State private var confirmDelete = false
+    @State private var deleting = false
+    @State private var builder: BuilderModel?
 
     private static let cronPresets: [(String, String)] = [
         ("Hourly", "0 * * * *"), ("Every 6 hours", "0 */6 * * *"),
@@ -370,6 +381,8 @@ struct VeinSheet: View {
                         Text(error).font(.system(size: 12)).foregroundStyle(.red)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+
+                    if entry.isCustom { definitionSection }
                 }
                 .padding(16)
             }
@@ -393,6 +406,34 @@ struct VeinSheet: View {
         .frame(width: 500)
         .frame(minHeight: 300, maxHeight: 600)
         .background(Theme.bg)
+        .confirmationDialog("Delete \(entry.label)?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { deleteVein() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Its definition and all of its settings are removed. Export it first if you might want it back.")
+        }
+        .sheet(item: $builder) { model in
+            VeinBuilderView(model: model, onCreated: {
+                Task { await veins.refresh() }
+                builder = nil
+            })
+        }
+    }
+
+    private var definitionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider().overlay(Theme.hairline)
+            Text("DEFINITION").font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                .foregroundStyle(Theme.textSecondary)
+            HStack(spacing: 10) {
+                Button("Edit definition") { editDefinition() }
+                    .disabled(saving || deleting)
+                Spacer()
+                Button(deleting ? "Deleting…" : "Delete", role: .destructive) { confirmDelete = true }
+                    .disabled(saving || deleting)
+                    .foregroundStyle(.red)
+            }
+        }
     }
 
     // MARK: editors (by declared type — nothing vein-specific)
@@ -530,6 +571,29 @@ struct VeinSheet: View {
                                           options: payload.options, providers: payload.providers,
                                           cron: payload.cron)
             saving = false
+            if let detail { error = detail } else { dismiss() }
+        }
+    }
+
+    private func editDefinition() {
+        error = nil
+        Task {
+            guard let data = await veins.export(entry.kind),
+                  let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                error = "Couldn't load this vein's definition to edit."
+                return
+            }
+            let model = BuilderModel(base: veins.apiBase)
+            model.seedForEdit(dict)
+            builder = model
+        }
+    }
+
+    private func deleteVein() {
+        deleting = true; error = nil
+        Task {
+            let detail = await veins.deleteVein(entry.kind)
+            deleting = false
             if let detail { error = detail } else { dismiss() }
         }
     }

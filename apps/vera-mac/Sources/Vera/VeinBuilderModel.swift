@@ -275,13 +275,28 @@ final class BuilderModel: ObservableObject, Identifiable {
     @Published var stepTrace: [(block: String, items: Int)] = []
     @Published var dryRanOnce = false
     @Published var kindConflict = false
+    @Published var editKind: String?
 
     let base: URL?
     var onCreated: () -> Void = {}
     private var applyingServerDraft = false
 
+    var isEditing: Bool { editKind != nil }
+
     init(base: URL?) {
         self.base = base
+    }
+
+    func seedForEdit(_ definition: [String: Any]) {
+        guard let parsed = VeinDraft.parse(definition) else { return }
+        editKind = parsed.kind
+        applyingServerDraft = true
+        draft = parsed
+        applyingServerDraft = false
+        confirmedTools = Dictionary(uniqueKeysWithValues: parsed.usedBlocks.map { ($0, true) })
+        recommended = parsed.usedBlocks
+        done = true
+        dirty = true
     }
 
     var toolsResolved: Bool {
@@ -388,9 +403,11 @@ final class BuilderModel: ObservableObject, Identifiable {
         error = nil
         kindConflict = false
         let definition = draft.stripping(removedTools).encode()
+        let editing = editKind
         Task {
-            var req = URLRequest(url: base.appendingPathComponent("/pulse/veins"))
-            req.httpMethod = "POST"
+            let path = editing.map { "/pulse/veins/\($0)/definition" } ?? "/pulse/veins"
+            var req = URLRequest(url: base.appendingPathComponent(path))
+            req.httpMethod = editing == nil ? "POST" : "PUT"
             req.timeoutInterval = 15
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try? JSONSerialization.data(withJSONObject: definition)

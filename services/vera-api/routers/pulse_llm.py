@@ -31,6 +31,12 @@ def _headers():
     return {"Authorization": f"Bearer {OWUI_KEY}", "Content-Type": "application/json"}
 
 
+async def _request_json(method, url, *, timeout, **kwargs):
+    async with aiohttp.ClientSession() as s:
+        async with s.request(method, url, timeout=aiohttp.ClientTimeout(total=timeout), **kwargs) as r:
+            return await r.json()
+
+
 def _chat_payload(messages, temperature, think=None) -> dict:
     """The /chat/completions body — pure OpenAI unless template kwargs are configured.
     An explicit `think` mode ("on"/"off") resolves per-mode kwargs via persona.think_kwargs;
@@ -44,33 +50,20 @@ def _chat_payload(messages, temperature, think=None) -> dict:
 
 
 async def _vera(messages, temperature=0.4, think=None):
-    async with aiohttp.ClientSession() as s:
-        async with s.post(
-            f"{VERA_BASE}/chat/completions",
-            json=_chat_payload(messages, temperature, think),
-            timeout=aiohttp.ClientTimeout(total=300),
-        ) as r:
-            d = await r.json()
+    d = await _request_json("POST", f"{VERA_BASE}/chat/completions",
+                            timeout=300, json=_chat_payload(messages, temperature, think))
     return d["choices"][0]["message"]["content"]
 
 
 async def _get_memories():
-    async with aiohttp.ClientSession() as s:
-        async with s.get(
-            f"{OWUI_BASE}/api/v1/memories/",
-            headers=_headers(),
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as r:
-            return await r.json()
+    return await _request_json("GET", f"{OWUI_BASE}/api/v1/memories/",
+                               timeout=30, headers=_headers())
 
 
 async def _active_users():
     """OWUI accounts — the people Vera serves. Each gets their own briefing/feed."""
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"{OWUI_BASE}/api/v1/users/", headers=_headers(),
-                             timeout=aiohttp.ClientTimeout(total=20)) as r:
-                d = await r.json()
+        d = await _request_json("GET", f"{OWUI_BASE}/api/v1/users/", timeout=20, headers=_headers())
         users = d.get("users") if isinstance(d, dict) else d
         return [{"id": u.get("id"), "name": u.get("name")} for u in (users or []) if u.get("id")]
     except Exception:

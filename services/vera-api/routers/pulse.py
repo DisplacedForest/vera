@@ -15,7 +15,6 @@ import time
 import uuid
 from datetime import datetime
 
-import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -127,14 +126,8 @@ async def _create_owui_chat(card):
         "files": [],
         "timestamp": ts * 1000,
     }
-    async with aiohttp.ClientSession() as s:
-        async with s.post(
-            f"{OWUI_BASE}/api/v1/chats/new",
-            headers=_headers(),
-            json={"chat": chat},
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as r:
-            obj = await r.json()
+    obj = await pulse_llm._request_json("POST", f"{OWUI_BASE}/api/v1/chats/new",
+                                        timeout=30, headers=_headers(), json={"chat": chat})
     return obj.get("id")
 
 

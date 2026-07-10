@@ -117,6 +117,40 @@ enum SelfTest {
         }
     }
 
+    /// Proves 401 session recovery against a live server: streams a reply, blocks on stdin
+    /// while the orchestrating shell restarts open-webui, then streams again through the SAME
+    /// VeraSocket instance. The second send must transparently re-sign-in and succeed.
+    static func recoveryProbe() async {
+        setbuf(stdout, nil)
+        guard let cfg = OWUIConfig.load() else {
+            print("RECOVERY ERROR: no OWUI config (~/.vera/config.json)"); exit(1)
+        }
+        let socket = VeraSocket(config: cfg)
+        func stream(_ n: Int) async -> String {
+            var out = ""
+            do {
+                for try await ev in socket.streamReply(chatID: "local:recovery\(n)",
+                                                       messageID: UUID().uuidString,
+                                                       messages: [["role": "user", "content": "Reply with exactly: alive\(n)"]]) {
+                    if case .content(let c) = ev { out = c }
+                }
+            } catch {
+                print("RECOVERY ERROR chat\(n): \(error.localizedDescription)"); exit(1)
+            }
+            return out
+        }
+        let first = await stream(1)
+        guard !first.isEmpty else { print("RECOVERY ERROR: empty first reply"); exit(1) }
+        print("CHAT1 OK: \(first.prefix(60))")
+        print("WAITING: restart the server, then send a newline on stdin")
+        _ = readLine()
+        let second = await stream(2)
+        guard !second.isEmpty else { print("RECOVERY ERROR: empty second reply"); exit(1) }
+        print("CHAT2 OK: \(second.prefix(60))")
+        print("RECOVERY OK")
+        exit(0)
+    }
+
     /// Pure, local checks — no network, no config required. CI runs exactly these; live
     /// checks follow only when an OWUI config exists.
     private static func runPure() {

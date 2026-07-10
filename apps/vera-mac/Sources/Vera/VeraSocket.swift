@@ -39,7 +39,7 @@ final class VeraSocket: @unchecked Sendable {
         self.statusCont = c
     }
 
-    var sessionID: String { manager?.engine?.sid ?? "" }
+    var sessionID: String { withLock { manager?.engine?.sid ?? "" } }
 
     /// Ensure the socket is connected/joined, then hand back the signed-in JWT (for admin REST).
     func currentToken() async throws -> String {
@@ -166,8 +166,9 @@ final class VeraSocket: @unchecked Sendable {
         }
         sock.on(clientEvent: .connect) { [weak self] _, _ in
             guard let self else { return }
-            // Join the per-user room; OWUI acks with {id, name} on success.
-            self.socket?.emitWithAck("user-join", ["auth": ["token": jwtToken]]).timingOut(after: 10) { [weak self] _ in
+            // Join the per-user room; OWUI acks with {id, name} on success. The token is read
+            // at join time so an auto-reconnect re-joins with whatever token is currently live.
+            self.socket?.emitWithAck("user-join", ["auth": ["token": self.token()]]).timingOut(after: 10) { [weak self] _ in
                 self?.markReady()
             }
         }
@@ -180,6 +181,18 @@ final class VeraSocket: @unchecked Sendable {
                 self?.failWaiters(SocketError.connectTimeout)
             }
         }
+    }
+
+    /// Drop the cached session so the next `ensureConnected` signs in fresh. The `conns` map
+    /// survives: in-flight streams resume routing once the replacement socket joins the room.
+    private func invalidateSession() {
+        let (mgr, sock): (SocketManager?, SocketIOClient?) = withLock {
+            let pair = (manager, socket)
+            manager = nil; socket = nil; jwt = nil; ready = false
+            return pair
+        }
+        sock?.disconnect()
+        mgr?.disconnect()
     }
 
     private func markReady() {
@@ -233,24 +246,31 @@ final class VeraSocket: @unchecked Sendable {
 
     private func loadCapsIfNeeded() async {
         if withLock({ _capsLoaded }) { return }
-        var tids: [String] = []
-        var fids: [String] = []
         let base = config.baseURL.absoluteString.hasSuffix("/")
             ? String(config.baseURL.absoluteString.dropLast()) : config.baseURL.absoluteString
-        if let url = URL(string: base + "/api/v1/models/model?id=\(config.model)") {
-            var r = URLRequest(url: url)
-            r.setValue("Bearer \(token())", forHTTPHeaderField: "Authorization")
-            if let (data, _) = try? await URLSession.shared.data(for: r),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let meta = obj["meta"] as? [String: Any] {
-                tids = meta["toolIds"] as? [String] ?? []
-                fids = meta["defaultFeatureIds"] as? [String] ?? []
-            }
-        }
+        guard let url = URL(string: base + "/api/v1/models/model?id=\(config.model)") else { return }
+        var r = URLRequest(url: url)
+        r.setValue("Bearer \(token())", forHTTPHeaderField: "Authorization")
+        guard let (data, resp) = try? await URLSession.shared.data(for: r),
+              (resp as? HTTPURLResponse)?.statusCode == 200,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let meta = obj["meta"] as? [String: Any] else { return }
+        let tids = meta["toolIds"] as? [String] ?? []
+        let fids = meta["defaultFeatureIds"] as? [String] ?? []
         withLock { _toolIDs = tids; _featureIDs = fids; _capsLoaded = true }
     }
 
     private func postCompletion(chatID: String, messageID: String, messagesJSON: Data, filesJSON: Data?) async throws {
+        do {
+            try await sendCompletion(chatID: chatID, messageID: messageID, messagesJSON: messagesJSON, filesJSON: filesJSON)
+        } catch let error as NSError where error.domain == "OWUI" && error.code == 401 {
+            invalidateSession()
+            try await ensureConnected()
+            try await sendCompletion(chatID: chatID, messageID: messageID, messagesJSON: messagesJSON, filesJSON: filesJSON)
+        }
+    }
+
+    private func sendCompletion(chatID: String, messageID: String, messagesJSON: Data, filesJSON: Data?) async throws {
         let bearer = token()
         await loadCapsIfNeeded()
         let (tids, fids) = withLock { (_toolIDs, _featureIDs) }

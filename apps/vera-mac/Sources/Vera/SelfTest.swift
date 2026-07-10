@@ -376,6 +376,25 @@ enum SelfTest {
             }
             print("  source mapping OK (\(mapped.count) chips, unresolvable dropped)")
 
+            let legacyEvent: [String: Any] = ["content": "partial reply", "done": false]
+            let snapshotEvent: [String: Any] = ["output": [
+                ["type": "reasoning", "content": [["type": "output_text", "text": "thinking about it"]]],
+                ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Paris is"]]],
+            ]]
+            let doneEvent: [String: Any] = ["done": true, "output": [
+                ["type": "reasoning", "content": [["type": "output_text", "text": "thinking about it"]]],
+                ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Paris is the capital."]]],
+            ]]
+            let chunkEvent: [String: Any] = ["choices": [["delta": ["role": "assistant", "content": NSNull()]]]]
+            guard VeraSocket.completionText(legacyEvent) == "partial reply",
+                  VeraSocket.completionText(snapshotEvent) == "Paris is",
+                  VeraSocket.completionText(doneEvent) == "Paris is the capital.",
+                  VeraSocket.completionText(doneEvent)?.contains("thinking") == false,
+                  VeraSocket.completionText(chunkEvent) == nil else {
+                print("SELFTEST ERROR: completion event text extraction"); exit(1)
+            }
+            print("  completion text OK (legacy string, output snapshot, done, reasoning excluded, chunk nil)")
+
             for preset in SchedulePreset.allCases {
                 guard SchedulePreset.match(preset.cron) == preset else {
                     print("SELFTEST ERROR: schedule preset \(preset.rawValue) round-trip"); exit(1)

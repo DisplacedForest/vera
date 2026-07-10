@@ -26,6 +26,7 @@ final class VeraSocket: @unchecked Sendable {
     private var ready = false
     private var waiters: [CheckedContinuation<Void, Error>] = []
     private var conns: [String: AsyncThrowingStream<StreamEvent, Error>.Continuation] = [:]
+    private var sourceAcc: [String: [[String: Any]]] = [:]
 
     /// Broadcast of every `status` event (tool/progress labels) for the MCP activity feed.
     let statusStream: AsyncStream<String>
@@ -58,7 +59,25 @@ final class VeraSocket: @unchecked Sendable {
     private func setSocket(_ m: SocketManager, _ s: SocketIOClient) { withLock { manager = m; socket = s } }
     private func setConn(_ id: String, _ c: AsyncThrowingStream<StreamEvent, Error>.Continuation) { withLock { conns[id] = c } }
     private func conn(_ id: String) -> AsyncThrowingStream<StreamEvent, Error>.Continuation? { withLock { conns[id] } }
-    private func dropConn(_ id: String) { withLock { conns[id] = nil } }
+    private func dropConn(_ id: String) { withLock { conns[id] = nil; sourceAcc[id] = nil } }
+    private func appendSource(_ id: String, _ entry: [String: Any]) -> [[String: Any]] {
+        withLock { sourceAcc[id, default: []].append(entry); return sourceAcc[id] ?? [] }
+    }
+
+    /// Cumulative reply text of a `chat:completion` event, from either server shape: a
+    /// `content` string, or an `output` snapshot whose `message` items carry `output_text`
+    /// pieces (reasoning items excluded).
+    static func completionText(_ body: [String: Any]) -> String? {
+        if let content = body["content"] as? String, !content.isEmpty { return content }
+        guard let output = body["output"] as? [[String: Any]] else { return nil }
+        var parts: [String] = []
+        for item in output where item["type"] as? String == "message" {
+            for piece in item["content"] as? [[String: Any]] ?? [] where piece["type"] as? String == "output_text" {
+                if let t = piece["text"] as? String { parts.append(t) }
+            }
+        }
+        return parts.isEmpty ? nil : parts.joined()
+    }
 
     enum SocketError: Error, LocalizedError {
         case noCredentials, signinFailed(Int), connectTimeout
@@ -257,14 +276,16 @@ final class VeraSocket: @unchecked Sendable {
                 let mapped = OWUISources.parse(rawSources)
                 if !mapped.isEmpty { cont.yield(.sources(mapped)) }
             }
-            if let content = body["content"] as? String, !content.isEmpty {
+            if let content = Self.completionText(body), !content.isEmpty {
                 cont.yield(.content(content))
             }
             if body["done"] as? Bool == true {
-                if let final = body["content"] as? String, !final.isEmpty { cont.yield(.content(final)) }
                 cont.yield(.done); cont.finish()
                 dropConn(messageID)
             }
+        case "source":
+            let mapped = OWUISources.parse(appendSource(messageID, body))
+            if !mapped.isEmpty { cont.yield(.sources(mapped)) }
         case "status":
             if body["hidden"] as? Bool == true { return }
             if let desc = body["description"] as? String { cont.yield(.status(desc)) }

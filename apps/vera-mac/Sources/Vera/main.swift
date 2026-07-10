@@ -17,6 +17,9 @@ if let idx = arguments.firstIndex(of: "--shot"), idx + 1 < arguments.count {
     try? RemindersBridge.shared.start()
     print("vera-reminders bridge serving on :\(RemindersBridge.shared.port), ctrl-c to stop")
     while true { try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+} else if arguments.contains("--selftest-recovery") {
+    // DEBUG-ONLY: prove 401 session recovery across a server restart (blocks on stdin between sends).
+    await SelfTest.recoveryProbe()
 } else if arguments.contains("--selftest") {
     await SelfTest.run()
 } else if arguments.contains("--install-conventions") || arguments.contains("--install-ask-convention") {

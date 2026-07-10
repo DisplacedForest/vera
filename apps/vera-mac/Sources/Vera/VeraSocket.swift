@@ -66,20 +66,51 @@ final class VeraSocket: @unchecked Sendable {
 
     /// Cumulative reply text of a `chat:completion` event, from either server shape: a
     /// `content` string, or an `output` snapshot whose `message` items carry `output_text`
-    /// pieces (reasoning items excluded).
+    /// pieces (reasoning items excluded). `function_call` items are re-serialized as the
+    /// `<details type="tool_calls">` markup ToolCallParser renders as chips.
     static func completionText(_ body: [String: Any]) -> String? {
         if let content = body["content"] as? String, !content.isEmpty { return content }
         guard let output = body["output"] as? [[String: Any]] else { return nil }
+        var results: [String: String] = [:]
+        for item in output where item["type"] as? String == "function_call_output" {
+            guard let callID = item["call_id"] as? String else { continue }
+            results[callID] = itemText(item, pieceType: "input_text")
+        }
         var parts: [String] = []
-        for item in output where item["type"] as? String == "message" {
-            var pieces: [String] = []
-            for piece in item["content"] as? [[String: Any]] ?? [] where piece["type"] as? String == "output_text" {
-                if let t = piece["text"] as? String { pieces.append(t) }
+        for item in output {
+            switch item["type"] as? String {
+            case "message":
+                let text = itemText(item, pieceType: "output_text").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty { parts.append(text) }
+            case "function_call":
+                guard let name = item["name"] as? String, !name.isEmpty else { continue }
+                let result = (item["call_id"] as? String).flatMap { results[$0] } ?? ""
+                let detail = escapeToolDetail(result.isEmpty ? (item["arguments"] as? String ?? "") : result)
+                parts.append("<details type=\"tool_calls\" done=\"true\" name=\"\(name)\">\n<summary>\(name)</summary>\n\(detail)\n</details>")
+            default:
+                break
             }
-            let text = pieces.joined().trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty { parts.append(text) }
         }
         return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+    }
+
+    private static func itemText(_ item: [String: Any], pieceType: String) -> String {
+        var pieces: [String] = []
+        for piece in item["content"] as? [[String: Any]] ?? [] where piece["type"] as? String == pieceType {
+            if let t = piece["text"] as? String { pieces.append(t) }
+        }
+        if pieces.isEmpty, let out = item["output"] as? [[String: Any]] {
+            for piece in out where piece["type"] as? String == pieceType {
+                if let t = piece["text"] as? String { pieces.append(t) }
+            }
+        }
+        return pieces.joined(separator: "\n")
+    }
+
+    private static func escapeToolDetail(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     enum SocketError: Error, LocalizedError {

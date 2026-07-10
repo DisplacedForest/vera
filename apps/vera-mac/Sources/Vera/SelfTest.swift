@@ -386,14 +386,20 @@ enum SelfTest {
                 ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Paris is the capital."]]],
             ]]
             let chunkEvent: [String: Any] = ["choices": [["delta": ["role": "assistant", "content": NSNull()]]]]
+            let toolTurnEvent: [String: Any] = ["done": true, "output": [
+                ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Let me check.\n"]]],
+                ["type": "tool_calls", "id": "tc_1"],
+                ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Here is the answer."]]],
+            ]]
             guard VeraSocket.completionText(legacyEvent) == "partial reply",
                   VeraSocket.completionText(snapshotEvent) == "Paris is",
                   VeraSocket.completionText(doneEvent) == "Paris is the capital.",
                   VeraSocket.completionText(doneEvent)?.contains("thinking") == false,
-                  VeraSocket.completionText(chunkEvent) == nil else {
+                  VeraSocket.completionText(chunkEvent) == nil,
+                  VeraSocket.completionText(toolTurnEvent) == "Let me check.\n\nHere is the answer." else {
                 print("SELFTEST ERROR: completion event text extraction"); exit(1)
             }
-            print("  completion text OK (legacy string, output snapshot, done, reasoning excluded, chunk nil)")
+            print("  completion text OK (legacy string, output snapshot, done, reasoning excluded, chunk nil, tool-turn paragraphs)")
 
             for preset in SchedulePreset.allCases {
                 guard SchedulePreset.match(preset.cron) == preset else {

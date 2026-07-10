@@ -388,18 +388,23 @@ enum SelfTest {
             let chunkEvent: [String: Any] = ["choices": [["delta": ["role": "assistant", "content": NSNull()]]]]
             let toolTurnEvent: [String: Any] = ["done": true, "output": [
                 ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Let me check.\n"]]],
-                ["type": "tool_calls", "id": "tc_1"],
+                ["type": "function_call", "id": "fc_1", "call_id": "c1", "name": "kitchen_status", "arguments": "{}", "status": "completed"],
+                ["type": "function_call_output", "id": "fco_1", "call_id": "c1", "output": [["type": "input_text", "text": "Low: <eggs> & milk"]], "status": "completed"],
                 ["type": "message", "role": "assistant", "content": [["type": "output_text", "text": "Here is the answer."]]],
             ]]
+            let toolTurnText = VeraSocket.completionText(toolTurnEvent) ?? ""
+            let (toolClean, toolCalls) = ToolCallParser.parse(toolTurnText)
             guard VeraSocket.completionText(legacyEvent) == "partial reply",
                   VeraSocket.completionText(snapshotEvent) == "Paris is",
                   VeraSocket.completionText(doneEvent) == "Paris is the capital.",
                   VeraSocket.completionText(doneEvent)?.contains("thinking") == false,
                   VeraSocket.completionText(chunkEvent) == nil,
-                  VeraSocket.completionText(toolTurnEvent) == "Let me check.\n\nHere is the answer." else {
+                  toolClean.hasPrefix("Let me check."), toolClean.hasSuffix("Here is the answer."),
+                  toolCalls.count == 1, toolCalls[0].name == "kitchen_status",
+                  toolCalls[0].detail == "Low: <eggs> & milk" else {
                 print("SELFTEST ERROR: completion event text extraction"); exit(1)
             }
-            print("  completion text OK (legacy string, output snapshot, done, reasoning excluded, chunk nil, tool-turn paragraphs)")
+            print("  completion text OK (legacy string, output snapshot, done, reasoning excluded, chunk nil, tool-turn chips round-trip)")
 
             for preset in SchedulePreset.allCases {
                 guard SchedulePreset.match(preset.cron) == preset else {

@@ -72,11 +72,14 @@ final class VeraSocket: @unchecked Sendable {
         guard let output = body["output"] as? [[String: Any]] else { return nil }
         var parts: [String] = []
         for item in output where item["type"] as? String == "message" {
+            var pieces: [String] = []
             for piece in item["content"] as? [[String: Any]] ?? [] where piece["type"] as? String == "output_text" {
-                if let t = piece["text"] as? String { parts.append(t) }
+                if let t = piece["text"] as? String { pieces.append(t) }
             }
+            let text = pieces.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { parts.append(text) }
         }
-        return parts.isEmpty ? nil : parts.joined()
+        return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
     }
 
     enum SocketError: Error, LocalizedError {

@@ -10,6 +10,7 @@ enum MessageState: String, Sendable, Hashable {
 protocol ChatRepository: Sendable {
     func listConversations() throws -> [Conversation]
     func messages(conversationID: String) throws -> [Message]
+    func recentMessages(conversationID: String, limit: Int) throws -> [Message]
     func saveConversation(_ conversation: Conversation) throws
     func saveMessage(_ message: Message, conversationID: String, ordinal: Int) throws
     func deleteConversation(_ id: String) throws
@@ -192,27 +193,32 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
 
     func messages(conversationID: String) throws -> [Message] {
         try database.read { db in
-            try Row.fetchAll(db, sql: """
+            let rows = try Row.fetchAll(db, sql: """
                 SELECT id, role, content, created_at, state, failure, model_id, tool_activity_json
                 FROM messages
                 WHERE conversation_id = ?
                 ORDER BY ordinal ASC
-                """, arguments: [conversationID]).compactMap { row in
-                    guard let id = UUID(uuidString: row["id"]),
-                          let role = Message.Role(rawValue: row["role"]),
-                          let state = MessageState(rawValue: row["state"]) else { return nil }
-                    let activityData: Data? = (row["tool_activity_json"] as String?).flatMap { $0.data(using: .utf8) }
-                    let activities = activityData.flatMap { try? JSONDecoder().decode([NativeToolActivity].self, from: $0) } ?? []
-                    return Message(
-                        id: id,
-                        role: role,
-                        text: row["content"],
-                        createdAt: Date(timeIntervalSince1970: row["created_at"]),
-                        state: state,
-                        failure: row["failure"],
-                        modelID: row["model_id"],
-                        toolActivities: activities)
-                }
+                """, arguments: [conversationID])
+            return Self.decodeMessages(rows)
+        }
+    }
+
+    func recentMessages(conversationID: String, limit: Int) throws -> [Message] {
+        guard limit > 0 else { return [] }
+        return try database.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, role, content, created_at, state, failure, model_id, tool_activity_json
+                FROM (
+                    SELECT id, role, content, created_at, state, failure, model_id,
+                           tool_activity_json, ordinal
+                    FROM messages
+                    WHERE conversation_id = ?
+                    ORDER BY ordinal DESC
+                    LIMIT ?
+                )
+                ORDER BY ordinal ASC
+                """, arguments: [conversationID, limit])
+            return Self.decodeMessages(rows)
         }
     }
 
@@ -443,6 +449,23 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
 
     private static func encode<T: Encodable>(_ value: T) throws -> String {
         String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
+    }
+
+    private static func decodeMessages(_ rows: [Row]) -> [Message] {
+        rows.compactMap { row in
+            guard let id = UUID(uuidString: row["id"]),
+                  let role = Message.Role(rawValue: row["role"]),
+                  let state = MessageState(rawValue: row["state"]) else { return nil }
+            let activityData: Data? = (row["tool_activity_json"] as String?).flatMap { $0.data(using: .utf8) }
+            let activities = activityData.flatMap {
+                try? JSONDecoder().decode([NativeToolActivity].self, from: $0)
+            } ?? []
+            return Message(
+                id: id, role: role, text: row["content"],
+                createdAt: Date(timeIntervalSince1970: row["created_at"]),
+                state: state, failure: row["failure"], modelID: row["model_id"],
+                toolActivities: activities)
+        }
     }
 
     private static func decode<T: Decodable>(_ raw: String?, as type: T.Type) -> T? {

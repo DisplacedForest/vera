@@ -567,15 +567,16 @@ final class ChatStore: ObservableObject {
             memoryServiceState = nativeMemorySettings.enabled ? .setupRequired : .off
             return
         }
-        let candidates = conversations.filter { !$0.memoryExcluded }.prefix(12)
+        let candidates = Array(conversations.lazy.filter { !$0.memoryExcluded }.prefix(12))
         memoryServiceState = .indexing
         Task {
             do {
                 var reviewedTurns = 0
-                for conversation in candidates where reviewedTurns < 12 {
+                var reviewedBytes = 0
+                search: for conversation in candidates where reviewedTurns < 12 {
                     let messages = conversation.messages.isEmpty
-                        ? try repository?.messages(conversationID: conversation.id) ?? []
-                        : conversation.messages
+                        ? try repository?.recentMessages(conversationID: conversation.id, limit: 48) ?? []
+                        : Array(conversation.messages.suffix(48))
                     for index in messages.indices where reviewedTurns < 12 {
                         guard messages[index].role == .user,
                               messages.indices.contains(index + 1),
@@ -583,6 +584,9 @@ final class ChatStore: ObservableObject {
                               NativeMemoryExtractionPolicy.disposition(
                                 user: messages[index].text, assistant: messages[index + 1],
                                 conversationExcluded: conversation.memoryExcluded) == .eligible else { continue }
+                        let turnBytes = min(messages[index].text.utf8.count, 4_000)
+                            + min(messages[index + 1].text.utf8.count, 4_000)
+                        guard reviewedBytes + turnBytes <= 48_000 else { break search }
                         let proposals = try await service.proposals(
                             user: messages[index].text, assistant: messages[index + 1].text,
                             sourceConversationID: conversation.id,
@@ -591,6 +595,7 @@ final class ChatStore: ObservableObject {
                         try await saveMemoryProposals(
                             proposals, service: service, repository: memoryRepository)
                         reviewedTurns += 1
+                        reviewedBytes += turnBytes
                     }
                 }
                 reloadNativeMemory()

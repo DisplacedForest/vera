@@ -36,7 +36,7 @@ If embeddings or extraction is unconfigured, unreachable, unauthorized, malforme
 
 After an eligible completed turn, the optional extraction model receives only bounded user and assistant turn text plus a bounded summary of existing approved memory. It returns structured create, update, merge, suppress, expire, or delete proposals. Empty, private, excluded, failed, interrupted, or tool-only turns do not create proposals. A conversation can be excluded from memory suggestions from its sidebar menu.
 
-The past-chat search control scans at most 12 eligible completed local turns per run and creates reviewable proposals with direct source-conversation links. Text that matches credential, token, password, private-key, or similar secret patterns is not sent to memory services and cannot be stored as a record or proposal.
+The past-chat search control reads at most 48 recent messages from each of 12 local conversations, stops after 12 eligible completed turns or 48,000 text bytes, and creates reviewable proposals with direct source-conversation links. Text that matches credential, token, password, private-key, action-token, hidden-reasoning, function-code, or similar secret patterns is not sent to memory services and cannot be stored as a record or proposal.
 
 ## Legacy behavior and native differences
 

@@ -637,7 +637,11 @@ enum SelfTest {
                   NativeMemoryProposalParser.parse(
                     "{\"proposals\":[{\"kind\":\"create\",\"title\":\"Credential\",\"summary\":\"OPENAI_API_KEY=sk-1234567890abcdef\",\"details\":[\"Keep this secret\"],\"group\":\"You\",\"category\":\"other\",\"bank\":\"personal\",\"durability\":\"durable\",\"expiry\":null,\"target_ids\":[]}]}",
                     sourceConversationID: nil, sourceMessageID: nil, existing: [], now: now).isEmpty,
-                  NativeMemorySafety.containsSensitiveData("OPENAI_API_KEY=sk-1234567890abcdef") else {
+                  NativeMemorySafety.containsSensitiveData("OPENAI_API_KEY=sk-1234567890abcdef"),
+                  NativeMemorySafety.containsSensitiveData("action_token=act_live_123456789"),
+                  NativeMemorySafety.containsSensitiveData("act_live_123456789"),
+                  NativeMemorySafety.containsSensitiveData("<think>private chain</think>"),
+                  NativeMemorySafety.containsSensitiveData("class Filter:\n    async def inlet(self, body):") else {
                 print("SELFTEST ERROR: native memory structured proposal validation"); exit(1)
             }
             let similar = NativeMemoryRecord(
@@ -732,6 +736,11 @@ enum SelfTest {
             var scanSettings = memorySettings
             scanSettings.searchPastChats = true
             let extractionsBeforeScan = memoryService.extractionCalls
+            guard let boundedConversationID = store.selectedID,
+                  try repository.recentMessages(
+                    conversationID: boundedConversationID, limit: 1).count == 1 else {
+                print("SELFTEST ERROR: native memory bounded history read"); exit(1)
+            }
             store.updateNativeMemory(settings: scanSettings, service: memoryService)
             store.searchPastChatsForMemory()
             for _ in 0..<100 where memoryService.extractionCalls == extractionsBeforeScan {
@@ -748,6 +757,9 @@ enum SelfTest {
             }
             let callsBeforeSecret = memoryService.embedCalls + memoryService.extractionCalls
             store.requestMemoryChange("OPENAI_API_KEY=sk-1234567890abcdef")
+            store.requestMemoryChange("action_token=act_live_123456789")
+            store.requestMemoryChange("<think>private chain</think>")
+            store.requestMemoryChange("class Filter:\n    async def inlet(self, body):")
             try? await Task.sleep(nanoseconds: 20_000_000)
             guard memoryService.embedCalls + memoryService.extractionCalls == callsBeforeSecret else {
                 print("SELFTEST ERROR: native memory secret sent to optional service"); exit(1)

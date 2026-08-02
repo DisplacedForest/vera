@@ -56,12 +56,20 @@ enum NativeMemoryExtractionPolicy {
 
 enum NativeMemorySafety {
     private static let patterns = [
-        #"(?i)\b(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret)\b\s*[:=]\s*\S+"#,
+        #"(?i)\b(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|action[_ -]?token|client[_ -]?secret|private[_ -]?key|authorization|password|secret)\b\s*[:=]\s*\S+"#,
         #"\bsk-[A-Za-z0-9_-]{8,}\b"#,
+        #"\bact_(?:live|test)_[A-Za-z0-9_-]{8,}\b"#,
         #"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"#,
+        #"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"#,
+        #"\bAIza[A-Za-z0-9_-]{20,}\b"#,
+        #"(?i)\bbearer\s+[A-Za-z0-9._-]{8,}"#,
         #"\bAKIA[0-9A-Z]{16}\b"#,
         #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#,
         #"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"#,
+        #"(?is)<(think|analysis|reasoning)>.*?</\1>"#,
+        #"(?i)\b(hidden reasoning|chain[- ]of[- ]thought)\b\s*[:=]"#,
+        #"(?im)^\s*(class\s+\w+|(?:async\s+)?def\s+\w+\s*\(|from\s+\w+(?:\.\w+)*\s+import\s+|import\s+\w+)"#,
+        #"(?i)\bself\.valves\b"#,
     ]
 
     static func containsSensitiveData(_ value: String) -> Bool {

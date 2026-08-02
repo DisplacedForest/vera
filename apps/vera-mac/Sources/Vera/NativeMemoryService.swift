@@ -66,17 +66,17 @@ enum NativeMemorySafety {
         #"\bAKIA[0-9A-Z]{16}\b"#,
         #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#,
         #"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"#,
-        #"(?is)<(think|analysis|reasoning)>.*?</\1>"#,
+        #"(?is)<(think|thought|analysis|reasoning)>.*?</\1>"#,
         #"(?i)\b(hidden reasoning|chain[- ]of[- ]thought)\b\s*[:=]"#,
         #"(?is)(^|[\n;\"'])\s*(class\s+\w+\s*[:(]|(?:async\s+)?def\s+\w+\s*\(|from\s+\w+(?:\.\w+)*\s+import\s+|import\s+\w+)"#,
         #"(?i)\b(class\s+(filter|valves)\b|(?:async\s+)?def\s+(inlet|outlet)\s*\(|from\s+pydantic\s+import\b|self\.valves\b)"#,
     ]
 
     private static let markerPatterns = [
-        #"(?i)<\s*/?\s*(think|analysis|reasoning)\b"#,
-        #"(?i)<\|\s*(think|analysis|reasoning)\s*\|>"#,
-        #"(?i)\[\s*(think|analysis|reasoning)\s*\]"#,
-        #"(?i)[<\[{(][^>\]})\n]{0,20}(think|analysis|reasoning|scratchpad)[^>\]})\n]{0,20}[>\]})]"#,
+        #"(?i)<\s*/?\s*(think|thought|analysis|reasoning)\b"#,
+        #"(?i)<\|\s*(think|thought|analysis|reasoning)\s*\|>"#,
+        #"(?i)\[\s*(think|thought|analysis|reasoning)\s*\]"#,
+        #"(?i)[<\[{(][^>\]})\n]{0,20}(think|thought|analysis|reasoning|scratchpad)[^>\]})\n]{0,20}[>\]})]"#,
         #"(?i)\b(begin|end)\s+(hidden\s+)?(reasoning|analysis|chain[- ]of[- ]thought)\b"#,
         #"(?i)\b(internal reasoning|hidden reasoning|chain[- ]of[- ]thought|private scratchpad)\b"#,
         #"(?im)^\s*(analysis|reasoning|thoughts?|scratchpad)\b"#,
@@ -94,6 +94,10 @@ enum NativeMemorySafety {
             return true
         }
         if markerPatterns.contains(where: { value.range(of: $0, options: .regularExpression) != nil }) {
+            return true
+        }
+        if value.contains("{") || value.contains("}")
+            || (value.contains("[") && value.contains("]")) {
             return true
         }
         guard let data = value.data(using: .utf8),

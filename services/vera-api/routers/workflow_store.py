@@ -4,8 +4,10 @@ import sqlite3
 import time
 import uuid
 
+import data_root
 
-DB_PATH = os.environ.get("WORKFLOW_DB_PATH", "/data/workflows.db")
+
+DB_PATH = os.environ.get("WORKFLOW_DB_PATH", os.path.join(data_root.resolve(), "workflows.db"))
 SUPPORTED_NODE_TYPES = {
     "pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit",
     "pulse.cover_art", "pulse.visual_review", "pulse.cover_retry", "pulse.inject",

@@ -13,6 +13,7 @@ STORE_PATHS = {
     "VEIN_ENGINE_DB_PATH": "vein_engine.db",
     "MEDIA_DB_PATH": "media.db",
     "PULSE_DB_PATH": "pulse.db",
+    "WORKFLOW_DB_PATH": "workflows.db",
     "ANALYST_LOG_PATH": "analyst_log.jsonl",
     "RHYTHM_DB_PATH": "rhythm.db",
     "SCHEDULER_DB_PATH": "scheduler.db",

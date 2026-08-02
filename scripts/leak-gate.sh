@@ -18,6 +18,20 @@ if git log --all --format='%B' | grep -Eq '(^|[^A-Za-z0-9])SER-[0-9]+'; then
     fail=1
 fi
 
+if git log --all --format='%B' | grep -Fq '—'; then
+    echo "LEAK [public-history]: em dash found in reachable commit metadata" >&2
+    fail=1
+fi
+
+if git log --all --format= --raw --no-abbrev -- README.md ':(glob)**/README.md' \
+    | awk '$1 ~ /^:/ && $4 !~ /^0+$/ {print $4}' \
+    | sort -u \
+    | git cat-file --batch \
+    | grep -Fq '—'; then
+    echo "LEAK [public-history]: em dash found in reachable README history" >&2
+    fail=1
+fi
+
 # Read a value from the environment, falling back to a bare KEY=value line in .env.
 resolve() {
     _v=$(eval "printf '%s' \"\${$1:-}\"")

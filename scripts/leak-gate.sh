@@ -13,6 +13,11 @@ cd "$ROOT"
 ALLOW="scripts/leak-allow.txt"
 fail=0
 
+if git log --all --format='%B' | grep -Eq '(^|[^A-Za-z0-9])SER-[0-9]+'; then
+    echo "LEAK [public-history]: internal issue identifier found in reachable commit metadata" >&2
+    fail=1
+fi
+
 # Read a value from the environment, falling back to a bare KEY=value line in .env.
 resolve() {
     _v=$(eval "printf '%s' \"\${$1:-}\"")
@@ -49,7 +54,7 @@ scan() {
 scan "lan-ip"          '(^|[^0-9.])(192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}'
 scan "lan-ip-10"       '(^|[^0-9.])10(\.[0-9]{1,3}){3}([^0-9]|$)'
 scan "home-abs-path"   '/Users/[A-Za-z0-9]'
-scan "ser-ref-comment" '(#|//|/\*|--).*SER-[0-9]'
+scan "internal-issue-ref" 'SER-[0-9]+'
 
 # Secret-shaped strings. The shapes are the single source shared with the vein export
 # sanitizer (services/vera-api/routers/leak_patterns.txt), so the gate and the sanitizer

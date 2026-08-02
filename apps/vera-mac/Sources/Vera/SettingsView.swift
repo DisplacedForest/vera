@@ -7,8 +7,10 @@ struct SettingsView: View {
     @EnvironmentObject var store: ChatStore
     var body: some View {
         TabView(selection: $store.settingsTab) {
-            ConnectionTab().tabItem { Label("Connection", systemImage: "link") }.tag(SettingsTab.connection)
+            ConnectionTab().tabItem { Label("Endpoints", systemImage: "link") }.tag(SettingsTab.connection)
             ModelTab().tabItem { Label("Model", systemImage: "cpu") }.tag(SettingsTab.model)
+            PersonaTab().tabItem { Label("Persona", systemImage: "text.quote") }.tag(SettingsTab.persona)
+            NativeToolsTab().tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }.tag(SettingsTab.nativeTools)
             ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }.tag(SettingsTab.services)
             // Plugins and MCP are configuration surfaces, not destinations — they live here, not the sidebar.
             PluginsView().tabItem { Label("Plugins", systemImage: "shippingbox") }.tag(SettingsTab.plugins)
@@ -28,15 +30,13 @@ private struct ConnectionTab: View {
     @EnvironmentObject var config: ConfigStore
     var body: some View {
         Form {
-            Section("Model endpoint") {
-                ConfigField(label: "Base URL", key: "model_base", placeholder: "http://my-model-host:11434/v1",
-                            tip: "Use the OpenAI-compatible API root ending in /v1.")
-                ConfigField(label: "API key (optional)", key: "model_api_key", secure: true)
-                InlineTest(title: "Test connection") {
-                    let models = try await ConnectionTest.models(
-                        base: config["model_base"], apiKey: config["model_api_key"])
-                    return "Connected. Found \(models.count) model\(models.count == 1 ? "" : "s")"
-                }
+            Section("Saved endpoints") {
+                NativeEndpointEditor()
+            }
+            Section("Setup guide") {
+                Text("Run the guide again at any time. Your saved endpoints, prompt, tools, and chat history stay in place.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                Button("Resume setup guide") { config.beginOnboarding() }
             }
             SaveSection()
         }
@@ -45,55 +45,250 @@ private struct ConnectionTab: View {
 }
 
 private struct ModelTab: View {
-    @EnvironmentObject var config: ConfigStore
-    @State private var advanced = false
-    @State private var models: [String] = []
-    @State private var discoveryStatus: String?
-    @State private var discovering = false
     var body: some View {
         Form {
-            Section("Model") {
-                if !models.isEmpty {
-                    Picker("Discovered model", selection: config.binding("model")) {
-                        ForEach(models, id: \.self) { Text($0).tag($0) }
-                    }
-                }
-                ConfigField(label: "Model id", key: "model", placeholder: "your-model-id",
-                            tip: "Enter an id directly when the endpoint does not support model discovery.")
-                HStack(spacing: 10) {
-                    Button(discovering ? "Discovering…" : "Discover models") { discover() }
-                        .disabled(discovering)
-                    if discovering { ProgressView().controlSize(.small) }
-                    if let discoveryStatus {
-                        Text(discoveryStatus).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    }
-                    Spacer()
-                }
-            }
-            Section {
-                DisclosureGroup("Advanced", isExpanded: $advanced) {
-                    ConfigField(label: "Chat template kwargs", key: "chat_template_kwargs",
-                                placeholder: "{\"enable_thinking\": false}",
-                                tip: "Server-specific chat-template options as JSON (e.g. the Qwen3 thinking toggle on llama.cpp/vLLM). Leave empty for strict OpenAI endpoints.")
-                }
+            Section("Choose a model") {
+                NativeModelEditor()
             }
             SaveSection()
         }
         .formStyle(.grouped)
     }
+}
+
+private struct PersonaTab: View {
+    var body: some View {
+        Form {
+            Section("System prompt") { NativePersonaEditor() }
+            SaveSection()
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct NativeToolsTab: View {
+    var body: some View {
+        Form {
+            Section("Tools available to the model") { NativeToolEditor() }
+            SaveSection()
+        }
+        .formStyle(.grouped)
+    }
+}
+
+struct NativeEndpointEditor: View {
+    @EnvironmentObject var config: ConfigStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if config.nativeSettings.profiles.isEmpty {
+                Text("Add an OpenAI-compatible endpoint to begin.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                Button("Add endpoint") { config.addNativeProfile() }
+            } else {
+                HStack(spacing: 10) {
+                    Picker("Endpoint", selection: Binding(
+                        get: { config.nativeSettings.activeProfileID ?? "" },
+                        set: { config.selectProfile($0) })) {
+                        ForEach(config.nativeSettings.profiles) { profile in
+                            Text(profile.name).tag(profile.id)
+                        }
+                    }
+                    Button("Add") { config.addNativeProfile() }
+                }
+                LabeledContent("Saved name") {
+                    TextField("Home model server", text: config.activeProfileBinding(\.name))
+                        .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+                }
+                LabeledContent("Base URL") {
+                    TextField("https://model-host.example/v1", text: config.activeProfileBinding(\.baseURL))
+                        .textFieldStyle(.roundedBorder).autocorrectionDisabled().frame(maxWidth: 360)
+                }
+                LabeledContent("API key") {
+                    SecureField("Optional", text: config.apiKeyBinding())
+                        .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+                }
+                Text("API keys are saved in your Mac keychain. Use the OpenAI-compatible API root ending in /v1.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                if let override = config.envOverride("model_base") {
+                    Text("\(override) currently overrides this saved endpoint URL.")
+                        .font(.system(size: 11)).foregroundStyle(.orange)
+                }
+            }
+        }
+        .onAppear {
+            if config.nativeSettings.profiles.isEmpty { config.addNativeProfile() }
+        }
+    }
+}
+
+struct NativeModelEditor: View {
+    @EnvironmentObject var config: ConfigStore
+    @State private var discovery: ModelDiscoveryState = .idle
+
+    private var profile: NativeEndpointProfile? { config.activeNativeProfile }
+    private var models: [String] {
+        switch discovery {
+        case .models(let values): return values
+        default: return profile?.discoveredModels ?? []
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let profile {
+                Text("Endpoint: \(profile.name)")
+                    .font(.system(size: 12, weight: .medium))
+                Button(discovery == .loading ? "Discovering…" : "Refresh model list") { discover() }
+                    .disabled(discovery == .loading)
+                discoveryMessage
+                if !profile.selectedModel.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Selected model").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                        Text(config.nativeResolved?.model ?? profile.selectedModel).font(.system(.body, design: .monospaced))
+                        Text(config.envOverride("model").map { "\($0) selects the active model. Change that environment value to use the saved choice." }
+                            ?? profile.selectionBasis?.explanation
+                            ?? "Choose a model below.")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        if !profile.discoveredModels.isEmpty,
+                           !profile.discoveredModels.contains(profile.selectedModel) {
+                            Text("This saved selection was not in the latest model list. It stays selected until you choose another model.")
+                                .font(.system(size: 11)).foregroundStyle(.orange)
+                        }
+                    }
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                if models.isEmpty {
+                    Text("No cached models. Refresh to ask this endpoint for its model list.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(models, id: \.self) { model in
+                            Button { config.selectNativeModel(model) } label: {
+                                HStack {
+                                    Image(systemName: profile.selectedModel == model ? "checkmark.circle.fill" : "circle")
+                                    Text(model).font(.system(.body, design: .monospaced))
+                                    Spacer()
+                                }
+                                .contentShape(Rectangle()).padding(.vertical, 7)
+                            }
+                            .buttonStyle(.plain)
+                            if model != models.last { Divider() }
+                        }
+                    }
+                }
+            } else {
+                Text("Add an endpoint before discovering models.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+    }
+
+    @ViewBuilder private var discoveryMessage: some View {
+        switch discovery {
+        case .idle:
+            if !models.isEmpty {
+                Label("Showing the saved model list from the last successful refresh.", systemImage: "clock.arrow.circlepath")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
+        case .loading:
+            HStack { ProgressView().controlSize(.small); Text("Loading model identifiers…") }
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+        case .models(let values):
+            Label("Loaded \(values.count) model identifier\(values.count == 1 ? "" : "s").", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 12)).foregroundStyle(.green)
+        case .empty:
+            Label("The endpoint returned an empty model list. Check the server, then retry.", systemImage: "tray")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+        case .noUsableModels:
+            Label("The endpoint returned model entries, but none had a usable identifier.", systemImage: "exclamationmark.triangle")
+                .font(.system(size: 12)).foregroundStyle(.orange)
+        case .authenticationFailed:
+            Label("Authentication failed. Check the API key, save it, then retry.", systemImage: "lock.trianglebadge.exclamationmark")
+                .font(.system(size: 12)).foregroundStyle(.red)
+        case .networkFailed:
+            Label("Vera could not reach the endpoint. Check its URL and network connection, then retry.", systemImage: "network.slash")
+                .font(.system(size: 12)).foregroundStyle(.red)
+        case .malformed:
+            Label("The endpoint returned a model response Vera could not read.", systemImage: "doc.badge.ellipsis")
+                .font(.system(size: 12)).foregroundStyle(.red)
+        case .failed(let message):
+            Label(message, systemImage: "xmark.circle.fill")
+                .font(.system(size: 12)).foregroundStyle(.red)
+        }
+    }
 
     private func discover() {
-        discovering = true
-        discoveryStatus = nil
+        guard let profile else { return }
+        discovery = .loading
         Task {
-            defer { discovering = false }
             do {
-                models = try await ConnectionTest.models(
-                    base: config["model_base"], apiKey: config["model_api_key"])
-                if config["model"].isEmpty, let first = models.first { config["model"] = first }
-                discoveryStatus = models.isEmpty ? "No models returned. Enter an id manually." : "Found \(models.count)"
+                let values = try await ConnectionTest.models(base: profile.baseURL, apiKey: config.activeNativeAPIKey)
+                config.cacheDiscoveredModels(values)
+                discovery = values.isEmpty ? .empty : .models(values)
+                try? config.save()
             } catch {
-                discoveryStatus = error.localizedDescription
+                discovery = ModelDiscoveryState.classify(error)
+            }
+        }
+    }
+}
+
+struct NativePersonaEditor: View {
+    @EnvironmentObject var config: ConfigStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("This prompt is added to each new model request. It does not rewrite earlier messages.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            TextEditor(text: config.systemPromptBinding())
+                .font(.system(size: 13)).frame(minHeight: 150)
+                .padding(6).background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
+            HStack {
+                Text("Saved locally on this Mac.").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button("Reset to Vera’s default") { config.resetSystemPrompt() }
+            }
+        }
+    }
+}
+
+struct NativeToolEditor: View {
+    @EnvironmentObject var config: ConfigStore
+
+    private var available: [NativeChatToolDescriptor] { NativeChatToolCatalog.tools.filter(\.available) }
+    private var unavailable: [NativeChatToolDescriptor] { NativeChatToolCatalog.tools.filter { !$0.available } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Only enabled tools that native chat can actually run are shared with the model.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            if available.isEmpty {
+                Label("No native chat tools are available in this version.", systemImage: "wrench.and.screwdriver")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            ForEach(available) { tool in
+                Toggle(isOn: Binding(
+                    get: { config.nativeSettings.enabledToolIDs.contains(tool.id) },
+                    set: { config.setNativeTool(tool.id, enabled: $0) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(tool.name)
+                        Text(tool.summary).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+            }
+            if !unavailable.isEmpty {
+                Text("Unavailable").font(.system(size: 12, weight: .semibold)).padding(.top, 4)
+                ForEach(unavailable) { tool in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label(tool.name, systemImage: "minus.circle")
+                        Text(tool.summary).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        Text(tool.setup).font(.system(size: 11)).foregroundStyle(.orange)
+                    }
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
+                }
             }
         }
     }
@@ -412,7 +607,7 @@ private struct SaveSection: View {
             status = "Saved. Add a /v1 model endpoint and model id to connect"
             return
         }
-        store.adoptNative(resolved)
+        store.adoptNative(resolved, systemPrompt: config.nativeSettings.systemPrompt)
         status = "Saved"
     }
 }

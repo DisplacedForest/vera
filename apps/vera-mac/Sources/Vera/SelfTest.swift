@@ -38,12 +38,90 @@ final class SelfTestNativeTransport: NativeChatTransport, @unchecked Sendable {
 enum SelfTest {
     static func run() async {
         runPure()
+        runNativeSettings()
         await runNativeStore()
         guard let cfg = OWUIConfig.load() else {
             print("SELFTEST OK (offline). No OWUI config (~/.vera/config.json), live checks skipped")
             exit(0)
         }
         await runLive(cfg)
+    }
+
+    private static func runNativeSettings() {
+        let legacy: [String: Any] = [
+            "model_base": "https://models.example/v1",
+            "model": "model-b",
+            "model_api_key": "secret",
+        ]
+        var settings = NativeChatSettings.load(from: legacy)
+        guard settings.version == 1,
+              settings.profiles.count == 1,
+              settings.activeProfile?.name == "My model endpoint",
+              settings.activeProfile?.selectedModel == "model-b",
+              settings.activeProfile?.selectionBasis == .restored,
+              settings.onboardingState == .complete,
+              settings.systemPrompt == NativeChatSettings.defaultSystemPrompt else {
+            print("SELFTEST ERROR: native settings migration"); exit(1)
+        }
+        settings.systemPrompt = "Changed prompt"
+        settings.resetSystemPrompt()
+        guard settings.systemPrompt == NativeChatSettings.defaultSystemPrompt else {
+            print("SELFTEST ERROR: native prompt reset"); exit(1)
+        }
+        let restoredProfileID = settings.activeProfileID
+        settings.addProfile()
+        settings.updateActiveProfile {
+            $0.name = "Second endpoint"
+            $0.baseURL = "https://other.example/v1"
+        }
+        guard settings.activeProfile?.name == "Second endpoint" else {
+            print("SELFTEST ERROR: native endpoint profile add"); exit(1)
+        }
+        settings.activeProfileID = restoredProfileID
+        settings.cacheModels(["model-z", "model-a"])
+        guard settings.activeProfile?.discoveredModels == ["model-a", "model-z"],
+              settings.activeProfile?.selectedModel == "model-b" else {
+            print("SELFTEST ERROR: native model cache changed selection"); exit(1)
+        }
+        settings.selectModel("model-a", basis: .user)
+        settings.enabledToolIDs = ["missing", "disabled"]
+        settings.onboardingState = .skipped
+        settings.onboardingStep = 2
+        let persisted = settings.merging(into: legacy)
+        let roundTrip = NativeChatSettings.load(from: persisted)
+        guard roundTrip == settings,
+              persisted["model_api_key"] == nil,
+              NativeChatToolCatalog.exposed(enabledIDs: settings.enabledToolIDs).isEmpty,
+              ModelDiscoveryState.classify(NativeChatClient.ClientError.http(401, "")) == .authenticationFailed,
+              ModelDiscoveryState.classify(NativeChatClient.ClientError.invalidResponse) == .malformed,
+              ModelDiscoveryState.classify(NativeChatClient.ClientError.noUsableModels) == .noUsableModels,
+              ModelDiscoveryState.classify(URLError(.cannotConnectToHost)) == .networkFailed else {
+            print("SELFTEST ERROR: native settings persistence or state classification"); exit(1)
+        }
+        let config = NativeChatConfig(
+            baseURL: URL(string: "https://models.example/v1")!,
+            apiKey: nil,
+            model: "model-a",
+            chatTemplateKwargs: nil)
+        let client = NativeChatClient(config: config)
+        do {
+            let request = try client.request(messages: [
+                NativeChatMessage(role: "system", content: "Changed prompt"),
+                NativeChatMessage(role: "user", content: "Hello"),
+            ], model: "model-a")
+            guard let body = request.httpBody,
+                  let object = try JSONSerialization.jsonObject(with: body) as? [String: Any],
+                  object["model"] as? String == "model-a",
+                  object["tools"] == nil,
+                  let messages = object["messages"] as? [[String: String]],
+                  messages.first?["role"] == "system",
+                  messages.first?["content"] == "Changed prompt" else {
+                print("SELFTEST ERROR: native request settings shape"); exit(1)
+            }
+        } catch {
+            print("SELFTEST ERROR: native request settings shape \(error)"); exit(1)
+        }
+        print("  native settings OK (migration, persistence, prompt, discovery, tools, request shape)")
     }
 
     private static func runNativeStore() async {
@@ -73,7 +151,9 @@ enum SelfTest {
                   conversation.messages[1].text == "Native reply",
                   conversation.messages[1].state == .complete,
                   transport.histories.count == 2,
-                  transport.histories[1].map(\.content) == ["First", "Native reply", "Second"],
+                  transport.histories[1].map(\.content) == [
+                    NativeChatSettings.defaultSystemPrompt, "First", "Native reply", "Second",
+                  ],
                   try repository.messages(conversationID: conversation.id).count == 4 else {
                 print("SELFTEST ERROR: native store multi-turn persistence"); exit(1)
             }
@@ -92,6 +172,7 @@ enum SelfTest {
             store.sendText("After interruption")
             await waitForGeneration(store)
             guard transport.histories.last?.map(\.content) == [
+                NativeChatSettings.defaultSystemPrompt,
                 "First", "Native reply", "Second", "Native reply", "Fail", "After interruption",
             ] else {
                 print("SELFTEST ERROR: native interrupted reply reused as prompt history"); exit(1)
@@ -309,6 +390,19 @@ enum SelfTest {
             let modelData = Data("{\"data\":[{\"id\":\"zeta\"},{\"id\":\"alpha\"}]}".utf8)
             guard try NativeChatClient.modelIDs(from: modelData) == ["alpha", "zeta"] else {
                 print("SELFTEST ERROR: native model discovery decode"); exit(1)
+            }
+            guard try NativeChatClient.modelIDs(from: Data("{\"data\":[]}".utf8)).isEmpty else {
+                print("SELFTEST ERROR: native empty discovery decode"); exit(1)
+            }
+            do {
+                _ = try NativeChatClient.modelIDs(from: Data("{\"data\":[{\"name\":\"missing id\"}]}".utf8))
+                print("SELFTEST ERROR: native unusable discovery accepted"); exit(1)
+            } catch NativeChatClient.ClientError.noUsableModels {
+            }
+            do {
+                _ = try NativeChatClient.modelIDs(from: Data("{\"models\":[]}".utf8))
+                print("SELFTEST ERROR: native malformed discovery accepted"); exit(1)
+            } catch NativeChatClient.ClientError.invalidResponse {
             }
             do {
                 _ = try NativeChatClient.content(from: "not-json")

@@ -143,6 +143,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view.hasPrefix("settings-native-") {
+            content = AnyView(
+                NativeSettingsShotView(variant: view)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view.hasPrefix("settings-engine") {
             content = AnyView(
                 EngineSettingsShotView(variant: view)
@@ -498,25 +504,26 @@ struct SettingsShotView: View {
             Spacer()
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 3) {
-                    shotTab("Connection", "link", active: true)
+                    shotTab("Endpoints", "link", active: true)
                     shotTab("Model", "cpu", active: false)
-                    shotTab("Services", "server.rack", active: false)
-                    shotTab("Identity", "person", active: false)
+                    shotTab("Persona", "text.quote", active: false)
+                    shotTab("Tools", "wrench.and.screwdriver", active: false)
                 }
                 .padding(3).background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 9))
                 .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("MODEL ENDPOINT").font(.system(size: 10, weight: .semibold)).tracking(0.5)
+                    Text("SAVED ENDPOINTS").font(.system(size: 10, weight: .semibold)).tracking(0.5)
                         .foregroundStyle(Theme.textSecondary)
-                    fieldRow("Base URL", "http://my-model-host:11434/v1")
-                    fieldRow("API key (optional)", "••••••••••••••••")
+                    fieldRow("Endpoint", "Home model server")
+                    fieldRow("Base URL", "https://models.example/v1")
+                    fieldRow("API key", "Saved in Mac keychain")
                     HStack(spacing: 10) {
-                        Text("Test connection").font(.system(size: 12, weight: .medium))
+                        Text("Add endpoint").font(.system(size: 12, weight: .medium))
                             .padding(.horizontal, 12).padding(.vertical, 5)
                             .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 6))
-                        Label("Connected. Found 3 models", systemImage: "checkmark.circle.fill")
-                            .font(.system(size: 12)).foregroundStyle(Color(red: 0.36, green: 0.78, blue: 0.5))
+                        Text("API keys stay out of chat history and the settings file.")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         Spacer()
                     }
                 }
@@ -560,6 +567,126 @@ struct SettingsShotView: View {
                 .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline, lineWidth: 1))
         }
+    }
+}
+
+struct NativeSettingsShotView: View {
+    let variant: String
+
+    private var tab: String {
+        if variant.hasSuffix("persona") { return "Persona" }
+        if variant.hasSuffix("tools") { return "Tools" }
+        return "Model"
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 3) {
+                    shotTab("Endpoints", "link")
+                    shotTab("Model", "cpu")
+                    shotTab("Persona", "text.quote")
+                    shotTab("Tools", "wrench.and.screwdriver")
+                }
+                .padding(3).background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
+                bodyContent
+                HStack {
+                    Spacer()
+                    Text("Save").font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 14).padding(.vertical, 5)
+                        .background(Theme.accent.opacity(0.9)).foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            .padding(22).frame(width: 620)
+            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(Theme.textPrimary)
+    }
+
+    @ViewBuilder private var bodyContent: some View {
+        if tab == "Persona" {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("SYSTEM PROMPT").font(.system(size: 10, weight: .semibold)).tracking(0.5)
+                    .foregroundStyle(Theme.textSecondary)
+                Text("This prompt is added to each new model request. It does not rewrite earlier messages.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                Text(NativeChatSettings.defaultSystemPrompt)
+                    .font(.system(size: 13)).padding(12).frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+                    .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
+                HStack { Text("Saved locally on this Mac."); Spacer(); Text("Reset to Vera’s default") }
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+        } else if tab == "Tools" {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("TOOLS AVAILABLE TO THE MODEL").font(.system(size: 10, weight: .semibold)).tracking(0.5)
+                    .foregroundStyle(Theme.textSecondary)
+                Text("Only enabled tools that native chat can actually run are shared with the model.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                Label("No native chat tools are available in this version.", systemImage: "wrench.and.screwdriver")
+                    .font(.system(size: 12, weight: .medium))
+                Text("UNAVAILABLE").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                unavailable("Connected service tools", "Native chat cannot invoke connected service tools in this version.")
+                unavailable("Apple Reminders", "Reminders is not callable from native chat in this version.")
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("CHOOSE A MODEL").font(.system(size: 10, weight: .semibold)).tracking(0.5)
+                    .foregroundStyle(Theme.textSecondary)
+                HStack {
+                    Text("Home model server").font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    Text("Refresh model list").font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                if variant.hasSuffix("error") {
+                    Label("Authentication failed. Check the API key, save it, then retry.", systemImage: "lock.trianglebadge.exclamationmark")
+                        .font(.system(size: 12)).foregroundStyle(.red)
+                } else {
+                    Label("Loaded 3 model identifiers.", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 12)).foregroundStyle(.green)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("SELECTED MODEL").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    Text("qwen3-30b-a3b").font(.system(.body, design: .monospaced))
+                    Text("You chose this model.").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
+                ForEach(["qwen3-30b-a3b", "qwen3-coder-30b", "qwen3-vl-8b"], id: \.self) { model in
+                    HStack {
+                        Image(systemName: model == "qwen3-30b-a3b" ? "checkmark.circle.fill" : "circle")
+                        Text(model).font(.system(.body, design: .monospaced))
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    private func shotTab(_ title: String, _ icon: String) -> some View {
+        HStack(spacing: 5) { Image(systemName: icon); Text(title) }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(title == tab ? Theme.textPrimary : Theme.textSecondary)
+            .frame(maxWidth: .infinity).padding(.vertical, 5)
+            .background(title == tab ? Theme.surfaceHover : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+    }
+
+    private func unavailable(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Label(title, systemImage: "minus.circle")
+            Text(detail).font(.system(size: 11)).foregroundStyle(.orange)
+        }
+        .padding(9).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -708,21 +835,29 @@ struct OnboardingShotView: View {
                 HStack(spacing: 12) {
                     VeraMark(size: 28)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Welcome to Vera").font(.system(size: 20, weight: .semibold))
-                        Text("Point the app at an OpenAI-compatible model endpoint, and you're chatting.")
+                        Text("Set up Vera").font(.system(size: 20, weight: .semibold))
+                        Text("Connect a model, choose how Vera responds, and review available tools.")
                             .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     }
                 }
+                HStack(spacing: 8) {
+                    step("1", "Endpoint", done: true)
+                    Divider().frame(width: 14, height: 1)
+                    step("2", "Model", done: false)
+                    Divider().frame(width: 14, height: 1)
+                    step("3", "Persona", done: false)
+                    Divider().frame(width: 14, height: 1)
+                    step("4", "Tools", done: false)
+                }
                 VStack(alignment: .leading, spacing: 10) {
-                    fieldRow("Model endpoint", "http://my-model-host:11434/v1")
-                    fieldRow("API key (optional)", "••••••••••••••••")
-                    fieldRow("Model id", "your-model-id")
-                    fieldRow("vera-api URL (optional)", "http://my-api-host:8089")
+                    fieldRow("Saved name", "Home model server")
+                    fieldRow("Model endpoint", "https://models.example/v1")
+                    fieldRow("API key (optional)", "Saved in Mac keychain")
                     HStack(spacing: 10) {
-                        Text("Discover models").font(.system(size: 12, weight: .medium))
+                        Text("Add endpoint").font(.system(size: 12, weight: .medium))
                             .padding(.horizontal, 12).padding(.vertical, 5)
                             .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 6))
-                        Text("Found 3. Selected your-model-id.")
+                        Text("You can save more endpoints later in Settings.")
                             .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         Spacer()
                     }
@@ -730,7 +865,7 @@ struct OnboardingShotView: View {
                 HStack {
                     Spacer()
                     Text("Skip for now").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    Text("Connect").font(.system(size: 12, weight: .medium))
+                    Text("Continue").font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, 14).padding(.vertical, 6)
                         .background(Theme.accent.opacity(0.9)).foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -743,7 +878,15 @@ struct OnboardingShotView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundStyle(Theme.textPrimary)
-        .environment(\.colorScheme, .dark)
+    }
+
+    private func step(_ number: String, _ title: String, done: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: done ? "checkmark.circle.fill" : "\(number).circle.fill")
+            Text(title)
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(done ? Theme.accent : Theme.textSecondary)
     }
 
     private func fieldRow(_ label: String, _ value: String) -> some View {

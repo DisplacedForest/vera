@@ -37,6 +37,7 @@ final class ChatStore: ObservableObject {
     private var socket: VeraSocket?           // stream through OWUI's pipeline (tools + memory)
     private var nativeConfig: NativeChatConfig?
     private var nativeTransport: (any NativeChatTransport)?
+    private var nativeSystemPrompt: String
     private let repository: (any ChatRepository)?
     private let repositoryInitializationError: String?
     private let hasLegacyOWUI: Bool
@@ -50,12 +51,14 @@ final class ChatStore: ObservableObject {
 
     init(config: OWUIConfig?, client: OWUIClient?, socket: VeraSocket?,
          nativeConfig: NativeChatConfig?, nativeTransport: (any NativeChatTransport)?,
-         repository: (any ChatRepository)?, repositoryError: String? = nil, hasLegacyOWUI: Bool) {
+         repository: (any ChatRepository)?, repositoryError: String? = nil, hasLegacyOWUI: Bool,
+         nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt) {
         self.config = config
         self.client = client
         self.socket = socket
         self.nativeConfig = nativeConfig
         self.nativeTransport = nativeTransport
+        self.nativeSystemPrompt = nativeSystemPrompt
         self.repository = repository
         self.repositoryInitializationError = repositoryError
         self.hasLegacyOWUI = hasLegacyOWUI
@@ -105,7 +108,7 @@ final class ChatStore: ObservableObject {
 
     /// Standalone constructor (screenshots / `Shot`): loads config and builds its own deps.
     convenience init() {
-        let native = NativeChatConfig.load()
+        let native = ConfigStore().nativeResolved
         let legacy = OWUIConfig.load()
         let ambient = legacy ?? OWUIConfig.ambientOnly(native: native)
         self.init(
@@ -135,9 +138,10 @@ final class ChatStore: ObservableObject {
         client = OWUIClient(config: cfg)
     }
 
-    func adoptNative(_ cfg: NativeChatConfig) {
+    func adoptNative(_ cfg: NativeChatConfig, systemPrompt: String = NativeChatSettings.defaultSystemPrompt) {
         nativeConfig = cfg
         nativeTransport = NativeChatClient(config: cfg)
+        nativeSystemPrompt = systemPrompt
         let ambient = OWUIConfig.load() ?? OWUIConfig.ambientOnly(native: cfg)
         config = ambient
         client = ambient.map { OWUIClient(config: $0) }
@@ -667,9 +671,13 @@ final class ChatStore: ObservableObject {
             return
         }
 
-        let history = conversations[idx].messages
+        var history = conversations[idx].messages
             .filter { $0.state == .complete && !$0.text.isEmpty }
             .map { NativeChatMessage(role: $0.role.rawValue, content: $0.text) }
+        let prompt = nativeSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !prompt.isEmpty {
+            history.insert(NativeChatMessage(role: "system", content: prompt), at: 0)
+        }
         let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig.model)
         conversations[idx].messages.append(reply)
         let replyIndex = conversations[idx].messages.count - 1

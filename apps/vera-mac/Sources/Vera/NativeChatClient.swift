@@ -45,11 +45,80 @@ struct NativeChatConfig: Sendable, Equatable {
 struct NativeChatMessage: Sendable, Equatable {
     let role: String
     let content: String
+    let toolCallID: String?
+    let toolCalls: [NativeChatToolCall]
+
+    init(
+        role: String, content: String, toolCallID: String? = nil,
+        toolCalls: [NativeChatToolCall] = []
+    ) {
+        self.role = role
+        self.content = content
+        self.toolCallID = toolCallID
+        self.toolCalls = toolCalls
+    }
+}
+
+struct NativeChatStreamSnapshot: Sendable, Equatable {
+    let content: String
+    let toolCalls: [NativeChatToolCall]
+    let finishReason: String?
 }
 
 protocol NativeChatTransport: Sendable {
     func discoverModels() async throws -> [String]
-    func stream(messages: [NativeChatMessage], model: String) -> AsyncThrowingStream<String, Error>
+    func stream(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
+    ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error>
+}
+
+struct NativeChatDeltaAccumulator: Sendable {
+    private struct Builder: Sendable {
+        var id = ""
+        var name = ""
+        var arguments = ""
+    }
+
+    private var content = ""
+    private var builders: [Int: Builder] = [:]
+
+    mutating func consume(_ payload: String) throws -> NativeChatStreamSnapshot {
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NativeChatClient.ClientError.malformedEvent
+        }
+        if let error = object["error"] as? [String: Any] {
+            throw NativeChatClient.ClientError.server((error["message"] as? String) ?? "The model endpoint reported an error")
+        }
+        guard let choice = (object["choices"] as? [[String: Any]])?.first else {
+            throw NativeChatClient.ClientError.malformedEvent
+        }
+        let delta = choice["delta"] as? [String: Any]
+        if let fragment = delta?["content"] as? String { content += fragment }
+        if let calls = delta?["tool_calls"] as? [[String: Any]] {
+            for call in calls {
+                guard let index = call["index"] as? Int else {
+                    throw NativeChatClient.ClientError.malformedEvent
+                }
+                var builder = builders[index] ?? Builder()
+                if let id = call["id"] as? String, !id.isEmpty { builder.id = id }
+                if let function = call["function"] as? [String: Any] {
+                    if let name = function["name"] as? String { builder.name += name }
+                    if let arguments = function["arguments"] as? String { builder.arguments += arguments }
+                }
+                builders[index] = builder
+            }
+        }
+        let finishReason = choice["finish_reason"] as? String
+        let toolCalls = builders.keys.sorted().compactMap { index -> NativeChatToolCall? in
+            guard let builder = builders[index] else { return nil }
+            return NativeChatToolCall(id: builder.id, name: builder.name, arguments: builder.arguments)
+        }
+        if finishReason == "tool_calls", toolCalls.contains(where: { $0.id.isEmpty || $0.name.isEmpty }) {
+            throw NativeChatClient.ClientError.malformedEvent
+        }
+        return NativeChatStreamSnapshot(content: content, toolCalls: toolCalls, finishReason: finishReason)
+    }
 }
 
 struct ChatSSEDecoder: Sendable {
@@ -130,12 +199,15 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         return try Self.modelIDs(from: data)
     }
 
-    func request(messages: [NativeChatMessage], model: String) throws -> URLRequest {
+    func request(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema] = []
+    ) throws -> URLRequest {
         var payload: [String: Any] = [
             "model": model,
             "stream": true,
-            "messages": messages.map { ["role": $0.role, "content": $0.content] },
+            "messages": messages.map(Self.messageObject),
         ]
+        if !tools.isEmpty { payload["tools"] = tools.map(\.requestObject) }
         if let kwargs = config.chatTemplateKwargsObject() { payload["chat_template_kwargs"] = kwargs }
         var request = URLRequest(url: config.completionsURL)
         request.httpMethod = "POST"
@@ -146,11 +218,13 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         return request
     }
 
-    func stream(messages: [NativeChatMessage], model: String) -> AsyncThrowingStream<String, Error> {
+    func stream(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
+    ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let request = try request(messages: messages, model: model)
+                    let request = try request(messages: messages, model: model, tools: tools)
                     let (bytes, response) = try await session.bytes(for: request)
                     let status = try statusCode(response)
                     guard (200..<300).contains(status) else {
@@ -160,7 +234,8 @@ struct NativeChatClient: NativeChatTransport, Sendable {
                     }
                     var decoder = ChatSSEDecoder()
                     var chunk = Data()
-                    var accumulated = ""
+                    var accumulator = NativeChatDeltaAccumulator()
+                    var lastSnapshot = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
                     var completed = false
                     for try await byte in bytes {
                         try Task.checkCancellation()
@@ -169,10 +244,8 @@ struct NativeChatClient: NativeChatTransport, Sendable {
                             for payload in try decoder.feed(chunk) {
                                 chunk.removeAll(keepingCapacity: true)
                                 if payload == "[DONE]" { completed = true; break }
-                                if let delta = try Self.content(from: payload) {
-                                    accumulated += delta
-                                    continuation.yield(accumulated)
-                                }
+                                lastSnapshot = try accumulator.consume(payload)
+                                continuation.yield(lastSnapshot)
                             }
                             chunk.removeAll(keepingCapacity: true)
                         }
@@ -181,13 +254,14 @@ struct NativeChatClient: NativeChatTransport, Sendable {
                     if !chunk.isEmpty {
                         for payload in try decoder.feed(chunk, finishing: true) {
                             if payload == "[DONE]" { completed = true; break }
-                            if let delta = try Self.content(from: payload) {
-                                accumulated += delta
-                                continuation.yield(accumulated)
-                            }
+                            lastSnapshot = try accumulator.consume(payload)
+                            continuation.yield(lastSnapshot)
                         }
                     }
                     guard completed else { throw ClientError.interrupted }
+                    if !lastSnapshot.toolCalls.isEmpty, lastSnapshot.finishReason != "tool_calls" {
+                        throw ClientError.malformedEvent
+                    }
                     continuation.finish()
                 } catch is CancellationError {
                     continuation.finish()
@@ -200,20 +274,9 @@ struct NativeChatClient: NativeChatTransport, Sendable {
     }
 
     static func content(from payload: String) throws -> String? {
-        guard let data = payload.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ClientError.malformedEvent
-        }
-        if let error = object["error"] as? [String: Any] {
-            throw ClientError.server((error["message"] as? String) ?? "The model endpoint reported an error")
-        }
-        guard let choice = (object["choices"] as? [[String: Any]])?.first else {
-            throw ClientError.malformedEvent
-        }
-        let delta = choice["delta"] as? [String: Any]
-        if let content = delta?["content"] as? String { return content }
-        if choice["finish_reason"] is String || delta?["role"] is String { return nil }
-        return nil
+        var accumulator = NativeChatDeltaAccumulator()
+        let snapshot = try accumulator.consume(payload)
+        return snapshot.content.isEmpty ? nil : snapshot.content
     }
 
     static func modelIDs(from data: Data) throws -> [String] {
@@ -235,6 +298,22 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         if let key = config.apiKey, !key.isEmpty {
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
+    }
+
+    private static func messageObject(_ message: NativeChatMessage) -> [String: Any] {
+        var object: [String: Any] = ["role": message.role]
+        object["content"] = message.content.isEmpty ? NSNull() : message.content
+        if let toolCallID = message.toolCallID { object["tool_call_id"] = toolCallID }
+        if !message.toolCalls.isEmpty {
+            object["tool_calls"] = message.toolCalls.map { call in
+                [
+                    "id": call.id,
+                    "type": "function",
+                    "function": ["name": call.name, "arguments": call.arguments],
+                ]
+            }
+        }
+        return object
     }
 
     private func statusCode(_ response: URLResponse) throws -> Int {

@@ -17,6 +17,7 @@ struct Message: Identifiable, Hashable {
     var attachments: [MessageAttachment] = []  // images/docs the user attached to this turn
     var pulse: PulseCard? = nil    // when set, render this turn as the rich Pulse briefing (continued in chat)
     var sources: [PulseSource] = []  // cited sources for this reply — drives the citation chips
+    var toolActivities: [NativeToolActivity] = []
 
     /// Build an assistant message from raw reply text, splitting out artifacts then any `vera:ask` block.
     static func assistant(from raw: String, sources: [PulseSource] = []) -> Message {

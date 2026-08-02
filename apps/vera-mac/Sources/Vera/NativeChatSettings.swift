@@ -225,8 +225,8 @@ enum NativeChatToolCatalog {
             id: "apple-reminders",
             name: "Apple Reminders",
             summary: "Reads and updates reminder lists after you grant access.",
-            available: false,
-            setup: "Reminders is not callable from native chat in this version."),
+            available: true,
+            setup: "Enable this tool to grant Reminders access for explicit chat requests."),
     ]
 
     static func exposed(enabledIDs: Set<String>) -> [NativeChatToolDescriptor] {

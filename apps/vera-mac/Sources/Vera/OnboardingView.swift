@@ -115,7 +115,10 @@ struct OnboardingSheet: View {
             error = "Choose a valid endpoint and model before finishing."
             return
         }
-        store.adoptNative(resolved, systemPrompt: config.nativeSettings.systemPrompt)
+        store.adoptNative(
+            resolved,
+            systemPrompt: config.nativeSettings.systemPrompt,
+            enabledToolIDs: config.nativeSettings.enabledToolIDs)
         config.completeOnboarding()
     }
 }

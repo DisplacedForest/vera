@@ -38,6 +38,8 @@ final class ChatStore: ObservableObject {
     private var nativeConfig: NativeChatConfig?
     private var nativeTransport: (any NativeChatTransport)?
     private var nativeSystemPrompt: String
+    private var nativeEnabledToolIDs: Set<String>
+    private let nativeToolRegistry: NativeToolRegistry
     private let repository: (any ChatRepository)?
     private let repositoryInitializationError: String?
     private let hasLegacyOWUI: Bool
@@ -52,13 +54,18 @@ final class ChatStore: ObservableObject {
     init(config: OWUIConfig?, client: OWUIClient?, socket: VeraSocket?,
          nativeConfig: NativeChatConfig?, nativeTransport: (any NativeChatTransport)?,
          repository: (any ChatRepository)?, repositoryError: String? = nil, hasLegacyOWUI: Bool,
-         nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt) {
+         nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt,
+         nativeEnabledToolIDs: Set<String> = [],
+         nativeToolRegistry: NativeToolRegistry? = nil) {
         self.config = config
         self.client = client
         self.socket = socket
         self.nativeConfig = nativeConfig
         self.nativeTransport = nativeTransport
         self.nativeSystemPrompt = nativeSystemPrompt
+        self.nativeEnabledToolIDs = nativeEnabledToolIDs
+        self.nativeToolRegistry = nativeToolRegistry ?? NativeToolRegistry(
+            definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared))
         self.repository = repository
         self.repositoryInitializationError = repositoryError
         self.hasLegacyOWUI = hasLegacyOWUI
@@ -138,10 +145,15 @@ final class ChatStore: ObservableObject {
         client = OWUIClient(config: cfg)
     }
 
-    func adoptNative(_ cfg: NativeChatConfig, systemPrompt: String = NativeChatSettings.defaultSystemPrompt) {
+    func adoptNative(
+        _ cfg: NativeChatConfig,
+        systemPrompt: String = NativeChatSettings.defaultSystemPrompt,
+        enabledToolIDs: Set<String>? = nil
+    ) {
         nativeConfig = cfg
         nativeTransport = NativeChatClient(config: cfg)
         nativeSystemPrompt = systemPrompt
+        if let enabledToolIDs { nativeEnabledToolIDs = enabledToolIDs }
         let ambient = OWUIConfig.load() ?? OWUIConfig.ambientOnly(native: cfg)
         config = ambient
         client = ambient.map { OWUIClient(config: $0) }
@@ -671,36 +683,37 @@ final class ChatStore: ObservableObject {
             return
         }
 
-        var history = conversations[idx].messages
-            .filter { $0.state == .complete && !$0.text.isEmpty }
-            .map { NativeChatMessage(role: $0.role.rawValue, content: $0.text) }
-        let prompt = nativeSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !prompt.isEmpty {
-            history.insert(NativeChatMessage(role: "system", content: prompt), at: 0)
-        }
+        let history = NativeChatHistoryBuilder.build(
+            messages: conversations[idx].messages, systemPrompt: nativeSystemPrompt)
         let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig.model)
         conversations[idx].messages.append(reply)
         let replyIndex = conversations[idx].messages.count - 1
         try? repository.saveMessage(reply, conversationID: id, ordinal: replyIndex)
         streamStatus = "Thinking…"
         generating = true
-        Task { [nativeTransport] in
+        let toolLoop = NativeToolLoop(transport: nativeTransport, registry: nativeToolRegistry)
+        let enabledToolIDs = nativeEnabledToolIDs
+        Task {
             defer { generating = false }
             var lastCheckpoint = Date.distantPast
             do {
-                for try await raw in nativeTransport.stream(messages: history, model: nativeConfig.model) {
+                for try await snapshot in toolLoop.stream(
+                    messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
+                ) {
                     guard let i = conversations.firstIndex(where: { $0.id == id }),
                           replyIndex < conversations[i].messages.count else { continue }
-                    let (afterArt, arts) = Artifact.parse(raw)
+                    let (afterArt, arts) = Artifact.parse(snapshot.content)
                     let (clean, ask) = VeraAsk.parse(afterArt)
                     conversations[i].messages[replyIndex].text = clean
                     conversations[i].messages[replyIndex].ask = ask
                     conversations[i].messages[replyIndex].artifacts = arts
+                    conversations[i].messages[replyIndex].toolActivities = snapshot.activities
                     if let latest = arts.last,
                        latest.id != activeArtifact?.id || latest.content != activeArtifact?.content {
                         openArtifact(latest)
                     }
-                    streamStatus = nil
+                    streamStatus = snapshot.activities.last(where: { $0.state == .pending })
+                        .map { "Using \($0.title)…" }
                     if Date().timeIntervalSince(lastCheckpoint) >= 0.25 {
                         try repository.saveMessage(
                             conversations[i].messages[replyIndex], conversationID: id, ordinal: replyIndex)

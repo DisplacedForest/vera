@@ -73,11 +73,35 @@ final class LocalChatRepository: ChatRepository, @unchecked Sendable {
                 CREATE INDEX messages_conversation_order ON messages(conversation_id, ordinal);
                 """)
         }
+        migrator.registerMigration("nativeChatToolActivityV2") { db in
+            try db.alter(table: "messages") { table in
+                table.add(column: "tool_activity_json", .text)
+            }
+        }
         try migrator.migrate(database)
     }
 
     private func recoverInterruptedMessages() throws {
         try database.write { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, tool_activity_json
+                FROM messages
+                WHERE state = 'streaming' AND tool_activity_json IS NOT NULL
+                """)
+            for row in rows {
+                guard let id: String = row["id"],
+                      let raw: String = row["tool_activity_json"],
+                      let data = raw.data(using: .utf8),
+                      var activities = try? JSONDecoder().decode([NativeToolActivity].self, from: data) else { continue }
+                for index in activities.indices where activities[index].state == .pending {
+                    activities[index].state = .failed
+                    activities[index].result = "{\"error\":\"The tool call was interrupted when Vera closed\"}"
+                }
+                let recovered = String(decoding: try JSONEncoder().encode(activities), as: UTF8.self)
+                try db.execute(
+                    sql: "UPDATE messages SET tool_activity_json = ? WHERE id = ?",
+                    arguments: [recovered, id])
+            }
             try db.execute(sql: """
                 UPDATE messages
                 SET state = 'interrupted',
@@ -109,7 +133,7 @@ final class LocalChatRepository: ChatRepository, @unchecked Sendable {
     func messages(conversationID: String) throws -> [Message] {
         try database.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT id, role, content, created_at, state, failure, model_id
+                SELECT id, role, content, created_at, state, failure, model_id, tool_activity_json
                 FROM messages
                 WHERE conversation_id = ?
                 ORDER BY ordinal ASC
@@ -117,6 +141,8 @@ final class LocalChatRepository: ChatRepository, @unchecked Sendable {
                     guard let id = UUID(uuidString: row["id"]),
                           let role = Message.Role(rawValue: row["role"]),
                           let state = MessageState(rawValue: row["state"]) else { return nil }
+                    let activityData: Data? = (row["tool_activity_json"] as String?).flatMap { $0.data(using: .utf8) }
+                    let activities = activityData.flatMap { try? JSONDecoder().decode([NativeToolActivity].self, from: $0) } ?? []
                     return Message(
                         id: id,
                         role: role,
@@ -124,7 +150,8 @@ final class LocalChatRepository: ChatRepository, @unchecked Sendable {
                         createdAt: Date(timeIntervalSince1970: row["created_at"]),
                         state: state,
                         failure: row["failure"],
-                        modelID: row["model_id"])
+                        modelID: row["model_id"],
+                        toolActivities: activities)
                 }
         }
     }
@@ -149,16 +176,23 @@ final class LocalChatRepository: ChatRepository, @unchecked Sendable {
     }
 
     func saveMessage(_ message: Message, conversationID: String, ordinal: Int) throws {
+        let activityJSON: String?
+        if message.toolActivities.isEmpty {
+            activityJSON = nil
+        } else {
+            activityJSON = String(decoding: try JSONEncoder().encode(message.toolActivities), as: UTF8.self)
+        }
         try database.write { db in
             try db.execute(sql: """
                 INSERT INTO messages
-                    (id, conversation_id, ordinal, role, content, created_at, state, failure, model_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, conversation_id, ordinal, role, content, created_at, state, failure, model_id, tool_activity_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     content = excluded.content,
                     state = excluded.state,
                     failure = excluded.failure,
-                    model_id = excluded.model_id
+                    model_id = excluded.model_id,
+                    tool_activity_json = excluded.tool_activity_json
                 """, arguments: [
                     message.id.uuidString,
                     conversationID,
@@ -169,6 +203,7 @@ final class LocalChatRepository: ChatRepository, @unchecked Sendable {
                     message.state.rawValue,
                     message.failure,
                     message.modelID,
+                    activityJSON,
                 ])
         }
     }

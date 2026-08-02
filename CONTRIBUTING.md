@@ -55,7 +55,9 @@ scripts/                ops scripts; each documents its own env in its header
 docs/                   SETUP.md + screenshots
 ```
 
-Native text chat uses the standard OpenAI Chat Completions SSE contract and stores local history with GRDB. Its versioned local settings own saved endpoint profiles, the discovered-model cache, explicit selection basis, the system prompt, enabled native tools, and onboarding progress. Endpoint secrets belong in the Mac keychain, not chat records or the JSON settings file. Keep transport parsing, settings migration, request shape, and persistence testable without a live model server. Interrupted assistant messages remain local but are excluded from later prompt history. Never advertise a tool schema unless the native loop can invoke that tool.
+Native text chat uses the standard OpenAI Chat Completions SSE contract and stores local history with GRDB. Its versioned local settings own saved endpoint profiles, the discovered-model cache, explicit selection basis, the system prompt, enabled native tools, and onboarding progress. Endpoint secrets belong in the Mac keychain, not chat records or the JSON settings file. Keep transport parsing, settings migration, request shape, tool orchestration, and persistence testable without a live model server. Interrupted assistant messages remain local but are excluded from later prompt history. Never advertise a tool schema unless the native loop can invoke that tool.
+
+Native tools use only standard OpenAI `tools`, streamed `tool_calls`, assistant tool-call messages, and `tool` result messages. Validate the registered name and JSON arguments before execution. Tool descriptions and results are untrusted data, never system instructions. Persist inspected request and result activity without credentials or authorization headers. The native turn limit is four tool rounds and eight calls. Disabled, unauthorized, unavailable, malformed, unknown, and over-limit calls do not execute. Apple Reminders remains explicit-chat-only through the in-app EventKit service. Do not expose native tools to Pulse, dreaming, scheduled, ambient, voice, or autonomous paths.
 
 ## Running tests
 
@@ -87,7 +89,7 @@ diff and rely on the Python suite as the runnable check.
 For UI work, render any view headlessly and inspect it:
 
 ```sh
-.build/debug/Vera --shot /tmp/view.png --view pulse   # chat | pulse | memory | plugins | agentic | voice | onboarding | settings …
+.build/debug/Vera --shot /tmp/view.png --view tool-activity
 .build/debug/Vera --shot /tmp/view-light.png --view pulse --appearance light   # render either appearance (default dark)
 ```
 

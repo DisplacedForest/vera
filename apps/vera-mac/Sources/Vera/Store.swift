@@ -12,6 +12,9 @@ final class ChatStore: ObservableObject {
     @Published var pulseCards: [PulseCard] = []
     @Published var pulseVeins: [PulseVein] = []   // pinned ambient veins, populated from vera-api
     @Published var memories: [MemoryItem] = []
+    @Published var memoryRecords: [NativeMemoryRecord] = []
+    @Published var memoryProposals: [NativeMemoryProposal] = []
+    @Published var memoryServiceState: NativeMemoryServiceState = .off
     @Published var journalEntries: [JournalEntry] = []        // her standing commitments (read-only)
     @Published var journalArchive: [JournalArchiveMonth] = [] // recently resolved ones
     @Published var streamStatus: String?     // live tool/progress line while Vera is thinking
@@ -39,6 +42,8 @@ final class ChatStore: ObservableObject {
     private var nativeTransport: (any NativeChatTransport)?
     private var nativeSystemPrompt: String
     private var nativeEnabledToolIDs: Set<String>
+    private var nativeMemorySettings: NativeMemorySettings
+    private var nativeMemoryService: (any NativeMemoryServing)?
     private let nativeToolRegistry: NativeToolRegistry
     private let repository: (any ChatRepository)?
     private let repositoryInitializationError: String?
@@ -56,6 +61,8 @@ final class ChatStore: ObservableObject {
          repository: (any ChatRepository)?, repositoryError: String? = nil, hasLegacyOWUI: Bool,
          nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt,
          nativeEnabledToolIDs: Set<String> = [],
+         nativeMemorySettings: NativeMemorySettings = .fresh,
+         nativeMemoryService: (any NativeMemoryServing)? = nil,
          nativeToolRegistry: NativeToolRegistry? = nil) {
         self.config = config
         self.client = client
@@ -64,6 +71,8 @@ final class ChatStore: ObservableObject {
         self.nativeTransport = nativeTransport
         self.nativeSystemPrompt = nativeSystemPrompt
         self.nativeEnabledToolIDs = nativeEnabledToolIDs
+        self.nativeMemorySettings = nativeMemorySettings
+        self.nativeMemoryService = nativeMemoryService
         self.nativeToolRegistry = nativeToolRegistry ?? NativeToolRegistry(
             definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared))
         self.repository = repository
@@ -125,7 +134,8 @@ final class ChatStore: ObservableObject {
             nativeConfig: native,
             nativeTransport: native.map { NativeChatClient(config: $0) },
             repository: try? LocalChatRepository(inMemory: true),
-            hasLegacyOWUI: legacy != nil)
+            hasLegacyOWUI: legacy != nil,
+            nativeMemorySettings: .fresh)
     }
 
     /// Wire up a config at runtime (first-run onboarding, or connection edits in Settings):
@@ -148,12 +158,16 @@ final class ChatStore: ObservableObject {
     func adoptNative(
         _ cfg: NativeChatConfig,
         systemPrompt: String = NativeChatSettings.defaultSystemPrompt,
-        enabledToolIDs: Set<String>? = nil
+        enabledToolIDs: Set<String>? = nil,
+        memorySettings: NativeMemorySettings? = nil,
+        memoryService: (any NativeMemoryServing)? = nil
     ) {
         nativeConfig = cfg
         nativeTransport = NativeChatClient(config: cfg)
         nativeSystemPrompt = systemPrompt
         if let enabledToolIDs { nativeEnabledToolIDs = enabledToolIDs }
+        if let memorySettings { nativeMemorySettings = memorySettings }
+        nativeMemoryService = memoryService
         let ambient = OWUIConfig.load() ?? OWUIConfig.ambientOnly(native: cfg)
         config = ambient
         client = ambient.map { OWUIClient(config: $0) }
@@ -176,7 +190,8 @@ final class ChatStore: ObservableObject {
         }
         newConversation()
         await refreshPulse()
-        if hasLegacyOWUI { await refreshMemories() }
+        reloadNativeMemory()
+        runNativeMemoryMaintenance()
         startReconcileLoop()
     }
 
@@ -342,7 +357,7 @@ final class ChatStore: ObservableObject {
 
     private func reconcile(refreshingMemories: Bool = false) async {
         await refreshPulse()
-        if refreshingMemories, hasLegacyOWUI { await refreshMemories() }
+        _ = refreshingMemories
     }
 
     // MARK: - Bookmark + feedback
@@ -491,6 +506,202 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    func reloadNativeMemory() {
+        guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        do {
+            memoryRecords = try memoryRepository.allMemories().filter { $0.status != .deleted }
+            memoryProposals = try memoryRepository.pendingProposals()
+            if !nativeMemorySettings.enabled {
+                memoryServiceState = .off
+            } else if nativeMemorySettings.embeddingsModel.isEmpty {
+                memoryServiceState = .setupRequired
+            } else if !memoryProposals.isEmpty {
+                memoryServiceState = .pendingReview(memoryProposals.count)
+            } else {
+                memoryServiceState = .ready
+            }
+        } catch {
+            memoryServiceState = .failed("The local memory library could not open: \(error.localizedDescription)")
+        }
+    }
+
+    func updateNativeMemory(
+        settings: NativeMemorySettings, service: (any NativeMemoryServing)?
+    ) {
+        nativeMemorySettings = settings
+        nativeMemoryService = service
+        reloadNativeMemory()
+        runNativeMemoryMaintenance()
+    }
+
+    func requestMemoryChange(_ request: String) {
+        let trimmed = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard nativeMemorySettings.enabled, !trimmed.isEmpty,
+              let service = nativeMemoryService,
+              let memoryRepository = repository as? any NativeMemoryRepository else {
+            memoryServiceState = nativeMemorySettings.enabled ? .setupRequired : .off
+            return
+        }
+        memoryServiceState = .indexing
+        Task {
+            do {
+                let proposals = try await service.proposal(
+                    request: trimmed, existing: try memoryRepository.approvedMemories(), now: Date())
+                for proposal in proposals { try memoryRepository.saveProposal(proposal) }
+                reloadNativeMemory()
+            } catch {
+                memoryServiceState = .retrievalUnavailable(error.localizedDescription)
+            }
+        }
+    }
+
+    func acceptMemoryProposal(_ proposal: NativeMemoryProposal, editedDetails: [String]? = nil) {
+        guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        do {
+            switch proposal.kind {
+            case .create:
+                let memory = NativeMemoryRecord(
+                    id: UUID().uuidString, title: proposal.title, summary: proposal.summary,
+                    details: editedDetails ?? proposal.details, group: proposal.group,
+                    category: proposal.category, bank: proposal.bank,
+                    durability: proposal.durability, expiry: proposal.expiry, status: .approved,
+                    embedding: nil, sourceConversationID: proposal.sourceConversationID,
+                    sourceMessageID: proposal.sourceMessageID, createdAt: Date(), updatedAt: Date())
+                try memoryRepository.saveMemory(
+                    memory, decision: editedDetails == nil ? .accepted : .edited,
+                    note: "Approved memory proposal")
+            case .update, .merge, .consolidate:
+                guard var target = memoryRecords.first(where: { proposal.targetIDs.contains($0.id) }) else { return }
+                target.title = proposal.title
+                target.summary = proposal.summary
+                target.details = editedDetails ?? proposal.details
+                target.group = proposal.group
+                target.category = proposal.category
+                target.bank = proposal.bank
+                target.durability = proposal.durability
+                target.expiry = proposal.expiry
+                target.embedding = nil
+                target.updatedAt = Date()
+                try memoryRepository.saveMemory(
+                    target, decision: proposal.kind == .merge ? .merged : .edited,
+                    note: "Approved memory proposal")
+                if proposal.kind == .merge {
+                    for id in proposal.targetIDs where id != target.id { try memoryRepository.deleteMemory(id) }
+                }
+            case .suppress:
+                guard var target = memoryRecords.first(where: { proposal.targetIDs.contains($0.id) }) else { return }
+                target.status = .suppressed
+                target.embedding = nil
+                target.updatedAt = Date()
+                try memoryRepository.saveMemory(target, decision: .suppressed, note: "Approved suppression")
+            case .expire, .delete, .cleanup:
+                for id in proposal.targetIDs { try memoryRepository.deleteMemory(id) }
+            }
+            try memoryRepository.decideProposal(proposal.id, status: .accepted)
+            reloadNativeMemory()
+            indexApprovedMemoryIfNeeded()
+        } catch {
+            memoryServiceState = .failed("The proposal could not be applied: \(error.localizedDescription)")
+        }
+    }
+
+    func dismissMemoryProposal(_ proposal: NativeMemoryProposal) {
+        guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        do {
+            try memoryRepository.decideProposal(proposal.id, status: .dismissed)
+            reloadNativeMemory()
+        } catch {
+            memoryServiceState = .failed("The proposal could not be dismissed: \(error.localizedDescription)")
+        }
+    }
+
+    func deleteNativeMemory(_ memory: NativeMemoryRecord) {
+        guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        do {
+            try memoryRepository.deleteMemory(memory.id)
+            reloadNativeMemory()
+        } catch {
+            memoryServiceState = .failed("The memory could not be deleted: \(error.localizedDescription)")
+        }
+    }
+
+    func editNativeMemory(
+        _ memory: NativeMemoryRecord, title: String, summary: String, details: [String]
+    ) {
+        guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanDetails = details.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !cleanTitle.isEmpty, cleanTitle.count <= 80,
+              !cleanSummary.isEmpty, cleanSummary.count <= 180,
+              !cleanDetails.isEmpty, cleanDetails.count <= 8,
+              cleanDetails.allSatisfy({ $0.count <= 600 }) else {
+            memoryServiceState = .failed("Keep the name, summary, and details concise before saving.")
+            return
+        }
+        do {
+            var updated = memory
+            updated.title = cleanTitle
+            updated.summary = cleanSummary
+            updated.details = cleanDetails
+            updated.embedding = nil
+            updated.updatedAt = Date()
+            try memoryRepository.saveMemory(updated, decision: .edited, note: "Edited by the user")
+            reloadNativeMemory()
+            indexApprovedMemoryIfNeeded()
+        } catch {
+            memoryServiceState = .failed("The memory could not be saved: \(error.localizedDescription)")
+        }
+    }
+
+    func clearNativeMemory() {
+        guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        do {
+            for memory in try memoryRepository.approvedMemories() {
+                try memoryRepository.deleteMemory(memory.id)
+            }
+            reloadNativeMemory()
+        } catch {
+            memoryServiceState = .failed("The memory library could not be cleared: \(error.localizedDescription)")
+        }
+    }
+
+    private func runNativeMemoryMaintenance() {
+        guard nativeMemorySettings.enabled,
+              let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        do {
+            let records = try memoryRepository.allMemories()
+            let pending = try memoryRepository.pendingProposals()
+            for proposal in NativeMemoryMaintenance.proposals(records: records, existing: pending) {
+                try memoryRepository.saveProposal(proposal)
+            }
+            reloadNativeMemory()
+        } catch {
+            memoryServiceState = .failed("Memory maintenance could not finish: \(error.localizedDescription)")
+        }
+    }
+
+    private func indexApprovedMemoryIfNeeded() {
+        guard nativeMemorySettings.enabled, let service = nativeMemoryService,
+              let memoryRepository = repository as? any NativeMemoryRepository else { return }
+        let missing = memoryRecords.filter { $0.status == .approved && $0.embedding == nil && $0.eligible(at: Date()) }
+        guard !missing.isEmpty else { return }
+        memoryServiceState = .indexing
+        Task {
+            for var memory in missing {
+                do {
+                    memory.embedding = try await service.embed(memory.details.joined(separator: "\n"))
+                    memory.updatedAt = Date()
+                    try memoryRepository.saveMemory(memory, decision: .edited, note: "Indexed approved memory")
+                } catch {
+                    memoryServiceState = .retrievalUnavailable(error.localizedDescription)
+                    return
+                }
+            }
+            reloadNativeMemory()
+        }
+    }
+
     func newConversation() {
         section = .chat
         draft = ""
@@ -512,6 +723,14 @@ final class ChatStore: ObservableObject {
         conversations[i].updatedAt = Date()
         do { try repository?.saveConversation(conversations[i]) }
         catch { chatConfigurationError = "Pin state couldn't save: \(error.localizedDescription)" }
+    }
+
+    func toggleMemoryExclusion(_ id: String) {
+        guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        conversations[index].memoryExcluded.toggle()
+        conversations[index].updatedAt = Date()
+        do { try repository?.saveConversation(conversations[index]) }
+        catch { chatConfigurationError = "The conversation memory setting could not save: \(error.localizedDescription)" }
     }
 
     // id must be STABLE across renders (title is) — a fresh UUID each compute breaks SwiftUI's
@@ -683,20 +902,43 @@ final class ChatStore: ObservableObject {
             return
         }
 
-        let history = NativeChatHistoryBuilder.build(
-            messages: conversations[idx].messages, systemPrompt: nativeSystemPrompt)
         let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig.model)
         conversations[idx].messages.append(reply)
         let replyIndex = conversations[idx].messages.count - 1
+        let turnMessages = conversations[idx].messages
         try? repository.saveMessage(reply, conversationID: id, ordinal: replyIndex)
         streamStatus = "Thinking…"
         generating = true
         let toolLoop = NativeToolLoop(transport: nativeTransport, registry: nativeToolRegistry)
         let enabledToolIDs = nativeEnabledToolIDs
+        let memorySettings = nativeMemorySettings
+        let memoryService = nativeMemoryService
         Task {
             defer { generating = false }
             var lastCheckpoint = Date.distantPast
             do {
+                var history = NativeChatHistoryBuilder.build(
+                    messages: turnMessages, systemPrompt: nativeSystemPrompt)
+                if memorySettings.enabled {
+                    if memorySettings.embeddingsModel.isEmpty || memoryService == nil {
+                        memoryServiceState = .setupRequired
+                    } else if let memoryRepository = repository as? any NativeMemoryRepository,
+                              let memoryService {
+                        do {
+                            let query = try await memoryService.embed(text)
+                            let selected = NativeMemoryRecall.rank(
+                                records: try memoryRepository.approvedMemories(), query: query,
+                                bankScope: memorySettings.bankScope)
+                            history = NativeMemoryPromptAssembler.build(
+                                messages: turnMessages,
+                                systemPrompt: nativeSystemPrompt, selected: selected)
+                            memoryServiceState = memoryProposals.isEmpty
+                                ? .ready : .pendingReview(memoryProposals.count)
+                        } catch {
+                            memoryServiceState = .retrievalUnavailable(error.localizedDescription)
+                        }
+                    }
+                }
                 for try await snapshot in toolLoop.stream(
                     messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
                 ) {
@@ -727,6 +969,27 @@ final class ChatStore: ObservableObject {
                     conversations[i].updatedAt = Date()
                     try repository.saveMessage(conversations[i].messages[replyIndex], conversationID: id, ordinal: replyIndex)
                     try repository.saveConversation(conversations[i])
+                    if memorySettings.enabled, memorySettings.generateFromChats,
+                       let memoryService,
+                       let memoryRepository = repository as? any NativeMemoryRepository,
+                       NativeMemoryExtractionPolicy.disposition(
+                            user: text, assistant: conversations[i].messages[replyIndex],
+                            conversationExcluded: conversations[i].memoryExcluded) == .eligible {
+                        let completedAssistant = conversations[i].messages[replyIndex]
+                        Task {
+                            do {
+                                let proposals = try await memoryService.proposals(
+                                    user: text, assistant: completedAssistant.text,
+                                    sourceConversationID: id,
+                                    sourceMessageID: completedAssistant.id.uuidString,
+                                    existing: try memoryRepository.approvedMemories(), now: Date())
+                                for proposal in proposals { try memoryRepository.saveProposal(proposal) }
+                                reloadNativeMemory()
+                            } catch {
+                                memoryServiceState = .retrievalUnavailable(error.localizedDescription)
+                            }
+                        }
+                    }
                 }
             } catch {
                 streamStatus = nil

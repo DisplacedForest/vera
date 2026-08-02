@@ -150,12 +150,57 @@ final class SelfTestToolExecutionState: @unchecked Sendable {
     }
 }
 
+final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var embeds = 0
+    private var extracts = 0
+
+    var embedCalls: Int { locked { embeds } }
+    var extractionCalls: Int { locked { extracts } }
+
+    func embed(_ text: String) async throws -> [Double] {
+        locked { embeds += 1 }
+        return [1, 0]
+    }
+
+    func proposals(
+        user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
+        existing: [NativeMemoryRecord], now: Date
+    ) async throws -> [NativeMemoryProposal] {
+        locked { extracts += 1 }
+        return [NativeMemoryProposal(
+            id: UUID().uuidString, kind: .create, title: "Meeting preference",
+            summary: "Prefers morning meetings", details: ["The user prefers morning meetings"],
+            group: .you, category: .preference, bank: "personal", durability: .durable,
+            expiry: nil, targetIDs: [], sourceConversationID: sourceConversationID,
+            sourceMessageID: sourceMessageID, createdAt: now, status: .pending)]
+    }
+
+    func proposal(
+        request: String, existing: [NativeMemoryRecord], now: Date
+    ) async throws -> [NativeMemoryProposal] {
+        locked { extracts += 1 }
+        return [NativeMemoryProposal(
+            id: UUID().uuidString, kind: .create, title: "Requested change",
+            summary: request, details: [request], group: .you, category: .preference,
+            bank: "personal", durability: .durable, expiry: nil, targetIDs: [],
+            sourceConversationID: nil, sourceMessageID: nil, createdAt: now, status: .pending)]
+    }
+
+    private func locked<T>(_ work: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return work()
+    }
+}
+
 @MainActor
 enum SelfTest {
     static func run() async {
         runPure()
         runNativeSettings()
         await runNativeTools()
+        await runNativeMemory()
         await runNativeStore()
         guard let cfg = OWUIConfig.load() else {
             print("SELFTEST OK (offline). No OWUI config (~/.vera/config.json), live checks skipped")
@@ -444,13 +489,14 @@ enum SelfTest {
             "model_api_key": "secret",
         ]
         var settings = NativeChatSettings.load(from: legacy)
-        guard settings.version == 1,
+        guard settings.version == 2,
               settings.profiles.count == 1,
               settings.activeProfile?.name == "My model endpoint",
               settings.activeProfile?.selectedModel == "model-b",
               settings.activeProfile?.selectionBasis == .restored,
               settings.onboardingState == .complete,
-              settings.systemPrompt == NativeChatSettings.defaultSystemPrompt else {
+              settings.systemPrompt == NativeChatSettings.defaultSystemPrompt,
+              settings.memory.enabled == false else {
             print("SELFTEST ERROR: native settings migration"); exit(1)
         }
         settings.systemPrompt = "Changed prompt"
@@ -523,6 +569,141 @@ enum SelfTest {
             print("SELFTEST ERROR: native request settings shape \(error)"); exit(1)
         }
         print("  native settings OK (migration, persistence, prompt, discovery, tools, request shape)")
+    }
+
+    private static func runNativeMemory() async {
+        do {
+            let repository = try LocalChatRepository(inMemory: true)
+            let now = Date(timeIntervalSince1970: 2_000_000_000)
+            let approved = NativeMemoryRecord(
+                id: "approved", title: "Favorite drink", summary: "Prefers natural wine",
+                details: ["The user prefers natural wine"], group: .you, category: .preference,
+                bank: "personal", durability: .durable, expiry: nil, status: .approved,
+                embedding: [1, 0], sourceConversationID: "source", sourceMessageID: nil,
+                createdAt: now, updatedAt: now)
+            let expired = NativeMemoryRecord(
+                id: "expired", title: "Conference", summary: "Attending a conference",
+                details: ["Attending a conference"], group: .areas, category: .plan,
+                bank: "work", durability: .episodic,
+                expiry: Date(timeIntervalSince1970: now.timeIntervalSince1970 - 1),
+                status: .approved, embedding: [1, 0], sourceConversationID: nil,
+                sourceMessageID: nil, createdAt: now, updatedAt: now)
+            try repository.saveMemory(approved, decision: .accepted, note: "Test approval")
+            try repository.saveMemory(expired, decision: .accepted, note: "Test approval")
+            let proposal = NativeMemoryProposal(
+                id: "proposal", kind: .update, title: "Update favorite drink",
+                summary: "Change the saved preference", details: ["Now prefers orange wine"],
+                group: .you, category: .preference, bank: "personal", durability: .durable,
+                expiry: nil, targetIDs: [approved.id], sourceConversationID: "source",
+                sourceMessageID: nil, createdAt: now, status: .pending)
+            try repository.saveProposal(proposal)
+            guard try repository.approvedMemories().count == 2,
+                  try repository.pendingProposals().count == 1 else {
+                print("SELFTEST ERROR: native memory repository review boundary"); exit(1)
+            }
+            let ranked = NativeMemoryRecall.rank(
+                records: try repository.approvedMemories(), query: [1, 0], bankScope: "personal",
+                now: now, itemLimit: 8, tokenLimit: 700)
+            guard ranked.map(\.record.id) == [approved.id] else {
+                print("SELFTEST ERROR: native memory rank, bank, or expiry filter"); exit(1)
+            }
+            let assembled = NativeMemoryPromptAssembler.build(
+                messages: [Message(role: .user, text: "What do I like?")],
+                systemPrompt: "System policy", selected: ranked)
+            guard assembled.map(\.role) == ["system", "system", "user"],
+                  assembled[0].content == "System policy",
+                  assembled[1].content.contains("USER-APPROVED MEMORY CONTEXT"),
+                  assembled[2].content == "What do I like?" else {
+                print("SELFTEST ERROR: native memory prompt ordering"); exit(1)
+            }
+            let proposalJSON = """
+            {"proposals":[
+              {"kind":"create","title":"Morning routine","summary":"Prefers a quiet start","details":["The user prefers a quiet morning routine"],"group":"You","category":"preference","bank":"personal","durability":"durable","expiry":null,"target_ids":[]},
+              {"kind":"update","title":"Favorite drink","summary":"Prefers orange wine","details":["The user prefers orange wine"],"group":"You","category":"preference","bank":"personal","durability":"durable","expiry":null,"target_ids":["approved"]},
+              {"kind":"merge","title":"Favorite drink","summary":"Combined drink preference","details":["The user prefers natural and orange wine"],"group":"You","category":"preference","bank":"personal","durability":"durable","expiry":null,"target_ids":["approved"]},
+              {"kind":"suppress","title":"Hide drink preference","summary":"Stop recalling the drink preference","details":["Do not recall the drink preference"],"group":"You","category":"preference","bank":"personal","durability":"durable","expiry":null,"target_ids":["approved"]},
+              {"kind":"expire","title":"Conference","summary":"Conference context expired","details":["The conference ended on 2033-05-20"],"group":"Areas","category":"plan","bank":"work","durability":"episodic","expiry":"2033-05-20","target_ids":["expired"]},
+              {"kind":"delete","title":"Forget drink preference","summary":"Delete the drink preference","details":["Delete the saved drink preference"],"group":"You","category":"preference","bank":"personal","durability":"durable","expiry":null,"target_ids":["approved"]}
+            ]}
+            """
+            let parsed = NativeMemoryProposalParser.parse(
+                proposalJSON, sourceConversationID: "source", sourceMessageID: "message",
+                existing: [approved, expired], now: now)
+            guard Set(parsed.map(\.kind)) == Set([
+                .create, .update, .merge, .suppress, .expire, .delete,
+            ]), NativeMemoryProposalParser.parse(
+                "{\"proposals\":[{\"kind\":\"create\",\"title\":\"Tomorrow\",\"summary\":\"Plan tomorrow\",\"details\":[\"Do it tomorrow\"],\"group\":\"Areas\",\"category\":\"plan\",\"bank\":\"personal\",\"durability\":\"durable\",\"expiry\":null,\"target_ids\":[]}]}",
+                sourceConversationID: nil, sourceMessageID: nil, existing: [], now: now).isEmpty else {
+                print("SELFTEST ERROR: native memory structured proposal validation"); exit(1)
+            }
+            let privateAssistant = Message(role: .assistant, text: "Done", state: .complete)
+            guard NativeMemoryExtractionPolicy.disposition(
+                    user: "private: do not save this", assistant: privateAssistant,
+                    conversationExcluded: false) == .privateTurn,
+                  NativeMemoryExtractionPolicy.disposition(
+                    user: "remember this", assistant: privateAssistant,
+                    conversationExcluded: true) == .excluded,
+                  NativeMemoryMaintenance.proposals(
+                    records: [expired], existing: [], now: now).first?.kind == .expire else {
+                print("SELFTEST ERROR: native memory extraction guards or expiry maintenance"); exit(1)
+            }
+            let reopenedURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("vera-memory-\(UUID().uuidString)/vera.sqlite")
+            let first = try LocalChatRepository(url: reopenedURL)
+            try first.saveMemory(approved, decision: .accepted, note: "Test approval")
+            let reopened = try LocalChatRepository(url: reopenedURL)
+            guard try reopened.approvedMemories().first?.id == approved.id else {
+                print("SELFTEST ERROR: native memory relaunch persistence"); exit(1)
+            }
+            try? FileManager.default.removeItem(at: reopenedURL.deletingLastPathComponent())
+            guard NativeChatSettings.fresh.memory.enabled == false else {
+                print("SELFTEST ERROR: native memory default opt-in"); exit(1)
+            }
+            let chatTransport = SelfTestNativeTransport()
+            let memoryService = SelfTestMemoryService()
+            var memorySettings = NativeMemorySettings.fresh
+            memorySettings.enabled = true
+            memorySettings.embeddingsModel = "embed-model"
+            memorySettings.extractionModel = "extract-model"
+            memorySettings.bankScope = "personal"
+            memorySettings.generateFromChats = true
+            let chatConfig = NativeChatConfig(
+                baseURL: URL(string: "https://model.example/v1")!, apiKey: nil,
+                model: "local-model", chatTemplateKwargs: nil)
+            let store = ChatStore(
+                config: nil, client: nil, socket: nil, nativeConfig: chatConfig,
+                nativeTransport: chatTransport, repository: repository, hasLegacyOWUI: false,
+                nativeMemorySettings: memorySettings, nativeMemoryService: memoryService)
+            await store.connect()
+            store.sendText("What do I like?")
+            await waitForGeneration(store)
+            for _ in 0..<100 where memoryService.extractionCalls == 0 {
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            guard memoryService.embedCalls == 1, memoryService.extractionCalls == 1,
+                  chatTransport.histories.first?.map(\.role) == ["system", "system", "user"],
+                  chatTransport.histories.first?[1].content.contains("Favorite drink") == true,
+                  try repository.pendingProposals().contains(where: { $0.title == "Meeting preference" }) else {
+                print("SELFTEST ERROR: native memory recall or review-only extraction integration"); exit(1)
+            }
+            let disabledService = SelfTestMemoryService()
+            let disabledTransport = SelfTestNativeTransport()
+            let disabledStore = ChatStore(
+                config: nil, client: nil, socket: nil, nativeConfig: chatConfig,
+                nativeTransport: disabledTransport,
+                repository: try LocalChatRepository(inMemory: true), hasLegacyOWUI: false,
+                nativeMemorySettings: .fresh, nativeMemoryService: disabledService)
+            await disabledStore.connect()
+            disabledStore.sendText("No memory")
+            await waitForGeneration(disabledStore)
+            guard disabledService.embedCalls == 0, disabledService.extractionCalls == 0,
+                  disabledTransport.histories.first?.map(\.role) == ["system", "user"] else {
+                print("SELFTEST ERROR: disabled native memory performed work"); exit(1)
+            }
+            print("  native memory OK (opt-in, review, CRUD, recall, expiry, budgets, prompt, relaunch)")
+        } catch {
+            print("SELFTEST ERROR: native memory \(error)"); exit(1)
+        }
     }
 
     private static func runNativeStore() async {

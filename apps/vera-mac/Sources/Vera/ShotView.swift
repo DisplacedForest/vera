@@ -551,20 +551,50 @@ struct ShotView: View {
     }
 
     private var memory: some View {
-        VStack(spacing: 0) {
+        let rows = store.memoryRecords.isEmpty ? NativeMemoryRecord.shotLibrary : store.memoryRecords
+        return VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Memory").font(.system(size: 22, weight: .bold))
-                Text("\(store.memories.count)").font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Theme.surface).clipShape(Capsule())
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Memory").font(.system(size: 24, weight: .bold))
+                    Text("A local, reviewable library of what Vera may remember about you.")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                }
                 Spacer()
-                Text("what Vera knows about you").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                Text("\(rows.count) approved").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
             }
-            .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 8)
-            MemoryList(items: store.memories).padding(.horizontal, 28).padding(.vertical, 12)
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Ready").font(.system(size: 12, weight: .semibold))
+                    Text("Only approved, relevant, unexpired items can be added to native chat requests.")
+                        .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10))
+            ForEach(NativeMemoryGroup.allCases) { group in
+                let items = rows.filter { $0.group == group }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(group.rawValue).font(.system(size: 13, weight: .semibold))
+                    ForEach(items) { item in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title).font(.system(size: 12, weight: .semibold))
+                                Text(item.summary).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer()
+                            Text(item.updatedAt.formatted(date: .abbreviated, time: .omitted))
+                                .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                            Image(systemName: "ellipsis")
+                        }
+                        .padding(10).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
             Spacer()
         }
+        .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
     }

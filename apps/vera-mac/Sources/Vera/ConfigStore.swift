@@ -149,6 +149,14 @@ final class ConfigStore: ObservableObject {
             environment: ProcessInfo.processInfo.environment)
     }
 
+    var nativeMemoryService: NativeMemoryService? {
+        guard let config = nativeResolved else { return nil }
+        return NativeMemoryService(configuration: NativeMemoryServiceConfiguration(
+            baseURL: config.baseURL, apiKey: config.apiKey,
+            embeddingsModel: nativeSettings.memory.embeddingsModel,
+            extractionModel: nativeSettings.memory.extractionModel))
+    }
+
     func activeProfileBinding(_ keyPath: WritableKeyPath<NativeEndpointProfile, String>) -> Binding<String> {
         Binding(
             get: { self.activeNativeProfile?[keyPath: keyPath] ?? "" },
@@ -220,6 +228,24 @@ final class ConfigStore: ObservableObject {
         if enabled, id == "apple-reminders" {
             Task { _ = await RemindersBridge.shared.nativeRequestAccess() }
         }
+    }
+
+    func updateMemory(_ update: (inout NativeMemorySettings) -> Void) {
+        var settings = nativeSettings
+        update(&settings.memory)
+        nativeSettings = settings
+    }
+
+    func memoryStringBinding(_ keyPath: WritableKeyPath<NativeMemorySettings, String>) -> Binding<String> {
+        Binding(
+            get: { self.nativeSettings.memory[keyPath: keyPath] },
+            set: { value in self.updateMemory { $0[keyPath: keyPath] = value } })
+    }
+
+    func memoryBoolBinding(_ keyPath: WritableKeyPath<NativeMemorySettings, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { self.nativeSettings.memory[keyPath: keyPath] },
+            set: { value in self.updateMemory { $0[keyPath: keyPath] = value } })
     }
 
     func beginOnboarding(at step: Int? = nil) {

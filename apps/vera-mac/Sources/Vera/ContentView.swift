@@ -136,6 +136,7 @@ private struct Sidebar: View {
                         ForEach(group.convos) { convo in
                             SidebarRow(convo: convo,
                                        onPin: { store.togglePin(convo.id) },
+                                       onMemoryExclusion: { store.toggleMemoryExclusion(convo.id) },
                                        onDelete: { store.deleteConversation(convo.id) })
                                 .tag(SidebarItem.convo(convo.id))
                         }
@@ -168,6 +169,7 @@ private struct Sidebar: View {
 struct SidebarRow: View {
     let convo: Conversation
     var onPin: () -> Void = {}
+    var onMemoryExclusion: () -> Void = {}
     var onDelete: () -> Void = {}
     @State private var hovering = false
     var body: some View {
@@ -179,6 +181,9 @@ struct SidebarRow: View {
             if hovering {
                 Menu {
                     Button(convo.pinned ? "Unpin" : "Pin", action: onPin)
+                    Button(
+                        convo.memoryExcluded ? "Allow memory suggestions" : "Exclude from memory suggestions",
+                        action: onMemoryExclusion)
                     Button("Delete", role: .destructive, action: onDelete)
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 12, weight: .semibold))
@@ -193,6 +198,9 @@ struct SidebarRow: View {
         .onHover { hovering = $0 }
         .contextMenu {
             Button(convo.pinned ? "Unpin" : "Pin", action: onPin)
+            Button(
+                convo.memoryExcluded ? "Allow memory suggestions" : "Exclude from memory suggestions",
+                action: onMemoryExclusion)
             Button("Delete", role: .destructive, action: onDelete)
         }
     }

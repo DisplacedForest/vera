@@ -7,7 +7,7 @@ struct OnboardingSheet: View {
     @State private var loaded = false
     @State private var error: String?
 
-    private let steps = ["Endpoint", "Model", "Persona", "Tools"]
+    private let steps = ["Endpoint", "Model", "Persona", "Memory", "Tools"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -38,6 +38,7 @@ struct OnboardingSheet: View {
                     case 0: NativeEndpointEditor()
                     case 1: NativeModelEditor()
                     case 2: NativePersonaEditor()
+                    case 3: NativeMemoryOnboardingEditor()
                     default: NativeToolEditor()
                     }
                 }
@@ -94,6 +95,8 @@ struct OnboardingSheet: View {
                 error = "Keep a system prompt or reset it to Vera’s default."
                 return
             }
+        case 3:
+            break
         default:
             finish()
             return
@@ -118,7 +121,30 @@ struct OnboardingSheet: View {
         store.adoptNative(
             resolved,
             systemPrompt: config.nativeSettings.systemPrompt,
-            enabledToolIDs: config.nativeSettings.enabledToolIDs)
+            enabledToolIDs: config.nativeSettings.enabledToolIDs,
+            memorySettings: config.nativeSettings.memory,
+            memoryService: config.nativeMemoryService)
         config.completeOnboarding()
+    }
+}
+
+struct NativeMemoryOnboardingEditor: View {
+    @EnvironmentObject var config: ConfigStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("Turn on local memory", isOn: config.memoryBoolBinding(\.enabled))
+            Text("Memory is optional and starts off after upgrade. Approved facts stay on this Mac. Suggestions, corrections, merges, expiry cleanup, and deletion all require your review.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            if config.nativeSettings.memory.enabled {
+                TextField("Embeddings model identifier", text: config.memoryStringBinding(\.embeddingsModel))
+                    .textFieldStyle(.roundedBorder)
+                TextField("Extraction model identifier", text: config.memoryStringBinding(\.extractionModel))
+                    .textFieldStyle(.roundedBorder)
+                Toggle("Generate reviewable suggestions from completed chats", isOn: config.memoryBoolBinding(\.generateFromChats))
+                Text("Episodic facts need an absolute expiry date and stop being recalled when they expire. Vera never deletes them automatically.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+        }
     }
 }

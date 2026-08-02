@@ -37,4 +37,5 @@ struct Conversation: Identifiable, Hashable {
     var isPersisted: Bool = false   // false = local draft OWUI doesn't know about yet
     var serverUpdatedAt: Int = 0    // OWUI's own updated_at stamp — the reconcile freshness baseline
     var pinned: Bool = false
+    var memoryExcluded: Bool = false
 }

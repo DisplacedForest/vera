@@ -55,7 +55,9 @@ struct VeraApp: App {
             repositoryError: repositoryError,
             hasLegacyOWUI: legacy != nil,
             nativeSystemPrompt: configInstance.nativeSettings.systemPrompt,
-            nativeEnabledToolIDs: configInstance.nativeSettings.enabledToolIDs)
+            nativeEnabledToolIDs: configInstance.nativeSettings.enabledToolIDs,
+            nativeMemorySettings: configInstance.nativeSettings.memory,
+            nativeMemoryService: configInstance.nativeMemoryService)
         _store = StateObject(wrappedValue: storeInstance)
         _config = StateObject(wrappedValue: configInstance)
         _tools = StateObject(wrappedValue: ToolsStore(admin: admin, socket: socket))

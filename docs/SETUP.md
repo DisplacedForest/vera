@@ -88,7 +88,7 @@ swift build -c release
 scripts/deploy.sh    # packages Vera.app, ad-hoc signs it, installs it to /Applications
 ```
 
-First launch runs **onboarding**. Give the endpoint a friendly saved name, enter its OpenAI-compatible URL ending in `/v1`, and add an optional API key. The key is stored in the Mac keychain. Discover models, inspect every returned identifier, choose one explicitly, review the local system prompt, and inspect the native tool picker. The guide can be skipped and resumed from Settings, Endpoints. A valid configuration from an earlier release migrates into a saved endpoint and opens the app normally. Native conversations live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history. Existing Open WebUI history is left untouched and is not imported.
+First launch runs **onboarding**. Give the endpoint a friendly saved name, enter its OpenAI-compatible URL ending in `/v1`, and add an optional API key. The key is stored in the Mac keychain. Discover models, inspect every returned identifier, choose one explicitly, review the local system prompt, decide whether to enable local memory, and inspect the native tool picker. The guide can be skipped and resumed from Settings, Endpoints. A valid configuration from an earlier release migrates into a saved endpoint and opens the app normally. Native conversations and approved memory live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history and memory off. Existing Open WebUI history and memory remain untouched.
 
 Settings, Models keeps the last successful discovery result, shows the active model and whether it was restored, recommended, or chosen by you, and distinguishes an empty response, unusable model entries, authentication failure, network failure, and malformed data. Refresh never clears a known selection just because discovery fails. Settings, Persona edits or resets the prompt used for future turns. Settings, Tools clearly separates callable tools from unavailable integrations and persists enabled choices. Apple Reminders starts disabled. Enabling it deliberately requests macOS Reminders access. Denied or unavailable tools are omitted from model requests even when their saved preference remains on.
 
@@ -96,7 +96,15 @@ Apple Reminders is the first native tool surface. A standard tool-calling endpoi
 
 Each call renders as a pending, succeeded, or failed activity chip. Expand it to inspect the JSON request and result. Activity is stored with local conversation history without endpoint credentials or authorization headers. Unknown tools, disabled or unavailable tools, invalid JSON arguments, and calls past the loop limits do not execute. Their bounded error result is returned to the model. A turn stops after four tool rounds or eight total calls. A tool failure, malformed stream, endpoint outage, or exhausted limit keeps received text and activity and marks the assistant turn interrupted when no final answer arrives.
 
-Attachments, voice, memory retrieval, document knowledge, MCP, custom HTTP tools, Vera API tools, and Pulse continuation remain unavailable in the native chat path.
+Attachments, voice, document knowledge, MCP, custom HTTP tools, Vera API tools, and Pulse continuation remain unavailable in the native chat path.
+
+### Native personal memory
+
+Settings, Memory controls the optional native personal-memory feature. It starts off after upgrade. Approved records stay in the Mac app's local database and are organized in the Memory Library as **You**, **Topics**, **Areas**, and **People**. A compatible embeddings model enables semantic recall. A compatible chat model can create bounded proposals from completed turns and natural-language change requests. Missing or failed optional models leave ordinary chat usable.
+
+All generated changes wait in the Memory review queue. Vera does not automatically create, update, merge, suppress, expire, prune, or delete approved memory. Episodic memory requires an absolute expiry date and stops appearing in recall after that date. A conversation can be excluded from suggestions through its sidebar menu.
+
+See [Native memory](NATIVE_MEMORY.md) for the recall budgets, privacy boundary, retained Adaptive Memory behavior, and intentional differences.
 
 When vera-api is configured, Pulse and the other ambient surfaces continue operating independently. The two opt-in surfaces afterward each live inside the feature they drive:
 

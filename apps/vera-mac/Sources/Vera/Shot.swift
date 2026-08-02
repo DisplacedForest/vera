@@ -213,6 +213,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view.hasPrefix("memory") {
+            content = AnyView(
+                NativeMemoryShotSurface(variant: view)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "veins" || view == "vein-browse" || view == "vein-import"
                     || view == "settings-plugins" || view == "settings-mcp" {
             // Veins is now a sheet over Pulse; Plugins and MCP are Settings tabs.
@@ -231,7 +237,6 @@ enum Shot {
             switch view {
             case "pulse": section = .pulse
             case "journal": section = .journal; store.journalEntries = JournalEntry.mock()
-            case "memory": section = .memory
             case "agentic": section = .agentic
             default: section = .chat
             }

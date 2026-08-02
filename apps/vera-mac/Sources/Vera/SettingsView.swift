@@ -10,6 +10,7 @@ struct SettingsView: View {
             ConnectionTab().tabItem { Label("Endpoints", systemImage: "link") }.tag(SettingsTab.connection)
             ModelTab().tabItem { Label("Model", systemImage: "cpu") }.tag(SettingsTab.model)
             PersonaTab().tabItem { Label("Persona", systemImage: "text.quote") }.tag(SettingsTab.persona)
+            NativeMemorySettingsTab().tabItem { Label("Memory", systemImage: "tray.full") }.tag(SettingsTab.memory)
             NativeToolsTab().tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }.tag(SettingsTab.nativeTools)
             ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }.tag(SettingsTab.services)
             // Plugins and MCP are configuration surfaces, not destinations — they live here, not the sidebar.
@@ -292,6 +293,68 @@ struct NativeToolEditor: View {
                 }
             }
         }
+    }
+}
+
+struct NativeMemorySettingsTab: View {
+    @EnvironmentObject var config: ConfigStore
+    @EnvironmentObject var store: ChatStore
+    @State private var saved = false
+
+    var body: some View {
+        Form {
+            Section("Local memory") {
+                Toggle("Use approved memory in native chat", isOn: config.memoryBoolBinding(\.enabled))
+                Text("Memory stays on this Mac. Vera only recalls approved items, and every model-suggested change waits for your review.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                Toggle("Search past chats", isOn: config.memoryBoolBinding(\.searchPastChats))
+                Text("When enabled, Vera may use completed local chats to suggest memory changes. Chats are not copied into memory.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                Toggle("Generate proposals from completed chats", isOn: config.memoryBoolBinding(\.generateFromChats))
+                Text("Suggestions appear in the Memory review queue. They never become approved memory on their own.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+            Section("Compatible models") {
+                TextField("Embeddings model identifier", text: config.memoryStringBinding(\.embeddingsModel))
+                    .textFieldStyle(.roundedBorder)
+                Text("Semantic recall requires an embeddings model at the active OpenAI-compatible endpoint. If it is missing or unavailable, ordinary chat continues without memory context.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                TextField("Extraction model identifier", text: config.memoryStringBinding(\.extractionModel))
+                    .textFieldStyle(.roundedBorder)
+                Text("The extraction model only creates reviewable proposals from bounded completed turns and natural-language requests in Memory.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+            Section("Recall scope") {
+                Picker("Memory bank", selection: config.memoryStringBinding(\.bankScope)) {
+                    Text("All banks").tag("all")
+                    Text("Personal").tag("personal")
+                    Text("Work").tag("work")
+                    Text("Family").tag("family")
+                    Text("Projects").tag("projects")
+                }
+                Text("Vera selects at most 8 relevant items and about 700 tokens. Expired, suppressed, deleted, pending, and unrelated items are excluded.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+            Section {
+                HStack {
+                    Text(saved ? "Saved" : store.memoryServiceState.label)
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Button("Save memory settings") {
+                        do {
+                            try config.save()
+                            store.updateNativeMemory(
+                                settings: config.nativeSettings.memory,
+                                service: config.nativeMemoryService)
+                            saved = true
+                        } catch {
+                            saved = false
+                        }
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

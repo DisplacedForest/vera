@@ -28,7 +28,7 @@ enum AppSection: String, CaseIterable, Identifiable {
 /// Tabs in the Settings window. Plugins and MCP join the connection/identity tabs here; a deep
 /// link (the Veins "Open Plugins" warning) sets the shared selection before opening Settings.
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case connection, model, persona, nativeTools, services, plugins, mcp, identity, about
+    case connection, model, persona, memory, nativeTools, services, plugins, mcp, identity, about
     var id: String { rawValue }
 }
 

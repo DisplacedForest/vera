@@ -70,16 +70,18 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
     var enabledToolIDs: Set<String>
     var onboardingState: NativeOnboardingState
     var onboardingStep: Int
+    var memory: NativeMemorySettings
 
     static var fresh: NativeChatSettings {
         NativeChatSettings(
-            version: 1,
+            version: 2,
             profiles: [],
             activeProfileID: nil,
             systemPrompt: defaultSystemPrompt,
             enabledToolIDs: [],
             onboardingState: .notStarted,
-            onboardingStep: 0)
+            onboardingStep: 0,
+            memory: .fresh)
     }
 
     var activeProfile: NativeEndpointProfile? {
@@ -101,7 +103,8 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         if let object = raw["native_chat"] as? [String: Any],
            let data = try? JSONSerialization.data(withJSONObject: object),
            var decoded = try? JSONDecoder().decode(NativeChatSettings.self, from: data),
-           decoded.version == 1 {
+           decoded.version == 1 || decoded.version == 2 {
+            decoded.version = 2
             if decoded.activeProfile == nil { decoded.activeProfileID = decoded.profiles.first?.id }
             if decoded.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 decoded.systemPrompt = defaultSystemPrompt
@@ -124,6 +127,38 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         settings.activeProfileID = profile.id
         settings.onboardingState = settings.hasValidConfiguration ? .complete : .notStarted
         return settings
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case version, profiles, activeProfileID, systemPrompt, enabledToolIDs
+        case onboardingState, onboardingStep, memory
+    }
+
+    init(
+        version: Int, profiles: [NativeEndpointProfile], activeProfileID: String?,
+        systemPrompt: String, enabledToolIDs: Set<String>, onboardingState: NativeOnboardingState,
+        onboardingStep: Int, memory: NativeMemorySettings
+    ) {
+        self.version = version
+        self.profiles = profiles
+        self.activeProfileID = activeProfileID
+        self.systemPrompt = systemPrompt
+        self.enabledToolIDs = enabledToolIDs
+        self.onboardingState = onboardingState
+        self.onboardingStep = onboardingStep
+        self.memory = memory
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        version = try values.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        profiles = try values.decodeIfPresent([NativeEndpointProfile].self, forKey: .profiles) ?? []
+        activeProfileID = try values.decodeIfPresent(String.self, forKey: .activeProfileID)
+        systemPrompt = try values.decodeIfPresent(String.self, forKey: .systemPrompt) ?? Self.defaultSystemPrompt
+        enabledToolIDs = try values.decodeIfPresent(Set<String>.self, forKey: .enabledToolIDs) ?? []
+        onboardingState = try values.decodeIfPresent(NativeOnboardingState.self, forKey: .onboardingState) ?? .notStarted
+        onboardingStep = try values.decodeIfPresent(Int.self, forKey: .onboardingStep) ?? 0
+        memory = try values.decodeIfPresent(NativeMemorySettings.self, forKey: .memory) ?? .fresh
     }
 
     func merging(into raw: [String: Any]) -> [String: Any] {

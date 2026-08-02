@@ -55,7 +55,7 @@ scripts/                ops scripts; each documents its own env in its header
 docs/                   SETUP.md + screenshots
 ```
 
-Native text chat uses the standard OpenAI Chat Completions SSE contract and stores local history with GRDB. Keep transport parsing and persistence testable without a live model server. Interrupted assistant messages remain local but are excluded from later prompt history.
+Native text chat uses the standard OpenAI Chat Completions SSE contract and stores local history with GRDB. Its versioned local settings own saved endpoint profiles, the discovered-model cache, explicit selection basis, the system prompt, enabled native tools, and onboarding progress. Endpoint secrets belong in the Mac keychain, not chat records or the JSON settings file. Keep transport parsing, settings migration, request shape, and persistence testable without a live model server. Interrupted assistant messages remain local but are excluded from later prompt history. Never advertise a tool schema unless the native loop can invoke that tool.
 
 ## Running tests
 

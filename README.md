@@ -60,7 +60,7 @@ Run everything on one machine or spread it across several: topology is configura
 
 ### Chat: native, streaming, and local
 
-Text chat streams directly from the configured OpenAI-compatible endpoint. Conversations and messages live in `~/.vera/vera.sqlite`, so chat works without Open WebUI or vera-api. The first native slice is text only. Tool calling, memory retrieval, documents, attachments, voice, and Open WebUI history import remain separate follow-on work. Replies can still render the app's existing structured answers, stat blocks, charts, citations, and canvas artifacts when the model emits their established formats.
+Text chat streams directly from the selected saved OpenAI-compatible endpoint. Settings lists every model identifier returned by discovery, shows which model is selected and why, keeps the last successful model list for offline reference, and preserves the selection across relaunches. Conversations and messages live in `~/.vera/vera.sqlite`, so chat works without Open WebUI or vera-api. A locally saved system prompt is added to each new request and can be edited or reset without rewriting earlier conversation history. The native tool picker only enables tools the native loop can actually invoke. When none are available, Settings says so and sends no tool schema. Tool runtime expansion, memory retrieval, documents, attachments, voice, and Open WebUI history import remain separate follow-on work.
 
 <div align="center"><img src="docs/assets/chat.png" alt="Vera chat: interactive choice cards, canvas artifacts, cited sources" width="850"></div>
 
@@ -156,7 +156,7 @@ docker compose up -d --build        # backend (uncomment `build:` in docker-comp
 cd apps/vera-mac && scripts/deploy.sh   # app: packages Vera.app and installs it to /Applications
 ```
 
-Onboarding asks for a model endpoint ending in `/v1`, an optional API key, and a discovered or manually entered model id. vera-api remains optional and independently powers Pulse and the other ambient surfaces.
+Onboarding walks through a friendly endpoint name, an OpenAI-compatible URL ending in `/v1`, an optional key saved in the Mac keychain, explicit model discovery and selection, the system prompt, and the native tool picker. The guide is skippable and can be resumed from Settings without touching chat history. vera-api remains optional and independently powers Pulse and the other ambient surfaces.
 
 <div align="center"><img src="docs/assets/onboarding.png" alt="Onboarding" width="700"></div>
 

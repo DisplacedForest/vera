@@ -72,7 +72,7 @@ Vera attaches to Open WebUI as a set of tools (model-invokable capabilities) and
 2. **Functions** — Admin → Functions → create, paste from `services/owui-functions/` (the memory filter; `vision_autosee.py` if you run a vision endpoint), enable them.
 3. **The model** — give your Vera model the tools you imported (model settings → tools) so chat can invoke them.
 
-Open WebUI tools and features do not apply to native text chat. The first native slice sends only the selected model and completed local conversation history to `POST /v1/chat/completions`.
+Open WebUI tools and features do not apply to native text chat. Native chat sends the saved system prompt, selected model, and completed local conversation history directly to `POST /v1/chat/completions`. It sends tool schemas only for enabled tools that the native loop can invoke. The app currently reports connected-service and Reminders tools as unavailable in native chat, so no tool schema is sent for them.
 
 If you install the Mac app, its integration store performs the per-integration OWUI wiring (attaching kitchen/media tools when you connect Grocy or Overseerr, etc.) automatically — the manual steps above are only needed once for the base tools.
 
@@ -88,9 +88,11 @@ swift build -c release
 scripts/deploy.sh    # packages Vera.app, ad-hoc signs it, installs it to /Applications
 ```
 
-First launch runs **onboarding**: a model endpoint ending in `/v1`, an optional API key, a discovered or manually entered model id, and an optional vera-api URL. Native conversations live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history. Existing Open WebUI history is left untouched and is not imported.
+First launch runs **onboarding**. Give the endpoint a friendly saved name, enter its OpenAI-compatible URL ending in `/v1`, and add an optional API key. The key is stored in the Mac keychain. Discover models, inspect every returned identifier, choose one explicitly, review the local system prompt, and inspect the native tool picker. The guide can be skipped and resumed from Settings, Endpoints. A valid configuration from an earlier release migrates into a saved endpoint and opens the app normally. Native conversations live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history. Existing Open WebUI history is left untouched and is not imported.
 
-Native chat is text only in this release. Attachments, voice, tool calling, memory retrieval, document knowledge, and Pulse continuation are unavailable in the native chat path. A failed stream keeps any partial assistant text and marks the reply interrupted. It does not resume automatically.
+Settings, Models keeps the last successful discovery result, shows the active model and whether it was restored, recommended, or chosen by you, and distinguishes an empty response, unusable model entries, authentication failure, network failure, and malformed data. Refresh never clears a known selection just because discovery fails. Settings, Persona edits or resets the prompt used for future turns. Settings, Tools clearly separates callable tools from unavailable integrations and persists enabled choices.
+
+Native chat is text only in this release. Attachments, voice, native tool invocation, memory retrieval, document knowledge, and Pulse continuation are unavailable in the native chat path. A failed stream keeps any partial assistant text and marks the reply interrupted. It does not resume automatically.
 
 When vera-api is configured, Pulse and the other ambient surfaces continue operating independently. The two opt-in surfaces afterward each live inside the feature they drive:
 

@@ -34,6 +34,9 @@ final class ConfigStore: ObservableObject {
     /// Raw file contents. String values are editable in Settings; unknown keys are preserved.
     @Published private(set) var raw: [String: Any]
     @Published var showOnboarding: Bool
+    @Published var nativeSettings: NativeChatSettings
+    @Published private var nativeAPIKeys: [String: String]
+    private let credentialStore: any NativeCredentialStore
 
     /// THE `~/.vera/config.json` key ↔ environment-variable mapping (env wins at resolve
     /// time). Canonical names match the backend's convention (`OWUI_KEY`); deprecated
@@ -49,9 +52,29 @@ final class ConfigStore: ObservableObject {
     /// canonical env name → deprecated alias still honored this release.
     static let envAliases: [String: String] = ["OWUI_KEY": "OWUI_API_KEY"]
 
-    init() {
-        raw = ConfigFile.read()
-        showOnboarding = NativeChatConfig.load() == nil
+    init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore()) {
+        let loaded = ConfigFile.read()
+        let settings = NativeChatSettings.load(from: loaded)
+        var keys: [String: String] = [:]
+        for profile in settings.profiles {
+            if let value = credentialStore.value(for: profile.id), !value.isEmpty {
+                keys[profile.id] = value
+            }
+        }
+        if let profile = settings.activeProfile,
+           keys[profile.id] == nil,
+           let legacy = loaded["model_api_key"] as? String,
+           !legacy.isEmpty {
+            keys[profile.id] = legacy
+        }
+        raw = loaded
+        nativeSettings = settings
+        nativeAPIKeys = keys
+        self.credentialStore = credentialStore
+        showOnboarding = !settings.hasValidConfiguration
+            && settings.onboardingState != .skipped
+            && settings.onboardingState != .complete
+        try? save()
     }
 
     subscript(_ key: String) -> String {
@@ -87,13 +110,149 @@ final class ConfigStore: ObservableObject {
 
     /// Persist the current values to disk.
     func save() throws {
+        for profile in nativeSettings.profiles {
+            try credentialStore.set(nativeAPIKeys[profile.id], for: profile.id)
+        }
+        raw = nativeSettings.merging(into: raw)
         try ConfigFile.write(raw)
     }
 
     /// The fully resolved connection config (env over file). Nil until OWUI base + key exist.
     var resolved: OWUIConfig? { OWUIConfig.load() }
 
-    var nativeResolved: NativeChatConfig? { NativeChatConfig.load() }
+    var nativeResolved: NativeChatConfig? {
+        let env = ProcessInfo.processInfo.environment
+        let profile = nativeSettings.activeProfile
+        let rawBase = env["VERA_MODEL_BASE"]?.nilIfBlank ?? profile?.baseURL.nilIfBlank
+        let model = env["VERA_MODEL"]?.nilIfBlank ?? profile?.selectedModel.nilIfBlank
+        guard let rawBase,
+              let base = URL(string: rawBase),
+              base.scheme == "http" || base.scheme == "https",
+              base.lastPathComponent == "v1",
+              let model else { return nil }
+        let apiKey = env["VERA_MODEL_API_KEY"]?.nilIfBlank
+            ?? profile.flatMap { nativeAPIKeys[$0.id]?.nilIfBlank }
+        let kwargs = env["VERA_CHAT_TEMPLATE_KWARGS"]?.nilIfBlank
+            ?? self["chat_template_kwargs"].nilIfBlank
+        return NativeChatConfig(baseURL: base, apiKey: apiKey, model: model, chatTemplateKwargs: kwargs)
+    }
+
+    var activeNativeProfile: NativeEndpointProfile? { nativeSettings.activeProfile }
+    var activeNativeAPIKey: String {
+        guard let id = nativeSettings.activeProfileID else { return "" }
+        return nativeAPIKeys[id] ?? ""
+    }
+    var nativeDiscoveryConfiguration: NativeDiscoveryConfiguration {
+        NativeChatConfigurationResolver.discovery(
+            profile: activeNativeProfile,
+            apiKey: activeNativeAPIKey,
+            environment: ProcessInfo.processInfo.environment)
+    }
+
+    func activeProfileBinding(_ keyPath: WritableKeyPath<NativeEndpointProfile, String>) -> Binding<String> {
+        Binding(
+            get: { self.activeNativeProfile?[keyPath: keyPath] ?? "" },
+            set: { value in self.updateActiveNativeProfile { $0[keyPath: keyPath] = value } })
+    }
+
+    func selectProfile(_ id: String) {
+        var updated = nativeSettings
+        updated.activeProfileID = id
+        nativeSettings = updated
+    }
+
+    func addNativeProfile() {
+        var updated = nativeSettings
+        updated.addProfile()
+        nativeSettings = updated
+    }
+
+    func updateActiveNativeProfile(_ update: (inout NativeEndpointProfile) -> Void) {
+        var updated = nativeSettings
+        updated.updateActiveProfile(update)
+        nativeSettings = updated
+    }
+
+    func cacheDiscoveredModels(_ models: [String]) {
+        var updated = nativeSettings
+        updated.cacheModels(models)
+        nativeSettings = updated
+    }
+
+    func selectNativeModel(_ model: String) {
+        var updated = nativeSettings
+        updated.selectModel(model, basis: .user)
+        nativeSettings = updated
+    }
+
+    func apiKeyBinding() -> Binding<String> {
+        Binding(
+            get: {
+                guard let id = self.nativeSettings.activeProfileID else { return "" }
+                return self.nativeAPIKeys[id] ?? ""
+            },
+            set: { value in
+                guard let id = self.nativeSettings.activeProfileID else { return }
+                self.nativeAPIKeys[id] = value
+            })
+    }
+
+    func systemPromptBinding() -> Binding<String> {
+        Binding(
+            get: { self.nativeSettings.systemPrompt },
+            set: { value in
+                var updated = self.nativeSettings
+                updated.systemPrompt = value
+                self.nativeSettings = updated
+            })
+    }
+
+    func resetSystemPrompt() {
+        var updated = nativeSettings
+        updated.resetSystemPrompt()
+        nativeSettings = updated
+    }
+
+    func setNativeTool(_ id: String, enabled: Bool) {
+        var updated = nativeSettings
+        if enabled { updated.enabledToolIDs.insert(id) } else { updated.enabledToolIDs.remove(id) }
+        nativeSettings = updated
+    }
+
+    func beginOnboarding(at step: Int? = nil) {
+        var updated = nativeSettings
+        let target = step ?? updated.onboardingStep
+        updated.onboardingState = .inProgress
+        updated.onboardingStep = target
+        nativeSettings = updated
+        showOnboarding = true
+        try? save()
+    }
+
+    func updateOnboarding(step: Int) {
+        var updated = nativeSettings
+        updated.onboardingState = .inProgress
+        updated.onboardingStep = step
+        nativeSettings = updated
+        try? save()
+    }
+
+    func skipOnboarding() {
+        var updated = nativeSettings
+        updated.onboardingState = .skipped
+        nativeSettings = updated
+        showOnboarding = false
+        try? save()
+    }
+
+    func completeOnboarding() {
+        var updated = nativeSettings
+        updated.onboardingState = .complete
+        updated.onboardingStep = 0
+        nativeSettings = updated
+        showOnboarding = false
+        try? save()
+    }
 
     var veraAPIBase: URL? {
         OWUIConfig.resolvedVeraAPIBase()
@@ -184,4 +343,8 @@ enum ConnectionTest {
 
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
+    var nilIfBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
 }

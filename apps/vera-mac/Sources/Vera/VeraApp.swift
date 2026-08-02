@@ -21,12 +21,13 @@ struct VeraApp: App {
     @StateObject private var store: ChatStore
     @StateObject private var tools: ToolsStore
     @StateObject private var voice: VoiceSession
-    @StateObject private var config = ConfigStore()
+    @StateObject private var config: ConfigStore
     @StateObject private var updates = UpdateChecker()
     @StateObject private var engine = EngineManager()
 
     init() {
-        let native = NativeChatConfig.load()
+        let configInstance = ConfigStore()
+        let native = configInstance.nativeResolved
         let legacy = OWUIConfig.load()
         let ambient = legacy ?? OWUIConfig.ambientOnly(native: native)
         let socket = legacy.map { VeraSocket(config: $0) }
@@ -52,8 +53,10 @@ struct VeraApp: App {
             nativeTransport: native.map { NativeChatClient(config: $0) },
             repository: repository,
             repositoryError: repositoryError,
-            hasLegacyOWUI: legacy != nil)
+            hasLegacyOWUI: legacy != nil,
+            nativeSystemPrompt: configInstance.nativeSettings.systemPrompt)
         _store = StateObject(wrappedValue: storeInstance)
+        _config = StateObject(wrappedValue: configInstance)
         _tools = StateObject(wrappedValue: ToolsStore(admin: admin, socket: socket))
         _voice = StateObject(wrappedValue: VoiceSession(client: VoiceClient(base: legacy?.voiceBase),
                                                         socket: socket, store: storeInstance))

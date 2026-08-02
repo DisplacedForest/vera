@@ -98,6 +98,7 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         case invalidResponse
         case http(Int, String)
         case malformedEvent
+        case noUsableModels
         case server(String)
         case interrupted
 
@@ -107,6 +108,7 @@ struct NativeChatClient: NativeChatTransport, Sendable {
             case .http(let status, let detail):
                 return detail.isEmpty ? "The model endpoint answered HTTP \(status)" : "The model endpoint answered HTTP \(status): \(detail)"
             case .malformedEvent: return "The model endpoint returned a malformed stream"
+            case .noUsableModels: return "The endpoint responded, but none of its model entries had a usable identifier"
             case .server(let detail): return detail
             case .interrupted: return "The response stream ended before completion"
             }
@@ -217,7 +219,16 @@ struct NativeChatClient: NativeChatTransport, Sendable {
     static func modelIDs(from data: Data) throws -> [String] {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rows = object["data"] as? [[String: Any]] else { throw ClientError.invalidResponse }
-        return rows.compactMap { $0["id"] as? String }.filter { !$0.isEmpty }.sorted()
+        let models = rows.compactMap { row -> String? in
+            guard let id = row["id"] as? String else { return nil }
+            let value = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : value
+        }
+        if !rows.isEmpty, models.isEmpty { throw ClientError.noUsableModels }
+        guard models.count == rows.count, Set(models).count == models.count else {
+            throw ClientError.invalidResponse
+        }
+        return models.sorted()
     }
 
     private func applyAuthorization(to request: inout URLRequest) {

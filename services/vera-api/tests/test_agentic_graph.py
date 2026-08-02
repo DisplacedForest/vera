@@ -20,6 +20,7 @@ from routers import heartbeat_store  # noqa: E402
 from routers import pulse_store  # noqa: E402
 from routers import scheduler_store  # noqa: E402
 from routers import vera_memory_store  # noqa: E402
+from routers import workflow_store  # noqa: E402
 from routers.scheduler import REGISTRY  # noqa: E402
 
 
@@ -30,6 +31,7 @@ def _clean(monkeypatch, tmp_path):
     monkeypatch.setattr(scheduler_store, "DB_PATH", str(tmp_path / "scheduler.db"))
     monkeypatch.setattr(pulse_store, "DB_PATH", str(tmp_path / "pulse.db"))
     monkeypatch.setattr(vera_memory_store, "DB_PATH", str(tmp_path / "vera_memory.db"))
+    monkeypatch.setattr(workflow_store, "DB_PATH", str(tmp_path / "workflows.db"))
     yield
 
 
@@ -95,6 +97,24 @@ def test_drill_in_topology():
     assert [s["id"] for s in hb["stages"]] == ["learn", "refine", "propose", "watch", "foryou"]
     # Simple jobs carry no stages: the manifest decides depth.
     assert "stages" not in _flow(out, "memory_groom")
+
+
+def test_pulse_topology_comes_from_the_active_workflow():
+    draft = workflow_store.create_draft("pulse")
+    definition = draft["definition"]
+    definition["nodes"].insert(-1, {"id": "visual_review", "type": "pulse.visual_review", "label": "Visual review"})
+    definition["nodes"].insert(-1, {"id": "cover_retry", "type": "pulse.cover_retry", "label": "Retry"})
+    definition["edges"] = [edge for edge in definition["edges"] if edge != {"from": "cover_art", "to": "inject"}]
+    definition["edges"].extend([
+        {"from": "cover_art", "to": "visual_review"},
+        {"from": "visual_review", "to": "cover_retry"},
+        {"from": "cover_retry", "to": "inject"},
+    ])
+    workflow_store.save_draft(draft["id"], definition)
+    workflow_store.promote(draft["id"])
+    pulse = _flow(_graph(), "pulse")
+    assert pulse["workflow"] == {"version": 2, "state": "active", "editable": True}
+    assert [stage["id"] for stage in pulse["stages"]][-3:] == ["visual_review", "cover_retry", "inject"]
 
 
 def test_pulse_stage_state_idle_is_none():

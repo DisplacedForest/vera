@@ -19,9 +19,11 @@ import time
 from datetime import datetime
 
 import aiohttp
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from . import action_store, heartbeat_store, scheduler_store
+from . import workflow_store
 
 log = logging.getLogger("agentic")
 router = APIRouter()
@@ -202,6 +204,10 @@ FLOW_FACE: dict[str, dict] = {
 _DEFAULT_FACE = {"icon": "clock", "tint": "gray", "group": "Other", "feeds": [], "tools": []}
 
 
+class WorkflowDefinitionUpdate(BaseModel):
+    definition: dict
+
+
 def _vein_face(job_id: str) -> dict:
     from . import pulse_veins
     spec = pulse_veins.manifest(job_id.removeprefix("vein_")) or {}
@@ -287,6 +293,10 @@ async def graph():
             flow["stages"] = face["stages"]
         if job_id == "pulse":
             try:
+                active = workflow_store.active("pulse")
+                flow["stage_layout"] = active["definition"].get("layout", "pipeline")
+                flow["stages"] = active["definition"].get("nodes") or []
+                flow["workflow"] = {"version": active["version"], "state": active["state"], "editable": True}
                 flow["stage_state"] = _pulse_stage_state()
                 if (flow["stage_state"] or {}).get("state") == "running":
                     flow["running"] = True
@@ -312,6 +322,39 @@ async def graph():
     # one source of truth, two readings. The future editor mutates edges through this shape.
     edges = [{"from": f["id"], "to": sid} for f in flows for sid in f["feeds"]]
     return {"flows": flows, "surfaces": surfaces, "edges": edges}
+
+
+@router.get("/agentic/workflows/{workflow_id}", tags=["agentic"])
+async def workflow(workflow_id: str):
+    try:
+        active = workflow_store.active(workflow_id)
+    except KeyError:
+        raise HTTPException(404, "workflow not found")
+    return {"workflow": active, "latest_run": workflow_store.latest_run(workflow_id)}
+
+
+@router.post("/agentic/workflows/{workflow_id}/drafts", tags=["agentic"])
+async def create_workflow_draft(workflow_id: str):
+    try:
+        return {"workflow": workflow_store.create_draft(workflow_id)}
+    except KeyError:
+        raise HTTPException(404, "workflow not found")
+
+
+@router.put("/agentic/workflow-drafts/{version_id}", tags=["agentic"])
+async def update_workflow_draft(version_id: str, req: WorkflowDefinitionUpdate):
+    try:
+        return {"workflow": workflow_store.save_draft(version_id, req.definition)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/agentic/workflow-drafts/{version_id}/promote", tags=["agentic"])
+async def promote_workflow_draft(version_id: str):
+    try:
+        return {"workflow": workflow_store.promote(version_id)}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 @router.get("/agentic/activity", tags=["agentic"])

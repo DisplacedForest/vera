@@ -1,4 +1,5 @@
 import base64
+import json
 import logging
 import os
 import re
@@ -12,6 +13,17 @@ from .pulse_llm import OWUI_BASE, OWUI_KEY, _request_json
 log = logging.getLogger("vera.pulse")
 
 VERA_IMAGE_BASE = os.environ.get("VERA_IMAGE_BASE", "")          # optional image-gen service; cards skip cover art without it
+VERA_VISION_BASE = os.environ.get("VERA_VISION_BASE", "").rstrip("/")
+VERA_VISION_MODEL = os.environ.get("VERA_VISION_MODEL", "")
+
+
+def _vision_config() -> tuple[str, str]:
+    try:
+        from . import integrations
+        config = integrations.integration("vision_review") or {}
+    except Exception:
+        config = {}
+    return (config.get("url") or VERA_VISION_BASE).rstrip("/"), config.get("model") or VERA_VISION_MODEL
 
 
 # Image generation resolves through the integrations registry's 'image_gen' entry
@@ -110,6 +122,34 @@ async def _vision(pause: bool):
                          timeout=aiohttp.ClientTimeout(total=40))
     except Exception:
         pass
+
+
+async def review_cover(image_url: str, headline: str, summary: str, body: str) -> dict | None:
+    vision_base, vision_model = _vision_config()
+    if not vision_base or not vision_model or not image_url:
+        return None
+    base = vision_base if vision_base.endswith("/v1") else f"{vision_base}/v1"
+    prompt = (
+        "Review this briefing-card image against the supplied story. Return JSON only with "
+        "accept (boolean) and reason (short string). Reject only if it is unrelated, contains "
+        "prominent text or logos, or fails to depict the main subject. Story: "
+        f"Headline: {headline}. Summary: {summary}. Body: {body[:600]}"
+    )
+    payload = {"model": vision_model, "temperature": 0,
+               "messages": [{"role": "user", "content": [
+                   {"type": "text", "text": prompt},
+                   {"type": "image_url", "image_url": {"url": image_url}},
+               ]}]}
+    try:
+        response = await _request_json("POST", f"{base}/chat/completions", timeout=120, json=payload)
+        content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        verdict = json.loads(match.group(0) if match else content)
+        if not isinstance(verdict.get("accept"), bool):
+            return None
+        return {"accept": verdict["accept"], "reason": str(verdict.get("reason") or "")[:300]}
+    except Exception:
+        return None
 
 
 async def _upload_image(img_bytes, filename, content_type="image/png"):

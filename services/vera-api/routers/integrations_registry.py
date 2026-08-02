@@ -37,6 +37,15 @@ REGISTRY: dict[str, dict] = {
         ],
         "unlocks": ["cover art on Pulse briefing cards"],
     },
+    "vision_review": {
+        "display_name": "Vision review",
+        "fields": [
+            {"id": "url", "env": "VERA_VISION_BASE", "label": "OpenAI-compatible base URL", "secret": False,
+             "hint": "a vision-capable endpoint, which may be the same endpoint as the primary model"},
+            {"id": "model", "env": "VERA_VISION_MODEL", "label": "Vision-capable model id", "secret": False},
+        ],
+        "unlocks": ["visual review and one retry for Pulse cover art"],
+    },
     "home_assistant": {
         "display_name": "Home Assistant",
         "fields": [

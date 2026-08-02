@@ -27,6 +27,7 @@ from . import pulse_images
 from . import pulse_gates
 from . import pulse_synthesis
 from . import pulse_audit
+from . import workflow_store
 from .websearch import search as web_search
 from .pulse_llm import (
     OWUI_BASE, OWUI_KEY, VERA_BASE, MODEL, TZ,
@@ -401,6 +402,29 @@ async def _run_novelty_loop(req, out, user_id, who, persona, all_interests, memo
         await _audit_phase(pending_audit, out["errors"], items_by_card)
     finally:
         await _vision(pause=False)  # bring the vision model back up after the image batch
+    if any(node.get("type") == "pulse.visual_review" for node in workflow_store.active("pulse")["definition"]["nodes"]):
+        for item in out["items"]:
+            if item.get("status") != "injected" or not item.get("card_id"):
+                continue
+            card = store.get_card(item["card_id"])
+            if not card or not card.get("image_url"):
+                continue
+            review = await pulse_images.review_cover(card["image_url"], card["title"], card["summary"], card["body"])
+            item["visual_review"] = review or {"accept": True, "reason": "vision unavailable"}
+            if review and not review["accept"]:
+                await _vision(pause=True)
+                try:
+                    image_url, tint, generated = await make_cover(card["title"], card["summary"], card["body"],
+                                                                  {"title": card["title"]}, [], 1000 + attempt, out["errors"])
+                finally:
+                    await _vision(pause=False)
+                if generated:
+                    card["image_url"] = image_url
+                    card["tint"] = tint
+                    store.insert_card(card)
+                    item["visual_retry"] = {"attempted": True, "published": True}
+                else:
+                    item["visual_retry"] = {"attempted": True, "published": False}
     return gates
 
 
@@ -455,7 +479,10 @@ async def _runner(fn, req, run_id, kind):
     """Run `fn(req)` in the background, recording terminal status. Never raises."""
     global _inflight
     started = int(time.time())
+    tracked = kind == "run"
     try:
+        if tracked:
+            workflow_store.start_run("pulse", run_id)
         out = await fn(req)
         if kind == "run_all":
             injected = [t for u in out.get("users", []) for t in (u.get("injected") or [])]
@@ -472,10 +499,15 @@ async def _runner(fn, req, run_id, kind):
                               "injected": injected, "errors": errors, "gates": gates,
                               "rounds": out.get("rounds", []) if kind != "run_all" else [],
                               "items": out.get("items", []) if kind != "run_all" else []})
+        if tracked:
+            workflow_store.record_node_runs(run_id, out)
+            workflow_store.finish_run(run_id, "ok", out)
     except Exception as e:
         store.set_run_status({"run_id": run_id, "state": "error", "kind": kind, "started_at": started,
                               "finished_at": int(time.time()), "topics": [], "injected": [],
                               "errors": [str(e)]})
+        if tracked:
+            workflow_store.finish_run(run_id, "error", error=str(e))
     finally:
         _inflight = False
 

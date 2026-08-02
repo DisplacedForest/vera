@@ -1,7 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// App state. Starts mock-backed; the OWUI client swaps in live data once connected.
 @MainActor
 final class ChatStore: ObservableObject {
     @Published var conversations: [Conversation] = []
@@ -17,7 +16,6 @@ final class ChatStore: ObservableObject {
     @Published var journalArchive: [JournalArchiveMonth] = [] // recently resolved ones
     @Published var streamStatus: String?     // live tool/progress line while Vera is thinking
     @Published var generating = false        // true for the whole turn (drives the living flame mark)
-    private var settleTask: Task<Void, Never>?  // settles `generating` after the last token if the stream never signals done
     @Published var pulseRatings: [String: String] = [:]   // Pulse cardID → "up"/"down"
     @Published var messageRatings: [UUID: String] = [:]   // chat messageID → "up"/"down"
     @Published var bookmarkedPulseIDs: Set<String> = []   // Pulse cards also surfaced in the sidebar
@@ -32,18 +30,36 @@ final class ChatStore: ObservableObject {
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
     @Published var showCanvas: Bool = false
     @Published var artifactLibrary: [Artifact] = []   // persisted across sessions
+    @Published var chatConfigurationError: String?
 
     private var config: OWUIConfig?
     private var client: OWUIClient?
     private var socket: VeraSocket?           // stream through OWUI's pipeline (tools + memory)
-    var isLive: Bool { client != nil }
-    var apiToken: String? { config?.apiKey }   // for authed OWUI image loads (Pulse cover art)
+    private var nativeConfig: NativeChatConfig?
+    private var nativeTransport: (any NativeChatTransport)?
+    private let repository: (any ChatRepository)?
+    private let repositoryInitializationError: String?
+    private let hasLegacyOWUI: Bool
+    var isLive: Bool { nativeTransport != nil && repository != nil }
+    var canSubmitChat: Bool { !generating && repository != nil }
+    var isPulseConfigured: Bool { config?.veraAPIBase != nil }
+    var isLegacyConfigured: Bool { hasLegacyOWUI }
+    var apiToken: String? { hasLegacyOWUI ? config?.apiKey : nil }   // for authed OWUI image loads (Pulse cover art)
     var currentConfig: OWUIConfig? { config }  // for Settings to diff against saved edits
+    var currentNativeConfig: NativeChatConfig? { nativeConfig }
 
-    init(config: OWUIConfig?, client: OWUIClient?, socket: VeraSocket?) {
+    init(config: OWUIConfig?, client: OWUIClient?, socket: VeraSocket?,
+         nativeConfig: NativeChatConfig?, nativeTransport: (any NativeChatTransport)?,
+         repository: (any ChatRepository)?, repositoryError: String? = nil, hasLegacyOWUI: Bool) {
         self.config = config
         self.client = client
         self.socket = socket
+        self.nativeConfig = nativeConfig
+        self.nativeTransport = nativeTransport
+        self.repository = repository
+        self.repositoryInitializationError = repositoryError
+        self.hasLegacyOWUI = hasLegacyOWUI
+        chatConfigurationError = repositoryError
         selectedID = conversations.first?.id
         loadArtifacts()
     }
@@ -89,10 +105,17 @@ final class ChatStore: ObservableObject {
 
     /// Standalone constructor (screenshots / `Shot`): loads config and builds its own deps.
     convenience init() {
-        let cfg = OWUIConfig.load()
-        self.init(config: cfg,
-                  client: cfg.map { OWUIClient(config: $0) },
-                  socket: cfg.map { VeraSocket(config: $0) })
+        let native = NativeChatConfig.load()
+        let legacy = OWUIConfig.load()
+        let ambient = legacy ?? OWUIConfig.ambientOnly(native: native)
+        self.init(
+            config: ambient,
+            client: ambient.map { OWUIClient(config: $0) },
+            socket: legacy.map { VeraSocket(config: $0) },
+            nativeConfig: native,
+            nativeTransport: native.map { NativeChatClient(config: $0) },
+            repository: try? LocalChatRepository(inMemory: true),
+            hasLegacyOWUI: legacy != nil)
     }
 
     /// Wire up a config at runtime (first-run onboarding, or connection edits in Settings):
@@ -112,14 +135,32 @@ final class ChatStore: ObservableObject {
         client = OWUIClient(config: cfg)
     }
 
-    /// Load the live chat list from OWUI (called on the live app's appear). Ordered so no
-    /// half-state renders: list arrives, then the "New chat" placeholder, then selection — once.
+    func adoptNative(_ cfg: NativeChatConfig) {
+        nativeConfig = cfg
+        nativeTransport = NativeChatClient(config: cfg)
+        let ambient = OWUIConfig.load() ?? OWUIConfig.ambientOnly(native: cfg)
+        config = ambient
+        client = ambient.map { OWUIClient(config: $0) }
+        chatConfigurationError = nil
+        Task { await connect() }
+    }
+
     func connect() async {
-        guard client != nil else { return }
-        await reconcileChats()
-        newConversation()   // open to a fresh chat (like ChatGPT/Claude), not the last one
+        if let repository {
+            do {
+                conversations = try repository.listConversations()
+                chatConfigurationError = nil
+            } catch {
+                conversations = []
+                chatConfigurationError = "Local history couldn't open: \(error.localizedDescription)"
+            }
+        } else {
+            conversations = []
+            chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
+        }
+        newConversation()
         await refreshPulse()
-        await refreshMemories()
+        if hasLegacyOWUI { await refreshMemories() }
         startReconcileLoop()
     }
 
@@ -175,13 +216,13 @@ final class ChatStore: ObservableObject {
     /// Re-fetch memories from OWUI. A failed fetch keeps the current list; an empty result is
     /// real (memories deleted elsewhere) and applies.
     func refreshMemories() async {
-        guard let client, let mems = await client.memories() else { return }
+        guard hasLegacyOWUI, let client, let mems = await client.memories() else { return }
         memories = mems
     }
 
     /// Re-fetch her journal (self-authored, rendered read-only). Pulled when the view opens.
     func refreshJournal() async {
-        guard let client else { return }
+        guard hasLegacyOWUI, let client else { return }
         let (entries, archive) = await client.fetchJournal()
         journalEntries = entries
         journalArchive = archive
@@ -283,12 +324,9 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    /// One reconcile pass over every live surface, fetched concurrently.
     private func reconcile(refreshingMemories: Bool = false) async {
-        async let pulse: Void = refreshPulse()
-        async let chats: Void = reconcileChats()
-        if refreshingMemories { await refreshMemories() }
-        _ = await (pulse, chats)
+        await refreshPulse()
+        if refreshingMemories, hasLegacyOWUI { await refreshMemories() }
     }
 
     // MARK: - Bookmark + feedback
@@ -402,28 +440,21 @@ final class ChatStore: ObservableObject {
     func rateMessage(_ message: Message, in convo: Conversation, _ sentiment: String) {
         if messageRatings[message.id] == sentiment { messageRatings[message.id] = nil; return }
         messageRatings[message.id] = sentiment
-        guard let client else { return }
-        Task {
-            await client.postFeedback([
-                "kind": "chat", "sentiment": sentiment, "title": convo.title, "content": message.text,
-                "chat_id": convo.id, "message_id": message.id.uuidString,
-                "model": config?.model ?? "",
-            ])
-        }
     }
 
-    /// Select a conversation and lazily load its history from OWUI.
     func select(_ id: String) {
         section = .chat
         selectedID = id
-        guard let client,
+        guard let repository,
               let idx = conversations.firstIndex(where: { $0.id == id }),
               conversations[idx].messages.isEmpty else { return }
-        Task {
-            let msgs = await client.loadMessages(chatID: id)
+        do {
+            let msgs = try repository.messages(conversationID: id)
             if let i = conversations.firstIndex(where: { $0.id == id }) {
                 conversations[i].messages = msgs
             }
+        } catch {
+            chatConfigurationError = "This conversation couldn't load: \(error.localizedDescription)"
         }
     }
 
@@ -438,7 +469,7 @@ final class ChatStore: ObservableObject {
     func deleteMemory(_ item: MemoryItem) {
         let prev = memories
         memories.removeAll { $0.id == item.id }
-        guard let client else { return }
+        guard hasLegacyOWUI, let client else { return }
         Task {
             if await client.deleteMemory(id: item.id) == false { memories = prev }
         }
@@ -462,7 +493,9 @@ final class ChatStore: ObservableObject {
     func togglePin(_ id: String) {
         guard let i = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[i].pinned.toggle()
-        if let client, conversations[i].isPersisted { Task { await client.togglePin(id: id) } }
+        conversations[i].updatedAt = Date()
+        do { try repository?.saveConversation(conversations[i]) }
+        catch { chatConfigurationError = "Pin state couldn't save: \(error.localizedDescription)" }
     }
 
     // id must be STABLE across renders (title is) — a fresh UUID each compute breaks SwiftUI's
@@ -496,38 +529,19 @@ final class ChatStore: ObservableObject {
         return groups
     }
 
-    /// Remove a conversation (locally and in OWUI) and reselect a neighbour.
     func deleteConversation(_ id: String) {
         let idx = conversations.firstIndex { $0.id == id }
-        let persisted = conversations.first { $0.id == id }?.isPersisted ?? false
         conversations.removeAll { $0.id == id }
         if selectedID == id {
             let next = idx.flatMap { conversations.indices.contains($0) ? conversations[$0] : conversations.last }
             selectedID = next?.id ?? conversations.first?.id
         }
-        if let client, persisted { Task { await client.deleteChat(id: id) } }
+        do { try repository?.deleteConversation(id) }
+        catch { chatConfigurationError = "The conversation couldn't be deleted: \(error.localizedDescription)" }
+        if selectedID == nil { newConversation() }
     }
 
-    /// Open a Pulse briefing inside the chat view as a normal conversation (no popup).
-    /// Continue a Pulse in chat → promote it (vera-api creates a real OWUI chat), then open that
-    /// chat seeded with the rich briefing as its first message.
     func openPulseInChat(_ card: PulseCard) {
-        section = .chat
-        guard let client else { return }
-        Task {
-            guard let chatID = await client.promotePulse(id: card.id) else { return }
-            if conversations.contains(where: { $0.id == chatID }) {
-                selectedID = chatID
-                return
-            }
-            let owuiMsgs = await client.loadMessages(chatID: chatID)
-            // First turn IS the briefing — render it as the rich article; keep any later replies.
-            var msgs: [Message] = [Message(role: .assistant, text: card.body, pulse: card)]
-            if owuiMsgs.count > 1 { msgs.append(contentsOf: owuiMsgs.dropFirst()) }
-            conversations.insert(Conversation(id: chatID, title: card.title, messages: msgs,
-                                              updatedAt: Date(), isPersisted: true), at: 0)
-            selectedID = chatID
-        }
     }
 
     // MARK: - Voice mode
@@ -564,15 +578,8 @@ final class ChatStore: ObservableObject {
 
     // MARK: - Attachments (composer)
 
-    /// Add picked/dropped files: images are downscaled to an inline data URL (read by `see_image`);
-    /// documents are uploaded to OWUI and referenced via the completion's `files`.
     func addFiles(_ urls: [URL]) {
-        for url in urls {
-            let att = Attachment(url: url)
-            attachments.append(att)
-            Task { await process(att) }
-        }
-        focusTick &+= 1
+        attachments = []
     }
 
     private func process(_ att: Attachment) async {
@@ -598,6 +605,11 @@ final class ChatStore: ObservableObject {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let atts = attachments
         guard !text.isEmpty || !atts.isEmpty else { return }
+        guard !generating else { return }
+        guard repository != nil else {
+            chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
+            return
+        }
         draft = ""
         attachments = []
         sendText(text, attachments: atts)
@@ -605,6 +617,11 @@ final class ChatStore: ObservableObject {
 
     /// Record the user's answer to a Vera structured question and send it as their next turn.
     func submitAsk(messageID: UUID, selections: [String], other: String) {
+        guard !generating else { return }
+        guard repository != nil else {
+            chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
+            return
+        }
         guard let id = selectedID,
               let ci = conversations.firstIndex(where: { $0.id == id }),
               let mi = conversations[ci].messages.firstIndex(where: { $0.id == messageID }) else { return }
@@ -618,128 +635,90 @@ final class ChatStore: ObservableObject {
         sendText(answer)
     }
 
-    /// Append a user turn and stream Vera's reply (shared by send() and submitAsk()).
     func sendText(_ text: String, attachments atts: [Attachment] = []) {
+        guard !generating else { return }
+        guard let repository else {
+            chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
+            return
+        }
         guard let id = selectedID,
               let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
-        let snaps = atts.map {
-            MessageAttachment(name: $0.name, ext: $0.ext, isImage: $0.kind == .image,
-                              thumbnailData: $0.thumbnail?.pngData)
-        }
-        conversations[idx].messages.append(.init(role: .user, text: text, attachments: snaps))
+        let user = Message(role: .user, text: text)
+        conversations[idx].messages.append(user)
         if conversations[idx].title == "New chat" {
-            conversations[idx].title = String((text.isEmpty ? (atts.first?.name ?? "New chat") : text).prefix(40))
+            conversations[idx].title = String(text.prefix(40))
         }
         conversations[idx].updatedAt = Date()
+        conversations[idx].isPersisted = true
 
-        guard let socket else {
-            conversations[idx].messages.append(.init(role: .assistant, text: "(OWUI not configured. Set ~/.vera/config.json. Shell echo.)"))
+        do {
+            try repository.saveConversation(conversations[idx])
+            try repository.saveMessage(user, conversationID: id, ordinal: conversations[idx].messages.count - 1)
+        } catch {
+            chatConfigurationError = "The message couldn't save: \(error.localizedDescription)"
             return
         }
 
-        // OWUI expects STRING content + attachments in the top-level `files` array. Sending an
-        // OpenAI-style multimodal content list breaks its pipeline ("'list' object has no attribute
-        // 'strip'"). OWUI injects these `files` into the messages so `see_image` can read the image.
-        let history: [[String: Any]] = conversations[idx].messages.map { ["role": $0.role.rawValue, "content": $0.text] }
-        var files: [[String: Any]] = []
-        for u in atts.filter({ $0.kind == .image }).compactMap({ $0.dataURL }) {
-            files.append(["type": "image", "url": u])
+        guard let nativeTransport, let nativeConfig else {
+            let reply = Message(role: .assistant, text: "", state: .interrupted,
+                                failure: "Configure a model endpoint ending in /v1 and select a model")
+            conversations[idx].messages.append(reply)
+            try? repository.saveMessage(reply, conversationID: id, ordinal: conversations[idx].messages.count - 1)
+            return
         }
-        for f in atts.compactMap({ $0.owuiFile }) {
-            files.append(["type": "file", "id": (f["id"] as? String) ?? "", "file": f])
-        }
-        conversations[idx].messages.append(.init(role: .assistant, text: ""))
+
+        let history = conversations[idx].messages
+            .filter { $0.state == .complete && !$0.text.isEmpty }
+            .map { NativeChatMessage(role: $0.role.rawValue, content: $0.text) }
+        let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig.model)
+        conversations[idx].messages.append(reply)
         let replyIndex = conversations[idx].messages.count - 1
-        let messageID = UUID().uuidString
-        let chatID = id   // the OWUI id once persisted; a local UUID only for a brand-new chat
+        try? repository.saveMessage(reply, conversationID: id, ordinal: replyIndex)
         streamStatus = "Thinking…"
         generating = true
-        // Stream through OWUI's pipeline; `.content` is cumulative. Parse out any vera:ask block live.
-        Task { [socket] in
-            defer { settleTask?.cancel(); generating = false }
+        Task { [nativeTransport] in
+            defer { generating = false }
+            var lastCheckpoint = Date.distantPast
             do {
-                for try await event in socket.streamReply(chatID: chatID, messageID: messageID, messages: history, files: files.isEmpty ? nil : files) {
+                for try await raw in nativeTransport.stream(messages: history, model: nativeConfig.model) {
                     guard let i = conversations.firstIndex(where: { $0.id == id }),
                           replyIndex < conversations[i].messages.count else { continue }
-                    switch event {
-                    case .content(let raw):
-                        let (afterArt, arts) = Artifact.parse(raw)
-                        let (clean, ask) = VeraAsk.parse(afterArt)
-                        conversations[i].messages[replyIndex].text = clean
-                        conversations[i].messages[replyIndex].ask = ask
-                        conversations[i].messages[replyIndex].artifacts = arts
-                        if let latest = arts.last,
-                           latest.id != activeArtifact?.id || latest.content != activeArtifact?.content {
-                            openArtifact(latest)   // auto-open Canvas when an artifact completes
-                        }
-                        streamStatus = nil
-                        scheduleSettle()   // typing started; settle if tokens stop for a while
-                    case .status(let s):
-                        streamStatus = s
-                        scheduleSettle()   // tool activity counts as "still working"
-                    case .sources(let srcs):
-                        conversations[i].messages[replyIndex].sources = srcs
-                    case .done:
-                        streamStatus = nil
-                        settleTask?.cancel()
-                        generating = false
+                    let (afterArt, arts) = Artifact.parse(raw)
+                    let (clean, ask) = VeraAsk.parse(afterArt)
+                    conversations[i].messages[replyIndex].text = clean
+                    conversations[i].messages[replyIndex].ask = ask
+                    conversations[i].messages[replyIndex].artifacts = arts
+                    if let latest = arts.last,
+                       latest.id != activeArtifact?.id || latest.content != activeArtifact?.content {
+                        openArtifact(latest)
+                    }
+                    streamStatus = nil
+                    if Date().timeIntervalSince(lastCheckpoint) >= 0.25 {
+                        try repository.saveMessage(
+                            conversations[i].messages[replyIndex], conversationID: id, ordinal: replyIndex)
+                        lastCheckpoint = Date()
                     }
                 }
                 streamStatus = nil
-                await persistChat(localID: id)
+                if let i = conversations.firstIndex(where: { $0.id == id }),
+                   replyIndex < conversations[i].messages.count {
+                    conversations[i].messages[replyIndex].state = .complete
+                    conversations[i].updatedAt = Date()
+                    try repository.saveMessage(conversations[i].messages[replyIndex], conversationID: id, ordinal: replyIndex)
+                    try repository.saveConversation(conversations[i])
+                }
             } catch {
                 streamStatus = nil
                 if let i = conversations.firstIndex(where: { $0.id == id }),
                    replyIndex < conversations[i].messages.count {
-                    conversations[i].messages[replyIndex].text = "⚠️ \(error.localizedDescription)"
+                    conversations[i].messages[replyIndex].state = .interrupted
+                    conversations[i].messages[replyIndex].failure = error.localizedDescription
+                    conversations[i].updatedAt = Date()
+                    try? repository.saveMessage(conversations[i].messages[replyIndex], conversationID: id, ordinal: replyIndex)
+                    try? repository.saveConversation(conversations[i])
                 }
             }
         }
     }
 
-    /// After the last token, settle `generating` (stops the flame) even if the socket never sends a
-    /// clean `done`. Re-armed on every content tick; `.done`/stream-end cancel it.
-    private func scheduleSettle() {
-        settleTask?.cancel()
-        settleTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard !Task.isCancelled else { return }
-            self?.generating = false
-            self?.streamStatus = nil
-        }
-    }
-
-    /// Persist a conversation to OWUI after a turn so new chats survive relaunch
-    /// (create-or-update). A first-time create re-keys the conversation to the OWUI id in one
-    /// step — id, selection, everything — so there is exactly one identity from then on. The
-    /// server's updated_at stamp is recorded so reconciliation never reads our own save as an
-    /// external change.
-    private func persistChat(localID: String) async {
-        guard let client, let i = conversations.firstIndex(where: { $0.id == localID }) else { return }
-        let convo = conversations[i]
-        let turns = convo.messages.filter { !$0.text.isEmpty }.map { ($0.role.rawValue, $0.text) }
-        guard !turns.isEmpty else { return }
-        if convo.isPersisted {
-            if let stamp = await client.saveChat(id: convo.id, title: convo.title, turns: turns),
-               let j = conversations.firstIndex(where: { $0.id == localID }) {
-                conversations[j].serverUpdatedAt = stamp
-            }
-        } else if let created = await client.createChat(title: convo.title, turns: turns),
-                  let j = conversations.firstIndex(where: { $0.id == localID }) {
-            var rekeyed = Conversation(id: created.id, title: conversations[j].title,
-                                       messages: conversations[j].messages,
-                                       updatedAt: conversations[j].updatedAt,
-                                       isPersisted: true, serverUpdatedAt: created.updatedAt,
-                                       pinned: conversations[j].pinned)
-            // A reconcile pass may have already fetched the new chat from the server — keep one row.
-            if let dup = conversations.firstIndex(where: { $0.id == created.id }), dup != j {
-                rekeyed.pinned = conversations[dup].pinned
-                conversations.remove(at: dup)
-            }
-            if let k = conversations.firstIndex(where: { $0.id == localID }) {
-                conversations[k] = rekeyed
-            }
-            if selectedID == localID { selectedID = created.id }
-        }
-    }
 }

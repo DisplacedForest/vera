@@ -1,17 +1,153 @@
 import Foundation
 import AVFoundation
 
-/// Headless proof the OWUI client works against a live server — no GUI needed.
-/// Run: `Vera --selftest` with OWUI_BASE + OWUI_KEY in the environment.
+final class SelfTestNativeTransport: NativeChatTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var captured: [[NativeChatMessage]] = []
+    private var shouldInterrupt = false
+
+    var histories: [[NativeChatMessage]] { withLock { captured } }
+    var interrupt: Bool {
+        get { withLock { shouldInterrupt } }
+        set { withLock { shouldInterrupt = newValue } }
+    }
+
+    func discoverModels() async throws -> [String] { ["local-model"] }
+
+    func stream(messages: [NativeChatMessage], model: String) -> AsyncThrowingStream<String, Error> {
+        withLock { captured.append(messages) }
+        let interrupted = interrupt
+        return AsyncThrowingStream { continuation in
+            continuation.yield(interrupted ? "Partial" : "Native reply")
+            if interrupted {
+                continuation.finish(throwing: NativeChatClient.ClientError.server("test interruption"))
+            } else {
+                continuation.finish()
+            }
+        }
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
 @MainActor
 enum SelfTest {
     static func run() async {
         runPure()
+        await runNativeStore()
         guard let cfg = OWUIConfig.load() else {
             print("SELFTEST OK (offline). No OWUI config (~/.vera/config.json), live checks skipped")
             exit(0)
         }
         await runLive(cfg)
+    }
+
+    private static func runNativeStore() async {
+        do {
+            let repository = try LocalChatRepository(inMemory: true)
+            let config = NativeChatConfig(
+                baseURL: URL(string: "https://model.example/v1")!,
+                apiKey: nil,
+                model: "local-model",
+                chatTemplateKwargs: nil)
+            let transport = SelfTestNativeTransport()
+            let store = ChatStore(
+                config: nil,
+                client: nil,
+                socket: nil,
+                nativeConfig: config,
+                nativeTransport: transport,
+                repository: repository,
+                hasLegacyOWUI: false)
+            await store.connect()
+            store.sendText("First")
+            await waitForGeneration(store)
+            store.sendText("Second")
+            await waitForGeneration(store)
+            guard let conversation = store.selected,
+                  conversation.messages.count == 4,
+                  conversation.messages[1].text == "Native reply",
+                  conversation.messages[1].state == .complete,
+                  transport.histories.count == 2,
+                  transport.histories[1].map(\.content) == ["First", "Native reply", "Second"],
+                  try repository.messages(conversationID: conversation.id).count == 4 else {
+                print("SELFTEST ERROR: native store multi-turn persistence"); exit(1)
+            }
+            transport.interrupt = true
+            store.sendText("Fail")
+            await waitForGeneration(store)
+            guard let interrupted = store.selected?.messages.last,
+                  interrupted.text == "Partial",
+                  interrupted.state == .interrupted,
+                  interrupted.failure == "test interruption",
+                  let id = store.selected?.id,
+                  try repository.messages(conversationID: id).last?.state == .interrupted else {
+                print("SELFTEST ERROR: native store interrupted persistence"); exit(1)
+            }
+            transport.interrupt = false
+            store.sendText("After interruption")
+            await waitForGeneration(store)
+            guard transport.histories.last?.map(\.content) == [
+                "First", "Native reply", "Second", "Native reply", "Fail", "After interruption",
+            ] else {
+                print("SELFTEST ERROR: native interrupted reply reused as prompt history"); exit(1)
+            }
+            let countBeforeBlockedSend = store.selected?.messages.count
+            store.generating = true
+            store.draft = "Concurrent"
+            store.send()
+            store.sendText("Concurrent")
+            guard store.draft == "Concurrent" else {
+                print("SELFTEST ERROR: native blocked send cleared draft"); exit(1)
+            }
+            store.draft = ""
+            if let conversationIndex = store.conversations.firstIndex(where: { $0.id == store.selectedID }) {
+                let question = Message(
+                    role: .assistant,
+                    text: "Choose",
+                    ask: VeraAsk(question: "Choose", options: [.init(label: "A")]))
+                store.conversations[conversationIndex].messages.append(question)
+                store.submitAsk(messageID: question.id, selections: ["A"], other: "")
+                guard store.conversations[conversationIndex].messages.last?.answered == false else {
+                    print("SELFTEST ERROR: native blocked structured answer marked submitted"); exit(1)
+                }
+                store.conversations[conversationIndex].messages.removeLast()
+            }
+            store.generating = false
+            guard store.selected?.messages.count == countBeforeBlockedSend else {
+                print("SELFTEST ERROR: native concurrent send accepted"); exit(1)
+            }
+            let unavailable = ChatStore(
+                config: nil,
+                client: nil,
+                socket: nil,
+                nativeConfig: config,
+                nativeTransport: transport,
+                repository: nil,
+                repositoryError: "database unavailable",
+                hasLegacyOWUI: false)
+            await unavailable.connect()
+            unavailable.draft = "Must not stream"
+            unavailable.send()
+            guard unavailable.selected?.messages.isEmpty == true,
+                  unavailable.draft == "Must not stream",
+                  unavailable.chatConfigurationError == "database unavailable" else {
+                print("SELFTEST ERROR: native chat proceeded without persistence"); exit(1)
+            }
+            print("  native store OK (progressive turns, interrupted exclusion, serialized sends, required persistence)")
+        } catch {
+            print("SELFTEST ERROR: native store \(error)"); exit(1)
+        }
+    }
+
+    private static func waitForGeneration(_ store: ChatStore) async {
+        for _ in 0..<100 where store.generating {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
     }
 
     /// Live checks against the configured OWUI / vera-api deployment.
@@ -155,6 +291,94 @@ enum SelfTest {
     /// checks follow only when an OWUI config exists.
     private static func runPure() {
         do {
+            var sse = ChatSSEDecoder()
+            let first = Data("data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\r\n".utf8)
+            let second = Data("\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\ndata: [DO".utf8)
+            let third = Data("NE]\n\n".utf8)
+            guard try sse.feed(first).isEmpty else {
+                print("SELFTEST ERROR: native SSE emitted an incomplete event"); exit(1)
+            }
+            let middle = try sse.feed(second)
+            let final = try sse.feed(third)
+            guard middle.count == 2,
+                  try NativeChatClient.content(from: middle[0]) == "Hel",
+                  try NativeChatClient.content(from: middle[1]) == "lo",
+                  final == ["[DONE]"] else {
+                print("SELFTEST ERROR: native SSE fragmented decode"); exit(1)
+            }
+            let modelData = Data("{\"data\":[{\"id\":\"zeta\"},{\"id\":\"alpha\"}]}".utf8)
+            guard try NativeChatClient.modelIDs(from: modelData) == ["alpha", "zeta"] else {
+                print("SELFTEST ERROR: native model discovery decode"); exit(1)
+            }
+            do {
+                _ = try NativeChatClient.content(from: "not-json")
+                print("SELFTEST ERROR: native malformed event accepted"); exit(1)
+            } catch NativeChatClient.ClientError.malformedEvent {
+            }
+            let nativeConfig = NativeChatConfig(
+                baseURL: URL(string: "https://model.example/v1")!,
+                apiKey: "test-token",
+                model: "local-model",
+                chatTemplateKwargs: "{\"enable_thinking\":false}")
+            let nativeClient = NativeChatClient(config: nativeConfig)
+            let nativeRequest = try nativeClient.request(
+                messages: [NativeChatMessage(role: "user", content: "hello")], model: "local-model")
+            let nativeBody = try JSONSerialization.jsonObject(with: nativeRequest.httpBody!) as? [String: Any]
+            guard nativeRequest.url?.absoluteString == "https://model.example/v1/chat/completions",
+                  nativeRequest.value(forHTTPHeaderField: "Authorization") == "Bearer test-token",
+                  nativeBody?["model"] as? String == "local-model",
+                  nativeBody?["stream"] as? Bool == true,
+                  (nativeBody?["messages"] as? [[String: String]])?.first?["content"] == "hello",
+                  (nativeBody?["chat_template_kwargs"] as? [String: Bool])?["enable_thinking"] == false else {
+                print("SELFTEST ERROR: native request shape"); exit(1)
+            }
+            let noKey = NativeChatClient(config: NativeChatConfig(
+                baseURL: nativeConfig.baseURL, apiKey: nil, model: nativeConfig.model, chatTemplateKwargs: nil))
+            guard try noKey.request(messages: [], model: nativeConfig.model)
+                .value(forHTTPHeaderField: "Authorization") == nil else {
+                print("SELFTEST ERROR: native optional authorization"); exit(1)
+            }
+            print("  native transport OK (fragmented SSE, malformed event, discovery, request shape, optional auth)")
+
+            let databaseDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("vera-native-chat-\(UUID().uuidString)", isDirectory: true)
+            let databaseURL = databaseDir.appendingPathComponent("vera.sqlite")
+            let repository = try LocalChatRepository(url: databaseURL)
+            let conversationID = UUID().uuidString
+            var conversation = Conversation(
+                id: conversationID, title: "Native chat", messages: [],
+                createdAt: Date(timeIntervalSince1970: 100),
+                updatedAt: Date(timeIntervalSince1970: 200), isPersisted: true, pinned: true)
+            try repository.saveConversation(conversation)
+            let user = Message(
+                id: UUID(), role: .user, text: "hello", createdAt: Date(timeIntervalSince1970: 110), state: .complete)
+            var assistant = Message(
+                id: UUID(), role: .assistant, text: "par", createdAt: Date(timeIntervalSince1970: 120),
+                state: .streaming, modelID: "local-model")
+            try repository.saveMessage(user, conversationID: conversationID, ordinal: 0)
+            try repository.saveMessage(assistant, conversationID: conversationID, ordinal: 1)
+            assistant.text = "partial"
+            try repository.saveMessage(assistant, conversationID: conversationID, ordinal: 1)
+            conversation.updatedAt = Date(timeIntervalSince1970: 300)
+            try repository.saveConversation(conversation)
+            let reopened = try LocalChatRepository(url: databaseURL)
+            let storedConversations = try reopened.listConversations()
+            let storedMessages = try reopened.messages(conversationID: conversationID)
+            guard storedConversations.count == 1, storedConversations[0].pinned,
+                  storedConversations[0].updatedAt.timeIntervalSince1970 == 300,
+                  storedMessages.count == 2, storedMessages[0].text == "hello",
+                  storedMessages[1].text == "partial", storedMessages[1].state == .interrupted,
+                  storedMessages[1].failure == "The response was interrupted when Vera closed" else {
+                print("SELFTEST ERROR: native local history round-trip"); exit(1)
+            }
+            try reopened.deleteConversation(conversationID)
+            guard try reopened.listConversations().isEmpty,
+                  try reopened.messages(conversationID: conversationID).isEmpty else {
+                print("SELFTEST ERROR: native conversation cascade delete"); exit(1)
+            }
+            try? FileManager.default.removeItem(at: databaseDir)
+            print("  native history OK (migration, CRUD, restart, interrupted reply, cascade)")
+
             // vera:ask block parses out of an assistant reply (pure, local).
             let demo = "Sure, happy to help.\n```vera:ask\n{\"question\":\"Pick one\",\"multiSelect\":false,\"options\":[{\"label\":\"A\",\"description\":\"first\"},{\"label\":\"B\",\"description\":\"second\"}]}\n```"
             let (clean, parsedAsk) = VeraAsk.parse(demo)

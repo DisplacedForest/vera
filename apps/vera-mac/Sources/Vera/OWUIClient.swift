@@ -64,6 +64,31 @@ struct OWUIConfig: Sendable {
         }
     }
 
+    static func resolvedVeraAPIBase() -> URL? {
+        let env = ProcessInfo.processInfo.environment
+        let file = ConfigFile.read()
+        let remote = env["VERA_API_BASE"] ?? file["vera_api_base"] as? String
+        let port = (file["engine_port"] as? Int)
+            ?? Int((file["engine_port"] as? String)?.trimmingCharacters(in: .whitespaces) ?? "")
+            ?? 8089
+        return effectiveVeraAPIBase(mode: file["engine_mode"] as? String, remote: remote, port: port)
+    }
+
+    static func ambientOnly(native: NativeChatConfig?) -> OWUIConfig? {
+        guard let native, let veraAPIBase = resolvedVeraAPIBase() else { return nil }
+        return OWUIConfig(
+            baseURL: native.baseURL,
+            apiKey: "",
+            model: native.model,
+            completionsURL: native.completionsURL,
+            voiceBase: nil,
+            veraAPIBase: veraAPIBase,
+            email: nil,
+            password: nil,
+            ownerName: nil,
+            chatTemplateKwargs: native.chatTemplateKwargs)
+    }
+
     static func load() -> OWUIConfig? {
         let env = ProcessInfo.processInfo.environment
         let file = ConfigFile.read()
@@ -80,12 +105,7 @@ struct OWUIConfig: Sendable {
         // OWUI proxies chat completions itself, so the raw path is derivable from the base.
         let compURL = value("VERA_COMPLETIONS_URL", "completions_url").flatMap(URL.init(string:))
             ?? u.appendingPathComponent("api/chat/completions")
-        let enginePort = (file["engine_port"] as? Int)
-            ?? Int((file["engine_port"] as? String)?.trimmingCharacters(in: .whitespaces) ?? "")
-            ?? 8089
-        let effectiveAPIBase = effectiveVeraAPIBase(mode: file["engine_mode"] as? String,
-                                                    remote: value("VERA_API_BASE", "vera_api_base"),
-                                                    port: enginePort)
+        let effectiveAPIBase = resolvedVeraAPIBase()
         return OWUIConfig(baseURL: u, apiKey: k,
                           // No baked-in model id: unset stays empty and Settings/onboarding
                           // surface it as required.

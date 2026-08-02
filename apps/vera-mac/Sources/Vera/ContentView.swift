@@ -302,7 +302,10 @@ private struct EmptyChatView: View {
                     Text(greeting).font(.system(size: 28, weight: .semibold))
                 }
                 ComposerField()
-                if store.isLive {
+                if let error = store.chatConfigurationError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                } else if store.isLive {
                     FlowChips(items: starters) { s in store.draft = s; store.focusTick &+= 1 }
                 } else {
                     Button { config.showOnboarding = true } label: {
@@ -351,8 +354,13 @@ struct MessageRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             if message.role == .assistant {
-                // No per-message avatar — the single living mark lives at the foot of the thread.
-                AssistantBody(message: message, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                VStack(alignment: .leading, spacing: 8) {
+                    AssistantBody(message: message, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
+                    if message.state == .interrupted {
+                        Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    }
+                }
             } else {
                 Spacer(minLength: 60)
                 VStack(alignment: .trailing, spacing: 8) {
@@ -403,7 +411,8 @@ struct ComposerField: View {
     @State private var dropTargeted = false
 
     private var canSend: Bool {
-        !store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !store.attachments.isEmpty
+        store.canSubmitChat &&
+            (!store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !store.attachments.isEmpty)
     }
 
     var body: some View {
@@ -424,7 +433,7 @@ struct ComposerField: View {
                         store.draft += "\n"
                         return .handled
                     }
-                    store.send()
+                    if canSend { store.send() }
                     return .handled
                 }
             HStack(spacing: 10) {
@@ -437,9 +446,10 @@ struct ComposerField: View {
                         .background(.quaternary, in: Circle())
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("Add files or photos (⌘U)")
+                .disabled(true)
+                .help("Attachments are not available in native chat yet")
                 Spacer()
-                Button(action: { voice.start() }) {
+                Button(action: {}) {
                     Image(systemName: "waveform")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
@@ -447,7 +457,8 @@ struct ComposerField: View {
                         .background(.quaternary, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Voice mode")
+                .disabled(true)
+                .help("Voice is not available in native chat yet")
                 Button(action: store.send) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 26))
@@ -458,7 +469,7 @@ struct ComposerField: View {
                 .disabled(!canSend)
             }
             // Hidden ⌘U shortcut for the file picker.
-            Button("", action: pickFiles).keyboardShortcut("u", modifiers: .command)
+            Button("", action: {}).keyboardShortcut("u", modifiers: .command)
                 .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
@@ -468,7 +479,7 @@ struct ComposerField: View {
         .onAppear { focused = true }
         .onChange(of: store.focusTick) { _, _ in focused = true }
         .dropDestination(for: URL.self) { urls, _ in
-            store.addFiles(urls); return true
+            return false
         } isTargeted: { dropTargeted = $0 }
     }
 

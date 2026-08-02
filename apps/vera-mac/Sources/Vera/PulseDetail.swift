@@ -10,6 +10,8 @@ struct PulseDetailView: View {
     var token: String? = nil
     var onClose: () -> Void = {}
     var onContinue: () -> Void = {}
+    var canContinue = true
+    var canBookmark = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -40,6 +42,8 @@ struct PulseDetailView: View {
                                 .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
                             }
                             .buttonStyle(.plain)
+                            .disabled(!canContinue)
+                            .help(canContinue ? "Continue in chat" : "Pulse continuation is not available in native chat yet")
                             detailThumb("hand.thumbsup", on: store.pulseRatings[card.id] == "up") { store.ratePulse(card, "up") }
                             detailThumb("hand.thumbsdown", on: store.pulseRatings[card.id] == "down") { store.ratePulse(card, "down") }
                         }
@@ -57,6 +61,8 @@ struct PulseDetailView: View {
                 detailBtn(store.bookmarkedPulseIDs.contains(card.id) ? "bookmark.fill" : "bookmark") {
                     store.bookmarkPulse(card)
                 }
+                .disabled(!canBookmark)
+                .help(canBookmark ? "Bookmark" : "Pulse bookmarks are not available in native chat yet")
                 detailBtn("xmark", action: onClose)
             }
             .padding(.top, 16).padding(.horizontal, 16).padding(.bottom, 16)

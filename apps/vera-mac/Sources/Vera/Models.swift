@@ -3,9 +3,13 @@ import Foundation
 /// A chat message in the UI.
 struct Message: Identifiable, Hashable {
     enum Role: String { case user, assistant }
-    let id = UUID()
+    var id: UUID = UUID()
     var role: Role
     var text: String
+    var createdAt: Date = Date()
+    var state: MessageState = .complete
+    var failure: String? = nil
+    var modelID: String? = nil
     var ask: VeraAsk? = nil        // a structured question parsed out of an assistant reply
     var answered: Bool = false     // set once the user taps an answer
     var answerText: String? = nil  // the recorded selection (for recap display)
@@ -27,6 +31,7 @@ struct Conversation: Identifiable, Hashable {
     let id: String          // the OWUI chat id; a local UUID only until first persisted
     var title: String
     var messages: [Message]
+    var createdAt: Date = Date()
     var updatedAt: Date
     var isPersisted: Bool = false   // false = local draft OWUI doesn't know about yet
     var serverUpdatedAt: Int = 0    // OWUI's own updated_at stamp — the reconcile freshness baseline

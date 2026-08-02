@@ -55,6 +55,8 @@ scripts/                ops scripts; each documents its own env in its header
 docs/                   SETUP.md + screenshots
 ```
 
+Native text chat uses the standard OpenAI Chat Completions SSE contract and stores local history with GRDB. Keep transport parsing and persistence testable without a live model server. Interrupted assistant messages remain local but are excluded from later prompt history.
+
 ## Running tests
 
 **vera-api** (Python 3.12):

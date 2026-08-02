@@ -26,14 +26,15 @@ All endpoints, model servers, thresholds, and behavioral defaults are configurat
 
 Three components, connected by URLs:
 
-- **[Open WebUI](https://github.com/open-webui/open-webui)**: conversations, memory, and tool execution, against any OpenAI-compatible model server.
+- **An OpenAI-compatible model endpoint**: native text chat connects directly to its `/v1` API and keeps conversation history on the Mac.
+- **[Open WebUI](https://github.com/open-webui/open-webui)** (optional, transitional): the existing memory and tool surfaces remain available while those capabilities move into the native engine.
 - **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, memory grooming, a scheduler, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
 - **Vera.app**: a native SwiftUI macOS client: chat, the Pulse feed, veins, memory curation, integrations, and voice.
 
 ```mermaid
 flowchart LR
     APP["Vera.app<br/>native macOS client"]
-    OWUI["Open WebUI<br/>chat · memory · tools"]
+    OWUI["Open WebUI<br/>memory · tools"]
     LLM["any OpenAI-compatible<br/>LLM server"]
     API["vera-api<br/>one container, every capability"]
     SEARX["SearXNG"]
@@ -41,7 +42,8 @@ flowchart LR
     INT["Grocy · Mealie · Overseerr · Unraid"]
     SAT["satellite contracts<br/>voice · image · vision · coder"]
 
-    APP --> OWUI --> LLM
+    APP --> LLM
+    OWUI --> LLM
     APP --> API
     OWUI --> API
     API --> LLM
@@ -56,15 +58,15 @@ Run everything on one machine or spread it across several: topology is configura
 
 ## Features
 
-### Chat: tools, artifacts, structured answers
+### Chat: native, streaming, and local
 
-Conversations run through Open WebUI's pipeline, so every tool and memory applies. Replies can carry interactive choice cards, stat blocks and charts, citations, and canvas artifacts.
+Text chat streams directly from the configured OpenAI-compatible endpoint. Conversations and messages live in `~/.vera/vera.sqlite`, so chat works without Open WebUI or vera-api. The first native slice is text only. Tool calling, memory retrieval, documents, attachments, voice, and Open WebUI history import remain separate follow-on work. Replies can still render the app's existing structured answers, stat blocks, charts, citations, and canvas artifacts when the model emits their established formats.
 
 <div align="center"><img src="docs/assets/chat.png" alt="Vera chat: interactive choice cards, canvas artifacts, cited sources" width="850"></div>
 
 ### Pulse: scheduled research briefings
 
-Vera researches overnight: topics drawn from her own accumulating interests and what the household actually asks about: and produces briefing cards with cited sources, inline statistics, and charts. Any card can be continued as a chat.
+Vera researches overnight: topics drawn from her own accumulating interests and what the household actually asks about: and produces briefing cards with cited sources, inline statistics, and charts. Pulse remains an optional vera-api surface. Continuing a Pulse card into native chat is not part of the first native slice.
 
 <div align="center"><img src="docs/assets/pulse-detail.png" alt="A Pulse briefing card: stats, sourced prose, charts" width="850"></div>
 
@@ -104,8 +106,8 @@ Every external dependency is a configuration slot with defined behavior when emp
 
 | Slot | Contract | Powers | When absent |
 |---|---|---|---|
-| Main LLM | OpenAI `/v1` | Everything generated | Nothing generates; API surfaces still serve |
-| Open WebUI | OWUI API | Chat, memory, promoted cards, self-authored skills | Chat features off; Pulse still researches |
+| Main LLM | OpenAI `/v1` | Native text chat and configured generation | Chat reports unconfigured; API surfaces still serve |
+| Open WebUI | OWUI API | Transitional memory, tools, and self-authored skills | Native text chat still works |
 | SearXNG | `/search` JSON | Research, watcher veins, image sourcing | Search-dependent features report unconfigured |
 | Dream/coder LLM | OpenAI `/v1` + tool calls | Nightly consolidation, fact verification | Dreaming skips; daily features unaffected |
 | Image gen | OpenAI Images API | Pulse cover art | Cards use the best researched image instead |
@@ -136,7 +138,7 @@ One Linux server runs Open WebUI, vera-api, SearXNG, and an RTX 3090 serving the
 
 ```sh
 git clone https://github.com/DisplacedForest/vera.git && cd vera
-cp .env.example .env     # fill in your LLM + OWUI endpoints; everything else is optional
+cp .env.example .env     # fill in the backend services you use; everything is optional
 docker compose up -d
 docker compose logs vera-api | head -60    # the config report: what's wired, what's not
 ```
@@ -154,11 +156,11 @@ docker compose up -d --build        # backend (uncomment `build:` in docker-comp
 cd apps/vera-mac && scripts/deploy.sh   # app: packages Vera.app and installs it to /Applications
 ```
 
-Onboarding asks for your endpoints, then points you at the vein builder (veins are managed anytime from the Pulse header); integrations are configured anytime from the Settings window.
+Onboarding asks for a model endpoint ending in `/v1`, an optional API key, and a discovered or manually entered model id. vera-api remains optional and independently powers Pulse and the other ambient surfaces.
 
 <div align="center"><img src="docs/assets/onboarding.png" alt="Onboarding" width="700"></div>
 
-The full walkthrough, including Open WebUI wiring and every integration: **[docs/SETUP.md](docs/SETUP.md)**.
+The full walkthrough, including native chat, optional Open WebUI wiring, and every integration: **[docs/SETUP.md](docs/SETUP.md)**.
 
 ## Constraints
 

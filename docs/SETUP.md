@@ -7,19 +7,19 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 | Piece | What it is | Required? |
 |---|---|---|
 | An OpenAI-compatible LLM server | llama.cpp / llama-swap / vLLM / Ollama / a hosted API — anything serving `/v1` | Yes |
-| [Open WebUI](https://github.com/open-webui/open-webui) | Conversations, memory, tool execution | Yes |
-| **Vera.app** (this repo) | The native macOS client; complete pointed at Open WebUI alone | Recommended |
+| [Open WebUI](https://github.com/open-webui/open-webui) | Transitional memory and tool surfaces | No |
+| **Vera.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
 | **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, heartbeat, scheduler, actions) | Optional |
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
 | Satellite services (voice, image, vision, coder) | Reference implementations of documented HTTP contracts | No |
 
-> **Fastest path on a Mac (no Docker).** Install the Mac app (step 4), then open Settings, Services, Engine and choose **On this Mac**. The app downloads the packaged engine for its own version from the GitHub Release, verifies the checksum, runs it as a background service on `127.0.0.1`, and points itself at it (data stays in `~/.vera/data`, the engine keeps running with the app closed). You get the full ambient tier (Pulse, veins, heartbeat, scheduler) with no Docker, no server, and no terminal. You still need an OpenAI-compatible LLM server and Open WebUI reachable. The Docker path below is for Linux hosts and shared or multi-device deployments.
+> **Fastest path on a Mac.** Install the Mac app and point onboarding at an OpenAI-compatible endpoint ending in `/v1`. Text chat needs nothing else. For the optional ambient tier, open Settings, Services, Engine and choose **On this Mac**. The app downloads the packaged engine for its own version, verifies it, and runs it as a background service on `127.0.0.1`.
 
 ## 1. Prerequisites
 
-- **Docker** (with compose) on any Linux/macOS host for vera-api and Open WebUI.
-- **An LLM endpoint** — any OpenAI-compatible `/v1` server with a capable instruct model. An existing Open WebUI endpoint can be shared.
-- **Open WebUI** running and reachable from wherever vera-api will run, with an account created and the LLM endpoint connected.
+- **An LLM endpoint** — any standard OpenAI-compatible `/v1` server with a capable instruct model.
+- **Docker** (optional) on any Linux/macOS host for vera-api or Open WebUI.
+- **Open WebUI** (optional) for the transitional memory and tool surfaces that have not moved into the native engine.
 
 ## 2. vera-api
 
@@ -64,7 +64,7 @@ Two conventions:
 
 Integrations (Home Assistant and the rest) can be set in `.env` for headless installs; the app's integration store in step 4 is the recommended path.
 
-## 3. Wire Open WebUI
+## 3. Wire Open WebUI (optional)
 
 Vera attaches to Open WebUI as a set of tools (model-invokable capabilities) and functions (every-turn pipeline filters):
 
@@ -72,7 +72,7 @@ Vera attaches to Open WebUI as a set of tools (model-invokable capabilities) and
 2. **Functions** — Admin → Functions → create, paste from `services/owui-functions/` (the memory filter; `vision_autosee.py` if you run a vision endpoint), enable them.
 3. **The model** — give your Vera model the tools you imported (model settings → tools) so chat can invoke them.
 
-**One Open WebUI caveat:** Open WebUI auto-attaches a model's tools and features only on its own Socket.IO chat pipeline. Raw `POST /api/chat/completions` calls do **not** inherit them — a client must send `tool_ids` and `features` explicitly. The Mac app does this; keep it in mind if you build your own client.
+Open WebUI tools and features do not apply to native text chat. The first native slice sends only the selected model and completed local conversation history to `POST /v1/chat/completions`.
 
 If you install the Mac app, its integration store performs the per-integration OWUI wiring (attaching kitchen/media tools when you connect Grocy or Overseerr, etc.) automatically — the manual steps above are only needed once for the base tools.
 
@@ -88,7 +88,11 @@ swift build -c release
 scripts/deploy.sh    # packages Vera.app, ad-hoc signs it, installs it to /Applications
 ```
 
-First launch runs **onboarding**: your Open WebUI URL + account, your model, your vera-api URL — then a skippable **Veins** page. The two opt-in surfaces afterward, each living inside the feature it drives:
+First launch runs **onboarding**: a model endpoint ending in `/v1`, an optional API key, a discovered or manually entered model id, and an optional vera-api URL. Native conversations live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history. Existing Open WebUI history is left untouched and is not imported.
+
+Native chat is text only in this release. Attachments, voice, tool calling, memory retrieval, document knowledge, and Pulse continuation are unavailable in the native chat path. A failed stream keeps any partial assistant text and marks the reply interrupted. It does not resume automatically.
+
+When vera-api is configured, Pulse and the other ambient surfaces continue operating independently. The two opt-in surfaces afterward each live inside the feature they drive:
 
 - **Plugins** — the integration store, a tab in **Settings** (⌘,). Each card is one integration: enter URL + key, **Test**, **Save & Enable**. The app writes vera-api's config and performs the OWUI wiring in the same step. Experimental features (whole-house event modeling, media curation) sit behind their parent integration with an explicit consent sheet — off until consented.
 - **Veins** — Pulse's ambient monitors, opened from the **Veins** button in the Pulse header. **Vera ships with none**: a vein is something you build for your own life — a river gauge, a service-status watch, a geopolitics bar, whatever deserves an ambient eye — and your catalog starts empty. Every vein is a schema-validated JSON definition living one file per vein at `/data/veins.d/<kind>.json`, managed through the API (`GET /pulse/veins/schema` serves the contract, `POST /pulse/veins` creates). A vein carries a `pipeline` of blocks (the built-ins `web_search`, `http_fetch`, `ha_state`, `trip_band`, `llm_judge`, `llm_compose`, `situation_cluster`, `present`, plus code-backed blocks capabilities register, plus any Python modules you drop in the data volume's `blocks.d/` — the code extension point for bespoke sources, each calling `vein_engine.register` at import) and a cron `schedule`, and the vein engine runs it: dropping a valid definition file in place is all it takes to have a running ambient monitor, and a definition marked `standing` keeps one always-present card updated in place instead of alerting. Each pipeline vein registers a scheduler job as `vein_<kind>`, `POST /pulse/veins/{kind}/run` fires it on demand (`dry_run=true` returns the would-be cards without posting), and the engine owns quiet discipline: one card per distinct situation (updated, never stacked), a seen-memory so watchers don't re-alert on a standing story (`VEIN_SEEN_DECAY_DAYS`, default 7), and a schedule floor for LLM-bearing pipelines (`VEIN_LLM_FLOOR_MINUTES`, default 30; engine state in `VEIN_ENGINE_DB_PATH`). Per-vein enable/options state lives separately in `/data/veins.json`. The Veins pane shows only what this deployment can actually run: a vein whose definition requires an integration appears once that integration is connected (`GET /pulse/veins/catalog` returns exposed veins, `?all=true` adds the requirement-unmet ones for the pane's Add-a-vein browse sheet), and removing the integration hides the vein again while keeping its settings. Veins you author yourself always show, whatever their requirements. You don't have to write definitions by hand: `POST /pulse/veins/builder/turn` runs the authoring conversation against whatever model `VERA_BASE`/`VERA_MODEL` name (describe what you want watched; each turn returns prose plus a schema-validated draft), and `POST /pulse/veins/builder/dry_run` executes an unsaved draft once and returns what would have posted, persisting nothing. With no model configured both endpoints report disabled cleanly. After a vein exists, its Configure sheet can reopen it in the builder to edit the definition in place or delete it outright (`PUT /pulse/veins/{kind}/definition`, `DELETE /pulse/veins/{kind}`), so the whole lifecycle lives in the app.

@@ -28,15 +28,14 @@ private struct ConnectionTab: View {
     @EnvironmentObject var config: ConfigStore
     var body: some View {
         Form {
-            Section("Open WebUI") {
-                ConfigField(label: "Base URL", key: "base", placeholder: "http://my-owui-host:6590")
-                ConfigField(label: "API key", key: "api_key", secure: true)
-                ConfigField(label: "Email", key: "owui_email", placeholder: "you@example.com")
-                ConfigField(label: "Password", key: "owui_password", secure: true)
+            Section("Model endpoint") {
+                ConfigField(label: "Base URL", key: "model_base", placeholder: "http://my-model-host:11434/v1",
+                            tip: "Use the OpenAI-compatible API root ending in /v1.")
+                ConfigField(label: "API key (optional)", key: "model_api_key", secure: true)
                 InlineTest(title: "Test connection") {
-                    try await ConnectionTest.owui(base: config["base"],
-                                                  email: config["owui_email"],
-                                                  password: config["owui_password"])
+                    let models = try await ConnectionTest.models(
+                        base: config["model_base"], apiKey: config["model_api_key"])
+                    return "Connected. Found \(models.count) model\(models.count == 1 ? "" : "s")"
                 }
             }
             SaveSection()
@@ -48,16 +47,31 @@ private struct ConnectionTab: View {
 private struct ModelTab: View {
     @EnvironmentObject var config: ConfigStore
     @State private var advanced = false
+    @State private var models: [String] = []
+    @State private var discoveryStatus: String?
+    @State private var discovering = false
     var body: some View {
         Form {
             Section("Model") {
-                ConfigField(label: "Model id (required)", key: "model", placeholder: "your-vera-model")
+                if !models.isEmpty {
+                    Picker("Discovered model", selection: config.binding("model")) {
+                        ForEach(models, id: \.self) { Text($0).tag($0) }
+                    }
+                }
+                ConfigField(label: "Model id", key: "model", placeholder: "your-model-id",
+                            tip: "Enter an id directly when the endpoint does not support model discovery.")
+                HStack(spacing: 10) {
+                    Button(discovering ? "Discovering…" : "Discover models") { discover() }
+                        .disabled(discovering)
+                    if discovering { ProgressView().controlSize(.small) }
+                    if let discoveryStatus {
+                        Text(discoveryStatus).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer()
+                }
             }
             Section {
                 DisclosureGroup("Advanced", isExpanded: $advanced) {
-                    ConfigField(label: "Completions URL", key: "completions_url",
-                                placeholder: "pre-filled from the OWUI base when empty",
-                                tip: "The raw OpenAI-style endpoint used as a fallback path. Leave empty to go through Open WebUI.")
                     ConfigField(label: "Chat template kwargs", key: "chat_template_kwargs",
                                 placeholder: "{\"enable_thinking\": false}",
                                 tip: "Server-specific chat-template options as JSON (e.g. the Qwen3 thinking toggle on llama.cpp/vLLM). Leave empty for strict OpenAI endpoints.")
@@ -66,6 +80,22 @@ private struct ModelTab: View {
             SaveSection()
         }
         .formStyle(.grouped)
+    }
+
+    private func discover() {
+        discovering = true
+        discoveryStatus = nil
+        Task {
+            defer { discovering = false }
+            do {
+                models = try await ConnectionTest.models(
+                    base: config["model_base"], apiKey: config["model_api_key"])
+                if config["model"].isEmpty, let first = models.first { config["model"] = first }
+                discoveryStatus = models.isEmpty ? "No models returned. Enter an id manually." : "Found \(models.count)"
+            } catch {
+                discoveryStatus = error.localizedDescription
+            }
+        }
     }
 }
 
@@ -356,13 +386,10 @@ private struct InlineTest: View {
     }
 }
 
-/// Save footer shared by every tab: writes the file, applies live where cheap, and offers a
-/// reconnect when the OWUI session itself changed.
 private struct SaveSection: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
     @State private var status: String?
-    @State private var pendingReconnect: OWUIConfig?
 
     var body: some View {
         Section {
@@ -371,13 +398,6 @@ private struct SaveSection: View {
                     Text(status).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()
-                if let cfg = pendingReconnect {
-                    Button("Reconnect now") {
-                        store.adopt(cfg)
-                        pendingReconnect = nil
-                        status = "Reconnected"
-                    }
-                }
                 Button("Save") { save() }.keyboardShortcut("s", modifiers: .command)
             }
         }
@@ -388,23 +408,11 @@ private struct SaveSection: View {
             status = "Save failed: \(error.localizedDescription)"
             return
         }
-        guard let resolved = config.resolved else {
-            status = "Saved. Add the OWUI URL and API key to connect"
+        guard let resolved = config.nativeResolved else {
+            status = "Saved. Add a /v1 model endpoint and model id to connect"
             return
         }
-        guard let live = store.currentConfig else {
-            store.adopt(resolved)
-            status = "Saved. Connecting…"
-            return
-        }
-        let sessionChanged = live.baseURL != resolved.baseURL || live.apiKey != resolved.apiKey
-            || live.email != resolved.email || live.password != resolved.password
-        if sessionChanged {
-            pendingReconnect = resolved
-            status = "Saved. Reconnect to apply the connection change"
-        } else {
-            store.applyLight(resolved)
-            status = "Saved"
-        }
+        store.adoptNative(resolved)
+        status = "Saved"
     }
 }

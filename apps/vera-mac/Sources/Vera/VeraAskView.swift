@@ -4,6 +4,7 @@ import SwiftUI
 /// with an "Other" free-text escape hatch. `onAnswer` is nil in render-only contexts (ShotView).
 struct VeraAskCard: View {
     let message: Message
+    var canAnswer = true
     var onAnswer: ((UUID, [String], String) -> Void)? = nil
 
     @State private var selected: [String] = []
@@ -11,7 +12,9 @@ struct VeraAskCard: View {
     @State private var otherOpen = false
 
     private var ask: VeraAsk { message.ask ?? VeraAsk(question: "", options: []) }
-    private var canSubmit: Bool { !selected.isEmpty || !other.trimmingCharacters(in: .whitespaces).isEmpty }
+    private var canSubmit: Bool {
+        canAnswer && (!selected.isEmpty || !other.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {

@@ -1,15 +1,12 @@
 import SwiftUI
 
-/// First-run sheet, shown when no usable config exists (instead of a silently dead UI).
-/// Collects the OWUI connection + vera-api URL, tests, saves, and connects live; with a
-/// vera-api URL set, a second page offers the vein catalog (fully skippable — skip = an
-/// empty chip row). Skippable — the empty chat state offers to reopen it.
 struct OnboardingSheet: View {
     @EnvironmentObject var config: ConfigStore
     @EnvironmentObject var store: ChatStore
     @State private var connecting = false
     @State private var error: String?
     @State private var veinsBase: URL?
+    @State private var discovery: String?
 
     var body: some View {
         if let base = veinsBase {
@@ -26,18 +23,23 @@ struct OnboardingSheet: View {
                 VeraMark(size: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Welcome to Vera").font(.system(size: 20, weight: .semibold))
-                    Text("Point the app at your Open WebUI and vera-api, and you're chatting.")
+                    Text("Point the app at an OpenAI-compatible model endpoint, and you're chatting.")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                field("Open WebUI URL", "base", placeholder: "http://my-owui-host:6590")
-                field("Open WebUI email", "owui_email", placeholder: "you@example.com")
-                field("Open WebUI password", "owui_password", secure: true)
-                field("Open WebUI API key", "api_key", secure: true)
-                field("Model id (as registered in OWUI)", "model", placeholder: "your-vera-model")
+                field("Model endpoint", "model_base", placeholder: "http://my-model-host:11434/v1")
+                field("API key (optional)", "model_api_key", secure: true)
+                field("Model id", "model", placeholder: "your-model-id")
                 field("vera-api URL (optional)", "vera_api_base", placeholder: "http://my-api-host:8089")
+                HStack(spacing: 10) {
+                    Button("Discover models") { discoverModels() }
+                    if let discovery {
+                        Text(discovery).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer()
+                }
             }
 
             if let error {
@@ -50,7 +52,7 @@ struct OnboardingSheet: View {
                 Button("Skip for now") { config.showOnboarding = false }
                     .buttonStyle(.plain).font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
-                Button(connecting ? "Connecting…" : "Test & Connect") { connect() }
+                Button(connecting ? "Connecting…" : "Connect") { connect() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(connecting)
             }
@@ -76,43 +78,46 @@ struct OnboardingSheet: View {
         func filled(_ key: String) -> Bool {
             !config[key].trimmingCharacters(in: .whitespaces).isEmpty
         }
-        guard filled("base"), filled("api_key") else {
-            error = "The OWUI URL and API key are required"
+        guard filled("model_base") else {
+            error = "A model endpoint ending in /v1 is required"
             return
         }
         guard filled("model") else {
-            error = "The model id is required (the id your Vera model has in OWUI)"
+            error = "Choose a discovered model or enter its id"
             return
         }
         connecting = true
         Task {
             defer { connecting = false }
-            // Exercise the sign-in path the live socket uses (credentials are how chat streams).
-            if !config["owui_email"].isEmpty || !config["owui_password"].isEmpty {
-                do {
-                    _ = try await ConnectionTest.owui(base: config["base"],
-                                                      email: config["owui_email"],
-                                                      password: config["owui_password"])
-                } catch {
-                    self.error = error.localizedDescription
-                    return
-                }
-            }
             do { try config.save() } catch {
                 self.error = "Couldn't write ~/.vera/config.json: \(error.localizedDescription)"
                 return
             }
-            guard let resolved = config.resolved else {
-                self.error = "The OWUI URL doesn't parse. Check it and try again"
+            guard let resolved = config.nativeResolved else {
+                self.error = "The model endpoint must be an HTTP or HTTPS URL ending in /v1"
                 return
             }
-            store.adopt(resolved)
-            // With vera-api configured, offer the vein catalog as the next step;
-            // without it there's nothing to pick — finish here.
-            if let base = resolved.veraAPIBase {
+            store.adoptNative(resolved)
+            if let base = config.veraAPIBase {
                 veinsBase = base
             } else {
                 config.showOnboarding = false
+            }
+        }
+    }
+
+    private func discoverModels() {
+        discovery = "Checking…"
+        error = nil
+        Task {
+            do {
+                let models = try await ConnectionTest.models(
+                    base: config["model_base"], apiKey: config["model_api_key"])
+                if config["model"].isEmpty, let first = models.first { config["model"] = first }
+                discovery = models.isEmpty ? "No models returned. Enter an id manually." : "Found \(models.count). Selected \(config["model"])."
+            } catch {
+                discovery = "Discovery unavailable. Enter an id manually."
+                self.error = error.localizedDescription
             }
         }
     }

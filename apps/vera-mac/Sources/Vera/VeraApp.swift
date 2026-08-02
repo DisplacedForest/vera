@@ -26,20 +26,36 @@ struct VeraApp: App {
     @StateObject private var engine = EngineManager()
 
     init() {
-        // Build the graph once so ChatStore, ToolsStore, and VoiceSession share a single
-        // VeraSocket (one signed-in session, one event stream). With no config the stores start
-        // dormant and first-run onboarding wires them up.
-        let cfg = OWUIConfig.load()
-        let socket = cfg.map { VeraSocket(config: $0) }
-        let client = cfg.map { OWUIClient(config: $0) }
-        let admin = cfg.map { c in
+        let native = NativeChatConfig.load()
+        let legacy = OWUIConfig.load()
+        let ambient = legacy ?? OWUIConfig.ambientOnly(native: native)
+        let socket = legacy.map { VeraSocket(config: $0) }
+        let client = ambient.map { OWUIClient(config: $0) }
+        let admin = legacy.map { c in
             OWUIAdminClient(baseURL: c.baseURL, modelID: c.model,
                             token: { try await socket!.currentToken() })
         }
-        let storeInstance = ChatStore(config: cfg, client: client, socket: socket)
+        let repository: LocalChatRepository?
+        let repositoryError: String?
+        do {
+            repository = try LocalChatRepository()
+            repositoryError = nil
+        } catch {
+            repository = nil
+            repositoryError = "Local history couldn't open: \(error.localizedDescription)"
+        }
+        let storeInstance = ChatStore(
+            config: ambient,
+            client: client,
+            socket: socket,
+            nativeConfig: native,
+            nativeTransport: native.map { NativeChatClient(config: $0) },
+            repository: repository,
+            repositoryError: repositoryError,
+            hasLegacyOWUI: legacy != nil)
         _store = StateObject(wrappedValue: storeInstance)
         _tools = StateObject(wrappedValue: ToolsStore(admin: admin, socket: socket))
-        _voice = StateObject(wrappedValue: VoiceSession(client: VoiceClient(base: cfg?.voiceBase),
+        _voice = StateObject(wrappedValue: VoiceSession(client: VoiceClient(base: legacy?.voiceBase),
                                                         socket: socket, store: storeInstance))
     }
 
@@ -56,7 +72,7 @@ struct VeraApp: App {
                 .preferredColorScheme(config.colorSchemeOverride)
                 .task { updates.start() }
                 .task { await engine.reconcileOnLaunch() }
-                .task { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.resolved?.veraAPIBase) }
+                .task { await RemindersBridge.autostartIfEnabled(veraAPIBase: config.veraAPIBase) }
         }
         .defaultSize(width: 1180, height: 760)
         .commands {

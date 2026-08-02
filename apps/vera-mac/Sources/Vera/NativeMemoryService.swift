@@ -74,9 +74,12 @@ enum NativeMemorySafety {
 
     private static let markerPatterns = [
         #"(?i)<\s*/?\s*(think|analysis|reasoning)\b"#,
+        #"(?i)<\|\s*(think|analysis|reasoning)\s*\|>"#,
         #"(?i)\[\s*(think|analysis|reasoning)\s*\]"#,
+        #"(?i)[<\[{(][^>\]})\n]{0,20}(think|analysis|reasoning|scratchpad)[^>\]})\n]{0,20}[>\]})]"#,
         #"(?i)\b(begin|end)\s+(hidden\s+)?(reasoning|analysis|chain[- ]of[- ]thought)\b"#,
         #"(?i)\b(internal reasoning|hidden reasoning|chain[- ]of[- ]thought|private scratchpad)\b"#,
+        #"(?im)^\s*(analysis|reasoning|thoughts|scratchpad)\s*:"#,
     ]
 
     private static let sensitiveKeys: Set<String> = [
@@ -131,7 +134,7 @@ enum NativeMemorySafety {
         if let dictionary = value as? [String: Any] {
             for (key, child) in dictionary {
                 let normalized = key.lowercased().filter(\.isLetter)
-                if sensitiveKeys.contains(normalized) { return true }
+                if keyIsSensitive(normalized) { return true }
                 if structuredValueIsSensitive(child) { return true }
             }
         } else if let array = value as? [Any] {
@@ -141,6 +144,25 @@ enum NativeMemorySafety {
                 || markerPatterns.contains { text.range(of: $0, options: .regularExpression) != nil }
         }
         return false
+    }
+
+    private static func keyIsSensitive(_ normalized: String) -> Bool {
+        sensitiveKeys.contains(normalized)
+            || normalized == "key"
+            || normalized == "token"
+            || normalized == "credential"
+            || normalized == "credentials"
+            || normalized == "config"
+            || normalized == "configuration"
+            || normalized == "setting"
+            || normalized == "settings"
+            || normalized == "model"
+            || normalized.contains("credential")
+            || normalized.hasSuffix("token")
+            || normalized.hasSuffix("secret")
+            || normalized.contains("apiurl")
+            || normalized.contains("baseurl")
+            || normalized.contains("endpoint")
     }
 }
 

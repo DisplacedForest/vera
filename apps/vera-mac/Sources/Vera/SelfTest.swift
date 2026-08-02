@@ -645,6 +645,10 @@ enum SelfTest {
                   NativeMemorySafety.containsSensitiveData("[analysis] private chain"),
                   NativeMemorySafety.containsSensitiveData("{\"actionToken\":\"act_live_123456789\"}"),
                   NativeMemorySafety.containsSensitiveData("{\"privateKey\":\"opaque-value\"}"),
+                  NativeMemorySafety.containsSensitiveData("{\"credentials\":{\"username\":\"alice\",\"token\":\"opaque-value\"}}"),
+                  NativeMemorySafety.containsSensitiveData("{\"settings\":{\"memoryApiUrl\":\"https://example.test\",\"model\":\"private-model\"}}"),
+                  NativeMemorySafety.containsSensitiveData("<|analysis|>private chain<|end|>"),
+                  NativeMemorySafety.containsSensitiveData("<|reasoning|>private chain"),
                   NativeMemorySafety.containsSensitiveData("class Filter:\n    async def inlet(self, body):"),
                   NativeMemorySafety.containsSensitiveData("\"class Filter: async def inlet(self, body):\""),
                   NativeMemorySafety.boundedUTF8(

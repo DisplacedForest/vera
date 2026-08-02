@@ -5,19 +5,23 @@ struct MemoryView: View {
     @EnvironmentObject var config: ConfigStore
     @State private var search = ""
     @State private var selectedGroup: NativeMemoryGroup?
+    @State private var selectedBank: String?
+    @State private var selectedCategory: NativeMemoryCategory?
+    @State private var selectedStatus: NativeMemoryStatus? = .approved
+    @State private var selectedExpiry = NativeMemoryExpiryFilter.all
     @State private var selected: NativeMemoryRecord?
     @State private var changeRequest = ""
     @State private var showClear = false
 
     private var visible: [NativeMemoryRecord] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return store.memoryRecords.filter {
-            $0.status == .approved
-                && (selectedGroup == nil || $0.group == selectedGroup)
-                && (query.isEmpty || $0.title.lowercased().contains(query)
-                    || $0.summary.lowercased().contains(query)
-                    || $0.details.joined(separator: " ").lowercased().contains(query))
-        }
+        let filter = NativeMemoryLibraryFilter(
+            query: search, group: selectedGroup, bank: selectedBank,
+            category: selectedCategory, status: selectedStatus, expiry: selectedExpiry)
+        return store.memoryRecords.filter { filter.matches($0) }
+    }
+
+    private var banks: [String] {
+        Array(Set(store.memoryRecords.map(\.bank))).sorted()
     }
 
     var body: some View {
@@ -57,7 +61,7 @@ struct MemoryView: View {
                     .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
-            Text("\(visible.count) approved")
+            Text("\(visible.count) shown")
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(Theme.surface, in: Capsule())
@@ -166,17 +170,41 @@ struct MemoryView: View {
             HStack {
                 Text("Library").font(.system(size: 16, weight: .semibold))
                 Spacer()
-                TextField("Search memory", text: $search).textFieldStyle(.roundedBorder).frame(width: 220)
-                Menu("Group") {
+                Menu {
+                    Button("Clear approved memory", role: .destructive) { showClear = true }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+            HStack(spacing: 8) {
+                TextField("Search memory", text: $search).textFieldStyle(.roundedBorder)
+                Menu(selectedGroup?.rawValue ?? "Group") {
                     Button("All groups") { selectedGroup = nil }
                     ForEach(NativeMemoryGroup.allCases) { group in
                         Button(group.rawValue) { selectedGroup = group }
                     }
                 }
-                Menu {
-                    Button("Clear approved memory", role: .destructive) { showClear = true }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
+                Menu(selectedBank ?? "Bank") {
+                    Button("All banks") { selectedBank = nil }
+                    ForEach(banks, id: \.self) { bank in
+                        Button(bank) { selectedBank = bank }
+                    }
+                }
+                Menu(selectedCategory?.rawValue.capitalized ?? "Category") {
+                    Button("All categories") { selectedCategory = nil }
+                    ForEach(NativeMemoryCategory.allCases) { category in
+                        Button(category.rawValue.capitalized) { selectedCategory = category }
+                    }
+                }
+                Menu(selectedStatus?.rawValue.capitalized ?? "Status") {
+                    Button("All statuses") { selectedStatus = nil }
+                    Button("Approved") { selectedStatus = .approved }
+                    Button("Suppressed") { selectedStatus = .suppressed }
+                }
+                Menu(selectedExpiry == .all ? "Expiry" : selectedExpiry.rawValue) {
+                    ForEach(NativeMemoryExpiryFilter.allCases) { expiry in
+                        Button(expiry.rawValue) { selectedExpiry = expiry }
+                    }
                 }
             }
             ForEach(NativeMemoryGroup.allCases) { group in

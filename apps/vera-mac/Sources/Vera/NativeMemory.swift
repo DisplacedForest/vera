@@ -43,6 +43,46 @@ enum NativeMemoryStatus: String, Codable, Sendable {
     case deleted
 }
 
+enum NativeMemoryExpiryFilter: String, CaseIterable, Identifiable, Sendable {
+    case all = "All expiry"
+    case active = "Active"
+    case expired = "Expired"
+    case noExpiry = "No expiry"
+    case scheduled = "Expires later"
+
+    var id: String { rawValue }
+}
+
+struct NativeMemoryLibraryFilter: Sendable {
+    var query = ""
+    var group: NativeMemoryGroup?
+    var bank: String?
+    var category: NativeMemoryCategory?
+    var status: NativeMemoryStatus?
+    var expiry: NativeMemoryExpiryFilter = .all
+
+    func matches(_ record: NativeMemoryRecord, now: Date = Date()) -> Bool {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let matchesQuery = normalizedQuery.isEmpty
+            || record.title.lowercased().contains(normalizedQuery)
+            || record.summary.lowercased().contains(normalizedQuery)
+            || record.details.joined(separator: " ").lowercased().contains(normalizedQuery)
+        let matchesExpiry = switch expiry {
+        case .all: true
+        case .active: record.expiry.map { $0 > now } ?? true
+        case .expired: record.expiry.map { $0 <= now } ?? false
+        case .noExpiry: record.expiry == nil
+        case .scheduled: record.expiry.map { $0 > now } ?? false
+        }
+        return matchesQuery
+            && (group == nil || record.group == group)
+            && (bank == nil || record.bank == bank)
+            && (category == nil || record.category == category)
+            && (status == nil || record.status == status)
+            && matchesExpiry
+    }
+}
+
 enum NativeMemoryProposalKind: String, Codable, CaseIterable, Sendable {
     case create
     case update

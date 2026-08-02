@@ -657,6 +657,12 @@ enum SelfTest {
                   NativeMemorySafety.containsSensitiveData("{\"preference\":\"morning meetings\"}"),
                   NativeMemorySafety.containsSensitiveData("Profile: {\"service_url\":\"https://example.test\",\"token\":\"opaque\"}"),
                   NativeMemorySafety.containsSensitiveData("Profile: [{\"preference\":\"morning meetings\"}]"),
+                  NativeMemorySafety.containsSensitiveData("token: opaque-value"),
+                  NativeMemorySafety.containsSensitiveData("token = opaque-value"),
+                  NativeMemorySafety.containsSensitiveData("service_url: https://example.test"),
+                  NativeMemorySafety.containsSensitiveData("model: private-model"),
+                  NativeMemorySafety.containsSensitiveData("settings:\n  memory_model: private-model"),
+                  !NativeMemorySafety.containsSensitiveData("The user enjoys model trains"),
                   NativeMemorySafety.containsSensitiveData("<|analysis|>private chain<|end|>"),
                   NativeMemorySafety.containsSensitiveData("<|reasoning|>private chain"),
                   NativeMemorySafety.containsSensitiveData("Analysis\nprivate chain"),
@@ -678,6 +684,23 @@ enum SelfTest {
             unsafeBank.bank = "{\"actionToken\":\"act_live_123456789\"}"
             guard !NativeMemorySafety.recordIsSafe(unsafeBank) else {
                 print("SELFTEST ERROR: native memory unsafe bank accepted"); exit(1)
+            }
+            var suppressed = approved
+            suppressed.status = .suppressed
+            let approvedFilter = NativeMemoryLibraryFilter(
+                query: "wine", group: .you, bank: "personal", category: .preference,
+                status: .approved, expiry: .noExpiry)
+            let expiredFilter = NativeMemoryLibraryFilter(
+                status: .approved, expiry: .expired)
+            let suppressedFilter = NativeMemoryLibraryFilter(
+                status: .suppressed, expiry: .active)
+            guard approvedFilter.matches(approved, now: now),
+                  !approvedFilter.matches(expired, now: now),
+                  expiredFilter.matches(expired, now: now),
+                  !expiredFilter.matches(approved, now: now),
+                  suppressedFilter.matches(suppressed, now: now),
+                  !suppressedFilter.matches(approved, now: now) else {
+                print("SELFTEST ERROR: native memory library filters"); exit(1)
             }
             let semanticCreate = NativeMemoryProposal(
                 id: "semantic", kind: .create, title: "Wine preference",

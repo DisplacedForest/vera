@@ -68,6 +68,7 @@ enum NativeMemorySafety {
         #"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"#,
         #"(?is)<(think|thought|analysis|reasoning)>.*?</\1>"#,
         #"(?i)\b(hidden reasoning|chain[- ]of[- ]thought)\b\s*[:=]"#,
+        #"(?im)^[ \t-]*(token|service[_ -]?url|base[_ -]?url|api[_ -]?url|url|endpoint|(?:[a-z0-9]+[_ -]?)?model|settings|credentials|headers|valves)[ \t]*[:=][ \t]*(?:\S.*)?$"#,
         #"(?is)(^|[\n;\"'])\s*(class\s+\w+\s*[:(]|(?:async\s+)?def\s+\w+\s*\(|from\s+\w+(?:\.\w+)*\s+import\s+|import\s+\w+)"#,
         #"(?i)\b(class\s+(filter|valves)\b|(?:async\s+)?def\s+(inlet|outlet)\s*\(|from\s+pydantic\s+import\b|self\.valves\b)"#,
     ]
@@ -86,7 +87,8 @@ enum NativeMemorySafety {
         "apikey", "accesstoken", "refreshtoken", "actiontoken", "clientsecret",
         "privatekey", "authorization", "password", "secret", "headers", "valves",
         "hiddenreasoning", "chainofthought", "reasoning", "scratchpad", "baseurl",
-        "apiurl", "endpoint",
+        "apiurl", "endpoint", "token", "serviceurl", "url", "model", "settings",
+        "credentials",
     ]
 
     static func containsSensitiveData(_ value: String) -> Bool {

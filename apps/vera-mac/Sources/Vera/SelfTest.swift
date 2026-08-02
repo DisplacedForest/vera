@@ -116,6 +116,24 @@ final class SelfTestRemindersService: NativeRemindersService, @unchecked Sendabl
     }
 }
 
+final class SelfTestToolExecutionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var executions = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return executions
+    }
+
+    func execute() -> NativeJSONValue {
+        lock.lock()
+        executions += 1
+        lock.unlock()
+        return .object(["ok": .bool(true)])
+    }
+}
+
 @MainActor
 enum SelfTest {
     static func run() async {
@@ -155,17 +173,19 @@ enum SelfTest {
 
             let requestClient = NativeChatClient(config: NativeChatConfig(
                 baseURL: URL(string: "https://models.example/v1")!, apiKey: nil,
-                model: "local-model", chatTemplateKwargs: nil))
+                model: "local-model", chatTemplateKwargs: "{\"enable_thinking\":false}"))
             let request = try requestClient.request(
                 messages: [NativeChatMessage(role: "user", content: "List reminders")],
                 model: "local-model",
                 tools: registry.active(enabledIDs: ["apple-reminders"]).map(\.schema))
             let requestBody = try JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any]
             let requestTools = requestBody?["tools"] as? [[String: Any]]
+            let requestKwargs = requestBody?["chat_template_kwargs"] as? [String: Any]
             let requestNames = requestTools?.compactMap { ($0["function"] as? [String: Any])?["name"] as? String }
             guard requestTools?.count == 4,
                   requestNames?.contains("apple_reminders_list") == true,
-                  requestNames?.contains("apple_reminders_get_lists") == true else {
+                  requestNames?.contains("apple_reminders_get_lists") == true,
+                  requestKwargs?["enable_thinking"] as? Bool == false else {
                 print("SELFTEST ERROR: standard native tool request shape"); exit(1)
             }
 
@@ -276,7 +296,89 @@ enum SelfTest {
                   textTransport.schemas.first?.isEmpty == true else {
                 print("SELFTEST ERROR: text-only native endpoint behavior"); exit(1)
             }
-            print("  native tools OK (registry, standard request, fragmented calls, continuation, validation, limits, reminders, text-only)")
+
+            let confirmationState = SelfTestToolExecutionState()
+            let confirmationDefinition = NativeToolDefinition(
+                id: "confirmation-test", name: "confirmation_test", title: "Confirmation test",
+                description: "Exercise confirmation gating.",
+                parameters: .object([
+                    "type": .string("object"), "properties": .object([:]),
+                    "required": .array([]), "additionalProperties": .bool(false),
+                ]),
+                confirmation: .required,
+                isAvailable: { true },
+                execute: { _ in confirmationState.execute() })
+            let confirmationRegistry = NativeToolRegistry(definitions: [confirmationDefinition])
+            func confirmationTransport(_ id: String) -> ScriptedNativeToolTransport {
+                ScriptedNativeToolTransport(rounds: [[
+                    NativeChatStreamSnapshot(content: "", toolCalls: [
+                        NativeChatToolCall(id: id, name: "confirmation_test", arguments: "{}"),
+                    ], finishReason: "tool_calls")
+                ], [NativeChatStreamSnapshot(content: "Finished.", toolCalls: [], finishReason: "stop")]])
+            }
+            var deniedFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: confirmationTransport("denied"), registry: confirmationRegistry
+            ).stream(
+                messages: [NativeChatMessage(role: "user", content: "Run it")],
+                model: "local-model", enabledToolIDs: ["confirmation-test"]
+            ) {
+                deniedFinal = snapshot
+            }
+            guard deniedFinal?.activities.first?.state == .failed,
+                  deniedFinal?.activities.first?.result?.contains("not confirmed") == true,
+                  confirmationState.count == 0 else {
+                print("SELFTEST ERROR: confirmation denial executed native tool"); exit(1)
+            }
+            var confirmedFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: confirmationTransport("confirmed"), registry: confirmationRegistry,
+                confirm: { _ in true }
+            ).stream(
+                messages: [NativeChatMessage(role: "user", content: "Run it")],
+                model: "local-model", enabledToolIDs: ["confirmation-test"]
+            ) {
+                confirmedFinal = snapshot
+            }
+            guard confirmedFinal?.activities.first?.state == .succeeded,
+                  confirmationState.count == 1 else {
+                print("SELFTEST ERROR: confirmed native tool did not execute"); exit(1)
+            }
+
+            let stalledDefinition = NativeToolDefinition(
+                id: "timeout-test", name: "timeout_test", title: "Timeout test",
+                description: "Exercise bounded execution.",
+                parameters: .object([
+                    "type": .string("object"), "properties": .object([:]),
+                    "required": .array([]), "additionalProperties": .bool(false),
+                ]),
+                confirmation: .none,
+                isAvailable: { true },
+                execute: { _ in
+                    await withUnsafeContinuation { (_: UnsafeContinuation<NativeJSONValue, Never>) in }
+                })
+            let timeoutTransport = ScriptedNativeToolTransport(rounds: [[
+                NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "stalled", name: "timeout_test", arguments: "{}"),
+                ], finishReason: "tool_calls")
+            ], [NativeChatStreamSnapshot(content: "The tool failed safely.", toolCalls: [], finishReason: "stop")]])
+            var timeoutFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: timeoutTransport,
+                registry: NativeToolRegistry(definitions: [stalledDefinition]),
+                executionTimeout: .milliseconds(25)
+            ).stream(
+                messages: [NativeChatMessage(role: "user", content: "Run it")],
+                model: "local-model", enabledToolIDs: ["timeout-test"]
+            ) {
+                timeoutFinal = snapshot
+            }
+            guard timeoutFinal?.content == "The tool failed safely.",
+                  timeoutFinal?.activities.first?.state == .failed,
+                  timeoutFinal?.activities.first?.result?.contains("timed out") == true else {
+                print("SELFTEST ERROR: stalled native tool did not time out safely"); exit(1)
+            }
+            print("  native tools OK (registry, standard request, fragmented calls, continuation, validation, limits, confirmation, timeout, reminders, text-only)")
         } catch {
             print("SELFTEST ERROR: native tools \(error)"); exit(1)
         }

@@ -2,6 +2,23 @@ import EventKit
 import Foundation
 import Network
 
+private final class ReminderFetchResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reminders: [EKReminder] = []
+
+    func store(_ reminders: [EKReminder]) {
+        lock.lock()
+        self.reminders = reminders
+        lock.unlock()
+    }
+
+    func load() -> [EKReminder] {
+        lock.lock()
+        defer { lock.unlock() }
+        return reminders
+    }
+}
+
 /// In-app Apple Reminders bridge. Serves the same HTTP contract as the standalone
 /// vera-reminders service (GET /health, /lists, /reminders; POST /reminders; PATCH
 /// /reminders/{id}) so vera-api's proxy and the OWUI tool reach it unchanged. It runs
@@ -82,16 +99,18 @@ final class RemindersBridge: @unchecked Sendable {
         return calendars().first { $0.title.trimmingCharacters(in: .whitespaces).lowercased() == want }
     }
 
-    private func fetch(_ cals: [EKCalendar]) -> [EKReminder] {
+    private func fetch(_ cals: [EKCalendar]) throws -> [EKReminder] {
         let pred = store.predicateForReminders(in: cals.isEmpty ? nil : cals)
         let sem = DispatchSemaphore(value: 0)
-        var out: [EKReminder] = []
+        let result = ReminderFetchResult()
         store.fetchReminders(matching: pred) { items in
-            out = items ?? []
+            result.store(items ?? [])
             sem.signal()
         }
-        sem.wait()
-        return out
+        guard sem.wait(timeout: .now() + 15) == .success else {
+            throw NativeToolError.failed("Apple Reminders did not respond in time")
+        }
+        return result.load()
     }
 
     private func iso(_ c: DateComponents?) -> String? {
@@ -161,8 +180,12 @@ final class RemindersBridge: @unchecked Sendable {
             } else {
                 cals = calendars()
             }
-            let items = fetch(cals).filter { $0.isCompleted == wantCompleted }.map(normalize)
-            return (200, ["ok": true, "reminders": items])
+            do {
+                let items = try fetch(cals).filter { $0.isCompleted == wantCompleted }.map(normalize)
+                return (200, ["ok": true, "reminders": items])
+            } catch {
+                return (500, ["detail": error.localizedDescription])
+            }
 
         case ("POST", "/reminders"):
             guard let list = req.body["list"] as? String, let title = req.body["title"] as? String else {
@@ -300,7 +323,7 @@ extension RemindersBridge: NativeRemindersService {
         } else {
             selected = calendars()
         }
-        return fetch(selected).filter { $0.isCompleted == completed }.map(nativeReminder)
+        return try fetch(selected).filter { $0.isCompleted == completed }.map(nativeReminder)
     }
 
     func nativeCreateReminder(

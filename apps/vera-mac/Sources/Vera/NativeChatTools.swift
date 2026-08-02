@@ -293,6 +293,44 @@ struct NativeToolTurnSnapshot: Equatable, Sendable {
     let activities: [NativeToolActivity]
 }
 
+private final class NativeToolExecutionRace: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<NativeJSONValue, Error>?
+    private var finished = false
+    private var cancelWork: (@Sendable () -> Void)?
+
+    init(_ continuation: CheckedContinuation<NativeJSONValue, Error>) {
+        self.continuation = continuation
+    }
+
+    func installCancellation(_ cancel: @escaping @Sendable () -> Void) {
+        lock.lock()
+        if finished {
+            lock.unlock()
+            cancel()
+            return
+        }
+        cancelWork = cancel
+        lock.unlock()
+    }
+
+    func resolve(_ result: Result<NativeJSONValue, Error>) {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            return
+        }
+        finished = true
+        let continuation = continuation
+        self.continuation = nil
+        let cancelWork = cancelWork
+        self.cancelWork = nil
+        lock.unlock()
+        cancelWork?()
+        continuation?.resume(with: result)
+    }
+}
+
 enum NativeChatHistoryBuilder {
     static func build(messages: [Message], systemPrompt: String) -> [NativeChatMessage] {
         var history: [NativeChatMessage] = []
@@ -328,6 +366,7 @@ enum NativeChatHistoryBuilder {
 struct NativeToolLoop: Sendable {
     static let maximumRounds = 4
     static let maximumCalls = 8
+    static let defaultExecutionTimeout = Duration.seconds(20)
 
     enum LoopError: Error, LocalizedError, Equatable {
         case roundLimit
@@ -343,6 +382,20 @@ struct NativeToolLoop: Sendable {
 
     let transport: any NativeChatTransport
     let registry: NativeToolRegistry
+    let executionTimeout: Duration
+    let confirm: @Sendable (NativeToolActivity) async -> Bool
+
+    init(
+        transport: any NativeChatTransport,
+        registry: NativeToolRegistry,
+        executionTimeout: Duration = Self.defaultExecutionTimeout,
+        confirm: @escaping @Sendable (NativeToolActivity) async -> Bool = { _ in false }
+    ) {
+        self.transport = transport
+        self.registry = registry
+        self.executionTimeout = executionTimeout
+        self.confirm = confirm
+    }
 
     func stream(
         messages: [NativeChatMessage], model: String, enabledToolIDs: Set<String>
@@ -411,7 +464,15 @@ struct NativeToolLoop: Sendable {
                                     throw NativeToolError.invalidArguments("Tool call identifier and name are required")
                                 }
                                 let arguments = try definition.validatedArguments(call.arguments)
-                                result = try await Self.json(definition.execute(arguments))
+                                if definition.confirmation == .required {
+                                    guard let activity = activities.first(where: { $0.id == call.id }),
+                                          await confirm(activity) else {
+                                        throw NativeToolError.failed("The tool call was not confirmed")
+                                    }
+                                }
+                                let value = try await Self.execute(
+                                    definition, arguments: arguments, timeout: executionTimeout)
+                                result = try Self.json(value)
                                 state = .succeeded
                             } catch {
                                 result = Self.errorJSON(error.localizedDescription)
@@ -439,6 +500,31 @@ struct NativeToolLoop: Sendable {
         guard !prior.isEmpty else { return next }
         guard !next.isEmpty else { return prior }
         return prior + "\n\n" + next
+    }
+
+    private static func execute(
+        _ definition: NativeToolDefinition,
+        arguments: [String: NativeJSONValue],
+        timeout: Duration
+    ) async throws -> NativeJSONValue {
+        try await withCheckedThrowingContinuation { continuation in
+            let race = NativeToolExecutionRace(continuation)
+            let work = Task {
+                do {
+                    race.resolve(.success(try await definition.execute(arguments)))
+                } catch {
+                    race.resolve(.failure(error))
+                }
+            }
+            race.installCancellation { work.cancel() }
+            Task {
+                do {
+                    try await Task.sleep(for: timeout)
+                    race.resolve(.failure(NativeToolError.failed("The tool call timed out")))
+                } catch {
+                }
+            }
+        }
     }
 
     private static func fail(_ calls: [NativeChatToolCall], in activities: inout [NativeToolActivity], message: String) {

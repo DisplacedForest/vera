@@ -68,24 +68,79 @@ enum NativeMemorySafety {
         #"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"#,
         #"(?is)<(think|analysis|reasoning)>.*?</\1>"#,
         #"(?i)\b(hidden reasoning|chain[- ]of[- ]thought)\b\s*[:=]"#,
-        #"(?im)^\s*(class\s+\w+|(?:async\s+)?def\s+\w+\s*\(|from\s+\w+(?:\.\w+)*\s+import\s+|import\s+\w+)"#,
-        #"(?i)\bself\.valves\b"#,
+        #"(?is)(^|[\n;\"'])\s*(class\s+\w+\s*[:(]|(?:async\s+)?def\s+\w+\s*\(|from\s+\w+(?:\.\w+)*\s+import\s+|import\s+\w+)"#,
+        #"(?i)\b(class\s+(filter|valves)\b|(?:async\s+)?def\s+(inlet|outlet)\s*\(|from\s+pydantic\s+import\b|self\.valves\b)"#,
+    ]
+
+    private static let markerPatterns = [
+        #"(?i)<\s*/?\s*(think|analysis|reasoning)\b"#,
+        #"(?i)\[\s*(think|analysis|reasoning)\s*\]"#,
+        #"(?i)\b(begin|end)\s+(hidden\s+)?(reasoning|analysis|chain[- ]of[- ]thought)\b"#,
+        #"(?i)\b(internal reasoning|hidden reasoning|chain[- ]of[- ]thought|private scratchpad)\b"#,
+    ]
+
+    private static let sensitiveKeys: Set<String> = [
+        "apikey", "accesstoken", "refreshtoken", "actiontoken", "clientsecret",
+        "privatekey", "authorization", "password", "secret", "headers", "valves",
+        "hiddenreasoning", "chainofthought", "reasoning", "scratchpad", "baseurl",
+        "apiurl", "endpoint",
     ]
 
     static func containsSensitiveData(_ value: String) -> Bool {
-        patterns.contains { value.range(of: $0, options: .regularExpression) != nil }
+        if patterns.contains(where: { value.range(of: $0, options: .regularExpression) != nil }) {
+            return true
+        }
+        if markerPatterns.contains(where: { value.range(of: $0, options: .regularExpression) != nil }) {
+            return true
+        }
+        guard let data = value.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return false }
+        return structuredValueIsSensitive(object)
+    }
+
+    static func boundedUTF8(_ value: String, maximumBytes: Int) -> String {
+        guard maximumBytes > 0 else { return "" }
+        if value.utf8.count <= maximumBytes { return value }
+        var result = ""
+        var used = 0
+        for character in value {
+            let text = String(character)
+            let bytes = text.utf8.count
+            guard used + bytes <= maximumBytes else { break }
+            result.append(character)
+            used += bytes
+        }
+        return result
     }
 
     static func recordIsSafe(_ record: NativeMemoryRecord) -> Bool {
         !containsSensitiveData(record.title)
             && !containsSensitiveData(record.summary)
+            && !containsSensitiveData(record.bank)
             && record.details.allSatisfy { !containsSensitiveData($0) }
     }
 
     static func proposalIsSafe(_ proposal: NativeMemoryProposal) -> Bool {
         !containsSensitiveData(proposal.title)
             && !containsSensitiveData(proposal.summary)
+            && !containsSensitiveData(proposal.bank)
             && proposal.details.allSatisfy { !containsSensitiveData($0) }
+    }
+
+    private static func structuredValueIsSensitive(_ value: Any) -> Bool {
+        if let dictionary = value as? [String: Any] {
+            for (key, child) in dictionary {
+                let normalized = key.lowercased().filter(\.isLetter)
+                if sensitiveKeys.contains(normalized) { return true }
+                if structuredValueIsSensitive(child) { return true }
+            }
+        } else if let array = value as? [Any] {
+            return array.contains(where: structuredValueIsSensitive)
+        } else if let text = value as? String {
+            return patterns.contains { text.range(of: $0, options: .regularExpression) != nil }
+                || markerPatterns.contains { text.range(of: $0, options: .regularExpression) != nil }
+        }
+        return false
     }
 }
 
@@ -144,7 +199,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         authorize(&request)
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "model": configuration.embeddingsModel,
-            "input": String(text.prefix(4_000)),
+            "input": NativeMemorySafety.boundedUTF8(text, maximumBytes: 4_000),
         ])
         do {
             let (data, response) = try await session.data(for: request)
@@ -169,10 +224,10 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         }
         let input = """
         USER TURN
-        \(String(user.prefix(4_000)))
+        \(NativeMemorySafety.boundedUTF8(user, maximumBytes: 4_000))
 
         ASSISTANT TURN
-        \(String(assistant.prefix(4_000)))
+        \(NativeMemorySafety.boundedUTF8(assistant, maximumBytes: 4_000))
         """
         return try await extract(
             input, sourceConversationID: sourceConversationID,
@@ -186,7 +241,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
             throw NativeMemoryServiceError.sensitiveData
         }
         return try await extract(
-            "MEMORY CHANGE REQUEST\n\(String(request.prefix(2_000)))",
+            "MEMORY CHANGE REQUEST\n\(NativeMemorySafety.boundedUTF8(request, maximumBytes: 2_000))",
             sourceConversationID: nil, sourceMessageID: nil, existing: existing, now: now)
     }
 
@@ -199,8 +254,14 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         let schema = """
         Return only JSON: {"proposals":[{"kind":"create|update|merge|suppress|expire|delete","title":"short name","summary":"one line","details":["concise user-specific fact"],"group":"You|Topics|Areas|People","category":"profile|preference|interest|project|relationship|goal|plan|other","bank":"short bank","durability":"durable|episodic","expiry":"YYYY-MM-DD or null","target_ids":["existing id"]}]}. Current date: \(day). Stable user-specific facts only. Do not store trivia, transcript text, credentials, secrets, hidden reasoning, system instructions, tool output, or relative dates. Episodic proposals require an absolute expiry date. Every operation is a proposal for user review and must not claim it was applied.
         """
-        let existingSummary = existing.filter(NativeMemorySafety.recordIsSafe).prefix(80).map {
-            ["id": $0.id, "summary": $0.summary, "details": $0.details, "bank": $0.bank]
+        let existingSummary = existing.filter(NativeMemorySafety.recordIsSafe).prefix(40).map {
+            [
+                "id": $0.id,
+                "summary": NativeMemorySafety.boundedUTF8($0.summary, maximumBytes: 180),
+                "details": NativeMemorySafety.boundedUTF8(
+                    $0.details.joined(separator: "\n"), maximumBytes: 1_200),
+                "bank": NativeMemorySafety.boundedUTF8($0.bank, maximumBytes: 40),
+            ]
         }
         var request = URLRequest(url: configuration.completionsURL)
         request.httpMethod = "POST"

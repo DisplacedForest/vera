@@ -584,8 +584,10 @@ final class ChatStore: ObservableObject {
                               NativeMemoryExtractionPolicy.disposition(
                                 user: messages[index].text, assistant: messages[index + 1],
                                 conversationExcluded: conversation.memoryExcluded) == .eligible else { continue }
-                        let turnBytes = min(messages[index].text.utf8.count, 4_000)
-                            + min(messages[index + 1].text.utf8.count, 4_000)
+                        let turnBytes = NativeMemorySafety.boundedUTF8(
+                            messages[index].text, maximumBytes: 4_000).utf8.count
+                            + NativeMemorySafety.boundedUTF8(
+                                messages[index + 1].text, maximumBytes: 4_000).utf8.count
                         guard reviewedBytes + turnBytes <= 48_000 else { break search }
                         let proposals = try await service.proposals(
                             user: messages[index].text, assistant: messages[index + 1].text,

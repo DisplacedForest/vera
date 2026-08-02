@@ -641,7 +641,14 @@ enum SelfTest {
                   NativeMemorySafety.containsSensitiveData("action_token=act_live_123456789"),
                   NativeMemorySafety.containsSensitiveData("act_live_123456789"),
                   NativeMemorySafety.containsSensitiveData("<think>private chain</think>"),
-                  NativeMemorySafety.containsSensitiveData("class Filter:\n    async def inlet(self, body):") else {
+                  NativeMemorySafety.containsSensitiveData("<think>private chain"),
+                  NativeMemorySafety.containsSensitiveData("[analysis] private chain"),
+                  NativeMemorySafety.containsSensitiveData("{\"actionToken\":\"act_live_123456789\"}"),
+                  NativeMemorySafety.containsSensitiveData("{\"privateKey\":\"opaque-value\"}"),
+                  NativeMemorySafety.containsSensitiveData("class Filter:\n    async def inlet(self, body):"),
+                  NativeMemorySafety.containsSensitiveData("\"class Filter: async def inlet(self, body):\""),
+                  NativeMemorySafety.boundedUTF8(
+                    String(repeating: "🧠", count: 2_000), maximumBytes: 4_000).utf8.count == 4_000 else {
                 print("SELFTEST ERROR: native memory structured proposal validation"); exit(1)
             }
             let similar = NativeMemoryRecord(
@@ -650,6 +657,11 @@ enum SelfTest {
                 bank: "personal", durability: .durable, expiry: nil, status: .approved,
                 embedding: [0.99, 0.01], sourceConversationID: nil, sourceMessageID: nil,
                 createdAt: now.addingTimeInterval(-10), updatedAt: now.addingTimeInterval(-10))
+            var unsafeBank = similar
+            unsafeBank.bank = "{\"actionToken\":\"act_live_123456789\"}"
+            guard !NativeMemorySafety.recordIsSafe(unsafeBank) else {
+                print("SELFTEST ERROR: native memory unsafe bank accepted"); exit(1)
+            }
             let semanticCreate = NativeMemoryProposal(
                 id: "semantic", kind: .create, title: "Wine preference",
                 summary: "Enjoys natural wine", details: ["The user enjoys natural wine"],

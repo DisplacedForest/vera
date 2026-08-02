@@ -162,6 +162,21 @@ enum SelfTest {
             }
             service.authorized = true
 
+            guard NativeRemindersTools.resolveListName(
+                "Shopping List",
+                in: [
+                    NativeReminderList(id: "shopping", name: "Shopping"),
+                    NativeReminderList(id: "work", name: "Work"),
+                ]) == "Shopping",
+                  NativeRemindersTools.resolveListName(
+                    "List",
+                    in: [
+                        NativeReminderList(id: "one", name: "List"),
+                        NativeReminderList(id: "two", name: "Reminders"),
+                    ]) == "List" else {
+                print("SELFTEST ERROR: native reminder list alias resolution"); exit(1)
+            }
+
             var accumulator = NativeChatDeltaAccumulator()
             _ = try accumulator.consume("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"apple_reminders_\",\"arguments\":\"{\\\"list\\\":\\\"Err\"}}]}}]}")
             let fragmented = try accumulator.consume("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"list\",\"arguments\":\"ands\\\"}\"}},{\"index\":1,\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"apple_reminders_list\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}")

@@ -355,10 +355,10 @@ struct MessageRow: View {
         HStack(alignment: .top, spacing: 14) {
             if message.role == .assistant {
                 VStack(alignment: .leading, spacing: 8) {
-                    AssistantBody(message: message, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                     ForEach(message.toolActivities) { activity in
                         NativeToolActivityChip(activity: activity)
                     }
+                    AssistantBody(message: message, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                     if message.state == .interrupted {
                         Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
                             .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)

@@ -200,7 +200,8 @@ enum SelfTest {
             guard requestTools?.count == 4,
                   requestNames?.contains("apple_reminders_list") == true,
                   requestNames?.contains("apple_reminders_get_lists") == true,
-                  requestKwargs?["enable_thinking"] as? Bool == false else {
+                  requestKwargs?["enable_thinking"] as? Bool == false,
+                  requestBody?["tool_choice"] as? String == "auto" else {
                 print("SELFTEST ERROR: standard native tool request shape"); exit(1)
             }
 
@@ -223,6 +224,8 @@ enum SelfTest {
                   final?.activities.allSatisfy({ $0.state == .succeeded }) == true,
                   service.listCalls == 2,
                   transport.histories.count == 2,
+                  transport.histories[0].first(where: { $0.role == "system" })?.content.contains(
+                    "Do not claim that you lack access") == true,
                   transport.histories[1].contains(where: { $0.role == "tool" && $0.toolCallID == "call_1" }) else {
                 print("SELFTEST ERROR: native tool continuation"); exit(1)
             }

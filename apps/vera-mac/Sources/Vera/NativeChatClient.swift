@@ -207,7 +207,10 @@ struct NativeChatClient: NativeChatTransport, Sendable {
             "stream": true,
             "messages": messages.map(Self.messageObject),
         ]
-        if !tools.isEmpty { payload["tools"] = tools.map(\.requestObject) }
+        if !tools.isEmpty {
+            payload["tools"] = tools.map(\.requestObject)
+            payload["tool_choice"] = "auto"
+        }
         if let kwargs = config.chatTemplateKwargsObject() { payload["chat_template_kwargs"] = kwargs }
         var request = URLRequest(url: config.completionsURL)
         request.httpMethod = "POST"

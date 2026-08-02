@@ -219,11 +219,16 @@ struct NativeChatClient: NativeChatTransport, Sendable {
     static func modelIDs(from data: Data) throws -> [String] {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let rows = object["data"] as? [[String: Any]] else { throw ClientError.invalidResponse }
-        let models = rows.compactMap { ($0["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .sorted()
+        let models = rows.compactMap { row -> String? in
+            guard let id = row["id"] as? String else { return nil }
+            let value = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : value
+        }
         if !rows.isEmpty, models.isEmpty { throw ClientError.noUsableModels }
-        return models
+        guard models.count == rows.count, Set(models).count == models.count else {
+            throw ClientError.invalidResponse
+        }
+        return models.sorted()
     }
 
     private func applyAuthorization(to request: inout URLRequest) {

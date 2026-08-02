@@ -78,6 +78,17 @@ enum SelfTest {
             print("SELFTEST ERROR: native endpoint profile add"); exit(1)
         }
         settings.activeProfileID = restoredProfileID
+        let discoveryConfig = NativeChatConfigurationResolver.discovery(
+            profile: settings.activeProfile,
+            apiKey: "saved-key",
+            environment: [
+                "VERA_MODEL_BASE": "https://override.example/v1",
+                "VERA_MODEL_API_KEY": "override-key",
+            ])
+        guard discoveryConfig == NativeDiscoveryConfiguration(
+            baseURL: "https://override.example/v1", apiKey: "override-key") else {
+            print("SELFTEST ERROR: native discovery environment overrides"); exit(1)
+        }
         settings.cacheModels(["model-z", "model-a"])
         guard settings.activeProfile?.discoveredModels == ["model-a", "model-z"],
               settings.activeProfile?.selectedModel == "model-b" else {
@@ -402,6 +413,11 @@ enum SelfTest {
             do {
                 _ = try NativeChatClient.modelIDs(from: Data("{\"models\":[]}".utf8))
                 print("SELFTEST ERROR: native malformed discovery accepted"); exit(1)
+            } catch NativeChatClient.ClientError.invalidResponse {
+            }
+            do {
+                _ = try NativeChatClient.modelIDs(from: Data("{\"data\":[{\"id\":\"valid\"},{\"name\":\"missing id\"}]}".utf8))
+                print("SELFTEST ERROR: native partially malformed discovery accepted"); exit(1)
             } catch NativeChatClient.ClientError.invalidResponse {
             }
             do {

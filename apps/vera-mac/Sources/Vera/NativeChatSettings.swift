@@ -43,6 +43,23 @@ struct NativeEndpointProfile: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+struct NativeDiscoveryConfiguration: Equatable, Sendable {
+    let baseURL: String
+    let apiKey: String
+}
+
+enum NativeChatConfigurationResolver {
+    static func discovery(
+        profile: NativeEndpointProfile?,
+        apiKey: String,
+        environment: [String: String]
+    ) -> NativeDiscoveryConfiguration {
+        NativeDiscoveryConfiguration(
+            baseURL: environment["VERA_MODEL_BASE"]?.nonblank ?? profile?.baseURL.nonblank ?? "",
+            apiKey: environment["VERA_MODEL_API_KEY"]?.nonblank ?? apiKey.nonblank ?? "")
+    }
+}
+
 struct NativeChatSettings: Codable, Equatable, Sendable {
     static let defaultSystemPrompt = "You are Vera, a thoughtful personal assistant. Be clear, practical, and honest about what you can do."
 
@@ -253,5 +270,12 @@ struct KeychainNativeCredentialStore: NativeCredentialStore {
         guard status == errSecSuccess else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
         }
+    }
+}
+
+private extension String {
+    var nonblank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 }

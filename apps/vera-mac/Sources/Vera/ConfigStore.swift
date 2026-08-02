@@ -142,6 +142,12 @@ final class ConfigStore: ObservableObject {
         guard let id = nativeSettings.activeProfileID else { return "" }
         return nativeAPIKeys[id] ?? ""
     }
+    var nativeDiscoveryConfiguration: NativeDiscoveryConfiguration {
+        NativeChatConfigurationResolver.discovery(
+            profile: activeNativeProfile,
+            apiKey: activeNativeAPIKey,
+            environment: ProcessInfo.processInfo.environment)
+    }
 
     func activeProfileBinding(_ keyPath: WritableKeyPath<NativeEndpointProfile, String>) -> Binding<String> {
         Binding(

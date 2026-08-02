@@ -220,11 +220,12 @@ struct NativeModelEditor: View {
     }
 
     private func discover() {
-        guard let profile else { return }
+        guard profile != nil else { return }
         discovery = .loading
         Task {
             do {
-                let values = try await ConnectionTest.models(base: profile.baseURL, apiKey: config.activeNativeAPIKey)
+                let active = config.nativeDiscoveryConfiguration
+                let values = try await ConnectionTest.models(base: active.baseURL, apiKey: active.apiKey)
                 config.cacheDiscoveredModels(values)
                 discovery = values.isEmpty ? .empty : .models(values)
                 try? config.save()

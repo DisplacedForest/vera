@@ -128,8 +128,8 @@ struct VeinsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
         .task {
-            veins.configure(base: config.resolved?.veraAPIBase)
-            builderConfigured = await BuilderModel.probe(base: config.resolved?.veraAPIBase)
+            veins.configure(base: config.veraAPIBase)
+            builderConfigured = await BuilderModel.probe(base: config.veraAPIBase)
             await veins.refresh()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
@@ -141,7 +141,7 @@ struct VeinsView: View {
                       openPlugins: openPlugins)
         }
         .sheet(isPresented: $browsing) {
-            VeinBrowseSheet(veins: veins, base: config.resolved?.veraAPIBase,
+            VeinBrowseSheet(veins: veins, base: config.veraAPIBase,
                             builderConfigured: builderConfigured, openPlugins: openPlugins,
                             onOpenVein: { entry in
                                 browsing = false

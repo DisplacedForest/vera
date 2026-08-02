@@ -29,19 +29,17 @@ enum ConfigFile {
     }
 }
 
-/// The editable app config, backed by `~/.vera/config.json`. Settings and onboarding write through
-/// this; `OWUIConfig.load()` resolves env-over-file on top of the same file.
 @MainActor
 final class ConfigStore: ObservableObject {
     /// Raw file contents. String values are editable in Settings; unknown keys are preserved.
     @Published private(set) var raw: [String: Any]
-    /// Drives the first-run sheet — true when no usable OWUI config exists.
     @Published var showOnboarding: Bool
 
     /// THE `~/.vera/config.json` key ↔ environment-variable mapping (env wins at resolve
     /// time). Canonical names match the backend's convention (`OWUI_KEY`); deprecated
     /// aliases keep working for one release.
     static let envNames: [String: String] = [
+        "model_base": "VERA_MODEL_BASE", "model_api_key": "VERA_MODEL_API_KEY",
         "base": "OWUI_BASE", "api_key": "OWUI_KEY", "model": "VERA_MODEL",
         "completions_url": "VERA_COMPLETIONS_URL", "voice_base": "VERA_VOICE_BASE",
         "vera_api_base": "VERA_API_BASE", "owui_email": "OWUI_EMAIL",
@@ -53,7 +51,7 @@ final class ConfigStore: ObservableObject {
 
     init() {
         raw = ConfigFile.read()
-        showOnboarding = OWUIConfig.load() == nil
+        showOnboarding = NativeChatConfig.load() == nil
     }
 
     subscript(_ key: String) -> String {
@@ -94,6 +92,12 @@ final class ConfigStore: ObservableObject {
 
     /// The fully resolved connection config (env over file). Nil until OWUI base + key exist.
     var resolved: OWUIConfig? { OWUIConfig.load() }
+
+    var nativeResolved: NativeChatConfig? { NativeChatConfig.load() }
+
+    var veraAPIBase: URL? {
+        OWUIConfig.resolvedVeraAPIBase()
+    }
 
     /// The person's name — drives the greeting and the sidebar chip. Nil when unset.
     var ownerName: String? {
@@ -136,6 +140,21 @@ enum ConnectionTest {
         return "Signed in" + (name.map { " as \($0)" } ?? "")
     }
 
+    static func models(base: String, apiKey: String) async throws -> [String] {
+        let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              url.scheme == "http" || url.scheme == "https",
+              url.lastPathComponent == "v1" else {
+            throw TestError.message("Enter a valid model endpoint ending in /v1")
+        }
+        let config = NativeChatConfig(
+            baseURL: url,
+            apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            model: "discovery",
+            chatTemplateKwargs: nil)
+        return try await NativeChatClient(config: config).discoverModels()
+    }
+
     /// Probe a service health endpoint — any 2xx counts as alive.
     static func http(base: String, path: String, label: String) async throws -> String {
         guard let url = URL(string: base)?.appendingPathComponent(path), url.scheme != nil else {
@@ -161,4 +180,8 @@ enum ConnectionTest {
         }
         return "Voice service is reachable"
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

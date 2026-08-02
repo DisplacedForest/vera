@@ -45,7 +45,7 @@ struct PulseView: View {
                     VeinChipRow(veins: store.pulseVeins, cards: store.pulseCards, onTap: { store.pulseVeinDetail = $0 })
                         .frame(maxWidth: pulseFeedWidth, alignment: .leading).frame(maxWidth: .infinity)
                         .padding(.horizontal, 28).padding(.bottom, 8)
-                } else if store.isLive {
+                } else if store.isPulseConfigured {
                     // No veins enabled — a quiet affordance instead of dead space.
                     Button { showVeins = true } label: {
                         HStack(spacing: 6) {
@@ -64,7 +64,7 @@ struct PulseView: View {
 
                 ScrollView {
                     if store.feedCards.isEmpty {
-                        Text(store.isLive ? "No briefings yet. Pulse runs each morning."
+                        Text(store.isPulseConfigured ? "No briefings yet. Pulse runs each morning."
                                           : "Not connected. Pulse briefings appear here.")
                             .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                             .frame(maxWidth: .infinity).padding(.top, 48)
@@ -80,7 +80,8 @@ struct PulseView: View {
             if let c = detail {
                 PulseDetailView(card: c, token: store.apiToken,
                                 onClose: { store.pulseDetail = nil },
-                                onContinue: { store.pulseDetail = nil; store.openPulseInChat(c) })
+                                onContinue: { store.pulseDetail = nil; store.openPulseInChat(c) },
+                                canContinue: false, canBookmark: false)
                     .transition(.opacity)
                     .zIndex(1)
             }
@@ -162,6 +163,8 @@ struct PulseCardTile: View {
                     cardAction("hand.thumbsup", on: store.pulseRatings[card.id] == "up") { store.ratePulse(card, "up") }
                     cardAction("hand.thumbsdown", on: store.pulseRatings[card.id] == "down") { store.ratePulse(card, "down") }
                     cardAction("bookmark", on: store.bookmarkedPulseIDs.contains(card.id)) { store.bookmarkPulse(card) }
+                        .disabled(true)
+                        .help("Pulse bookmarks are not available in native chat yet")
                 }
                 .padding(.top, 2)
                 if let action = card.action { actionAffordance(action) }
@@ -473,7 +476,8 @@ struct PulseVeinView: View {
             if let c = detail {
                 PulseDetailView(card: c, token: store.apiToken,
                                 onClose: { detail = nil },
-                                onContinue: { detail = nil; store.openPulseInChat(c) })
+                                onContinue: { detail = nil; store.openPulseInChat(c) },
+                                canContinue: false, canBookmark: false)
                     .transition(.opacity).zIndex(1)
             }
         }

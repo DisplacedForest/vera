@@ -38,7 +38,7 @@ struct AssistantBody: View {
                 }
             }
             if message.ask != nil {
-                VeraAskCard(message: message, onAnswer: onAnswer)
+                VeraAskCard(message: message, canAnswer: store.canSubmitChat, onAnswer: onAnswer)
             }
             ForEach(message.artifacts) { art in
                 Button { onOpenArtifact?(art) } label: { ArtifactChip(artifact: art) }.buttonStyle(.plain)

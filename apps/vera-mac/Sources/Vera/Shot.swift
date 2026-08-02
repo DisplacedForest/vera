@@ -507,17 +507,15 @@ struct SettingsShotView: View {
                 .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("OPEN WEBUI").font(.system(size: 10, weight: .semibold)).tracking(0.5)
+                    Text("MODEL ENDPOINT").font(.system(size: 10, weight: .semibold)).tracking(0.5)
                         .foregroundStyle(Theme.textSecondary)
-                    fieldRow("Base URL", "http://my-owui-host:6590")
-                    fieldRow("API key", "••••••••••••••••")
-                    fieldRow("Email", "you@example.com")
-                    fieldRow("Password", "••••••••")
+                    fieldRow("Base URL", "http://my-model-host:11434/v1")
+                    fieldRow("API key (optional)", "••••••••••••••••")
                     HStack(spacing: 10) {
                         Text("Test connection").font(.system(size: 12, weight: .medium))
                             .padding(.horizontal, 12).padding(.vertical, 5)
                             .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 6))
-                        Label("Signed in as Jordan", systemImage: "checkmark.circle.fill")
+                        Label("Connected. Found 3 models", systemImage: "checkmark.circle.fill")
                             .font(.system(size: 12)).foregroundStyle(Color(red: 0.36, green: 0.78, blue: 0.5))
                         Spacer()
                     }
@@ -711,22 +709,28 @@ struct OnboardingShotView: View {
                     VeraMark(size: 28)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Welcome to Vera").font(.system(size: 20, weight: .semibold))
-                        Text("Point the app at your Open WebUI and vera-api, and you're chatting.")
+                        Text("Point the app at an OpenAI-compatible model endpoint, and you're chatting.")
                             .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     }
                 }
                 VStack(alignment: .leading, spacing: 10) {
-                    fieldRow("Open WebUI URL", "http://my-owui-host:6590")
-                    fieldRow("Open WebUI email", "you@example.com")
-                    fieldRow("Open WebUI password", "••••••••")
-                    fieldRow("Open WebUI API key", "••••••••••••••••")
-                    fieldRow("Model id (as registered in OWUI)", "your-vera-model")
+                    fieldRow("Model endpoint", "http://my-model-host:11434/v1")
+                    fieldRow("API key (optional)", "••••••••••••••••")
+                    fieldRow("Model id", "your-model-id")
                     fieldRow("vera-api URL (optional)", "http://my-api-host:8089")
+                    HStack(spacing: 10) {
+                        Text("Discover models").font(.system(size: 12, weight: .medium))
+                            .padding(.horizontal, 12).padding(.vertical, 5)
+                            .background(Theme.surfaceHover).clipShape(RoundedRectangle(cornerRadius: 6))
+                        Text("Found 3. Selected your-model-id.")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        Spacer()
+                    }
                 }
                 HStack {
                     Spacer()
                     Text("Skip for now").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    Text("Test & Connect").font(.system(size: 12, weight: .medium))
+                    Text("Connect").font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, 14).padding(.vertical, 6)
                         .background(Theme.accent.opacity(0.9)).foregroundStyle(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 6))

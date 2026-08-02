@@ -28,7 +28,7 @@ struct PluginsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
         .task {
-            plugins.configure(base: config.resolved?.veraAPIBase, tools: tools)
+            plugins.configure(base: config.veraAPIBase, tools: tools)
             await plugins.refresh()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)

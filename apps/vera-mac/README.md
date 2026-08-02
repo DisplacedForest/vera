@@ -1,20 +1,26 @@
 # Vera (macOS app)
 
-Native SwiftUI client for Vera (Open WebUI). Chat streams through OWUI's pipeline
-(memory + tools) over Socket.IO; surfaces for Pulse, Journal, Memory, and the Agentic
-canvas. Veins are managed from the Pulse header; the Plugins and MCP managers live in Settings.
+Native SwiftUI client for Vera. Text chat streams directly from a configured OpenAI-compatible
+`/v1` endpoint and stores conversations in `~/.vera/vera.sqlite`. Pulse, Journal, Memory,
+and the Agentic canvas remain optional surfaces. Veins are managed from the Pulse header;
+the Plugins and MCP managers live in Settings.
 
 ## Develop
 ```bash
 swift run                       # dev build + launch
 swift build                     # compile check
-.build/debug/Vera --selftest    # headless: exercise the live OWUI client
+.build/debug/Vera --selftest    # headless: native transport, persistence, and optional live checks
 .build/debug/Vera --shot out.png --view chat|pulse|journal|memory|agentic|veins|settings-plugins|settings-mcp|settings|onboarding   # render a screenshot
 ```
-Config lives in `~/.vera/config.json`, editable in-app via Settings (⌘,): `base`, `api_key`,
-`model`, `completions_url`, `voice_base`, `vera_api_base`, `owui_email`, `owui_password`,
-`owner_name`. Env vars (`OWUI_BASE`, `OWUI_API_KEY`, …) override file values. First launch
-with no config opens an onboarding sheet.
+Config lives in `~/.vera/config.json`, editable in-app via Settings (⌘,): `model_base`,
+`model_api_key`, `model`, `voice_base`, `vera_api_base`, and `owner_name`. The model base must
+end in `/v1`; its key is optional. `VERA_MODEL_BASE`, `VERA_MODEL_API_KEY`, and `VERA_MODEL`
+override file values. Existing Open WebUI keys remain readable for transitional surfaces and
+0.3.1 rollback. First launch with no native model config opens onboarding.
+
+Native chat is text only in this slice. Attachments, voice, tool calling, memory retrieval,
+document knowledge, Open WebUI import, and Pulse continuation are deferred. Pulse itself keeps
+working whenever the optional vera-api URL is configured.
 
 ## Package & install
 ```bash

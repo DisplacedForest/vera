@@ -56,6 +56,33 @@ enum Shot {
                 .padding(24).frame(width: size.width, height: size.height, alignment: .top)
                 .background(Theme.bg).environmentObject(store)
             )
+        } else if view == "tool-activity" {
+            let activities = [
+                NativeToolActivity(
+                    id: "pending", toolID: "apple-reminders", name: "apple_reminders_list",
+                    title: "List reminders", round: 1, request: "{\"list\":\"Errands\"}",
+                    result: nil, state: .pending, confirmationRequired: false),
+                NativeToolActivity(
+                    id: "success", toolID: "apple-reminders", name: "apple_reminders_create",
+                    title: "Create reminder", round: 1, request: "{\"list\":\"Errands\",\"title\":\"Pick up milk\"}",
+                    result: "{\"reminder\":{\"title\":\"Pick up milk\"}}", state: .succeeded,
+                    confirmationRequired: false),
+                NativeToolActivity(
+                    id: "failure", toolID: "apple-reminders", name: "apple_reminders_complete",
+                    title: "Complete reminder", round: 2, request: "{\"id\":\"missing\"}",
+                    result: "{\"error\":\"Reminder not found\"}", state: .failed,
+                    confirmationRequired: true),
+            ]
+            content = AnyView(
+                VStack(alignment: .leading, spacing: 16) {
+                    MessageRow(message: Message(
+                        role: .assistant,
+                        text: "I checked Apple Reminders and kept the completed and failed activity visible.",
+                        toolActivities: activities))
+                }
+                .padding(28).frame(width: size.width, height: size.height, alignment: .top)
+                .background(Theme.bg).environmentObject(store)
+            )
         } else if view == "pulse-chat" {
             let card = PulseCard.deepMock()
             content = AnyView(
@@ -628,11 +655,19 @@ struct NativeSettingsShotView: View {
                     .foregroundStyle(Theme.textSecondary)
                 Text("Only enabled tools that native chat can actually run are shared with the model.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                Label("No native chat tools are available in this version.", systemImage: "wrench.and.screwdriver")
-                    .font(.system(size: 12, weight: .medium))
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.square.fill").foregroundStyle(Theme.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Apple Reminders").font(.system(size: 12, weight: .medium))
+                        Text("Reads and updates reminder lists after you grant access.")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer()
+                    Text("Enabled").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.accent)
+                }
+                .padding(10).background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
                 Text("UNAVAILABLE").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 unavailable("Connected service tools", "Native chat cannot invoke connected service tools in this version.")
-                unavailable("Apple Reminders", "Reminders is not callable from native chat in this version.")
             }
         } else {
             VStack(alignment: .leading, spacing: 10) {

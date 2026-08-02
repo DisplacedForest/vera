@@ -355,6 +355,9 @@ struct MessageRow: View {
         HStack(alignment: .top, spacing: 14) {
             if message.role == .assistant {
                 VStack(alignment: .leading, spacing: 8) {
+                    ForEach(message.toolActivities) { activity in
+                        NativeToolActivityChip(activity: activity)
+                    }
                     AssistantBody(message: message, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                     if message.state == .interrupted {
                         Label(message.failure ?? "The response was interrupted", systemImage: "exclamationmark.triangle")
@@ -377,6 +380,70 @@ struct MessageRow: View {
                     }
                 }
             }
+        }
+    }
+}
+
+struct NativeToolActivityChip: View {
+    let activity: NativeToolActivity
+    @State private var expanded = false
+
+    private var icon: String {
+        switch activity.state {
+        case .pending: return "clock"
+        case .succeeded: return "checkmark.circle.fill"
+        case .failed: return "xmark.circle.fill"
+        }
+    }
+
+    private var status: String {
+        switch activity.state {
+        case .pending: return "Working"
+        case .succeeded: return "Done"
+        case .failed: return "Failed"
+        }
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                inspected("Request", activity.request)
+                if let result = activity.result { inspected("Result", result) }
+            }
+            .padding(.top, 8)
+        } label: {
+            HStack(spacing: 8) {
+                if activity.state == .pending {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: icon)
+                        .foregroundStyle(activity.state == .failed ? Color.orange : Theme.accent)
+                }
+                Text(activity.title).font(.system(size: 12, weight: .medium))
+                Text(status).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                if activity.confirmationRequired {
+                    Text("Confirmation required")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.orange)
+                }
+            }
+            .foregroundStyle(Theme.textPrimary)
+        }
+        .disclosureGroupStyle(.automatic)
+        .padding(.horizontal, 11).padding(.vertical, 8)
+        .frame(maxWidth: 480, alignment: .leading)
+        .background(Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    private func inspected(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            Text(value)
+                .font(.system(size: 11, design: .monospaced))
+                .textSelection(.enabled)
+                .foregroundStyle(Theme.textPrimary)
         }
     }
 }

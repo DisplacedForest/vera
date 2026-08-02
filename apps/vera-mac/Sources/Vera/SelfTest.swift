@@ -14,11 +14,14 @@ final class SelfTestNativeTransport: NativeChatTransport, @unchecked Sendable {
 
     func discoverModels() async throws -> [String] { ["local-model"] }
 
-    func stream(messages: [NativeChatMessage], model: String) -> AsyncThrowingStream<String, Error> {
+    func stream(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
+    ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
         withLock { captured.append(messages) }
         let interrupted = interrupt
         return AsyncThrowingStream { continuation in
-            continuation.yield(interrupted ? "Partial" : "Native reply")
+            continuation.yield(NativeChatStreamSnapshot(
+                content: interrupted ? "Partial" : "Native reply", toolCalls: [], finishReason: "stop"))
             if interrupted {
                 continuation.finish(throwing: NativeChatClient.ClientError.server("test interruption"))
             } else {
@@ -34,17 +37,404 @@ final class SelfTestNativeTransport: NativeChatTransport, @unchecked Sendable {
     }
 }
 
+final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private let rounds: [[NativeChatStreamSnapshot]]
+    private var index = 0
+    private var capturedHistories: [[NativeChatMessage]] = []
+    private var capturedSchemas: [[NativeToolSchema]] = []
+
+    init(rounds: [[NativeChatStreamSnapshot]]) {
+        self.rounds = rounds
+    }
+
+    var histories: [[NativeChatMessage]] { locked { capturedHistories } }
+    var schemas: [[NativeToolSchema]] { locked { capturedSchemas } }
+
+    func discoverModels() async throws -> [String] { ["local-model"] }
+
+    func stream(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
+    ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        let snapshots: [NativeChatStreamSnapshot] = locked {
+            capturedHistories.append(messages)
+            capturedSchemas.append(tools)
+            defer { index += 1 }
+            return rounds.indices.contains(index) ? rounds[index] : []
+        }
+        return AsyncThrowingStream { continuation in
+            for snapshot in snapshots { continuation.yield(snapshot) }
+            continuation.finish()
+        }
+    }
+
+    private func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
+final class InterruptedNativeToolTransport: NativeChatTransport, @unchecked Sendable {
+    func discoverModels() async throws -> [String] { ["local-model"] }
+
+    func stream(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
+    ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(NativeChatStreamSnapshot(
+                content: "Partial response", toolCalls: [
+                    NativeChatToolCall(id: "interrupted", name: "apple_reminders_list", arguments: "{}"),
+                ], finishReason: nil))
+            continuation.finish(throwing: NativeToolError.failed("Test transport interruption"))
+        }
+    }
+}
+
+final class SelfTestRemindersService: NativeRemindersService, @unchecked Sendable {
+    var authorized = true
+    var shouldFail = false
+    var listCalls = 0
+    var createCalls = 0
+    var completeCalls = 0
+
+    var nativeAuthorization: NativeRemindersAuthorization { authorized ? .authorized : .denied }
+
+    func nativeRequestAccess() async -> Bool {
+        authorized = true
+        return true
+    }
+
+    func nativeLists() async throws -> [NativeReminderList] {
+        [NativeReminderList(id: "errands", name: "Errands")]
+    }
+
+    func nativeReminders(list: String?, completed: Bool) async throws -> [NativeReminder] {
+        if shouldFail { throw NativeToolError.failed("EventKit test failure") }
+        listCalls += 1
+        return [NativeReminder(
+            id: completed ? "done" : "open", title: completed ? "Finished" : "Buy milk",
+            notes: nil, due: nil, completed: completed, list: list ?? "Errands")]
+    }
+
+    func nativeCreateReminder(
+        list: String, title: String, notes: String?, due: String?
+    ) async throws -> NativeReminder {
+        if shouldFail { throw NativeToolError.failed("EventKit test failure") }
+        createCalls += 1
+        return NativeReminder(id: "created", title: title, notes: notes, due: due, completed: false, list: list)
+    }
+
+    func nativeCompleteReminder(id: String) async throws -> NativeReminder {
+        if shouldFail { throw NativeToolError.failed("EventKit test failure") }
+        completeCalls += 1
+        return NativeReminder(id: id, title: "Done", notes: nil, due: nil, completed: true, list: "Errands")
+    }
+}
+
+final class SelfTestToolExecutionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var executions = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return executions
+    }
+
+    func execute() -> NativeJSONValue {
+        lock.lock()
+        executions += 1
+        lock.unlock()
+        return .object(["ok": .bool(true)])
+    }
+}
+
 @MainActor
 enum SelfTest {
     static func run() async {
         runPure()
         runNativeSettings()
+        await runNativeTools()
         await runNativeStore()
         guard let cfg = OWUIConfig.load() else {
             print("SELFTEST OK (offline). No OWUI config (~/.vera/config.json), live checks skipped")
             exit(0)
         }
         await runLive(cfg)
+    }
+
+    private static func runNativeTools() async {
+        do {
+            let service = SelfTestRemindersService()
+            let registry = NativeToolRegistry(definitions: NativeRemindersTools.definitions(service: service))
+            guard registry.active(enabledIDs: []).isEmpty,
+                  registry.active(enabledIDs: ["apple-reminders"]).count == 4 else {
+                print("SELFTEST ERROR: native tool registry filtering"); exit(1)
+            }
+            service.authorized = false
+            guard registry.active(enabledIDs: ["apple-reminders"]).isEmpty else {
+                print("SELFTEST ERROR: unavailable native tool exposed"); exit(1)
+            }
+            service.authorized = true
+
+            guard NativeRemindersTools.resolveListName(
+                "Shopping List",
+                in: [
+                    NativeReminderList(id: "shopping", name: "Shopping"),
+                    NativeReminderList(id: "work", name: "Work"),
+                ]) == "Shopping",
+                  NativeRemindersTools.resolveListName(
+                    "List",
+                    in: [
+                        NativeReminderList(id: "one", name: "List"),
+                        NativeReminderList(id: "two", name: "Reminders"),
+                    ]) == "List" else {
+                print("SELFTEST ERROR: native reminder list alias resolution"); exit(1)
+            }
+
+            var accumulator = NativeChatDeltaAccumulator()
+            _ = try accumulator.consume("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"apple_reminders_\",\"arguments\":\"{\\\"list\\\":\\\"Err\"}}]}}]}")
+            let fragmented = try accumulator.consume("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"list\",\"arguments\":\"ands\\\"}\"}},{\"index\":1,\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"apple_reminders_list\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}")
+            guard fragmented.toolCalls.count == 2,
+                  fragmented.toolCalls[0].name == "apple_reminders_list",
+                  fragmented.toolCalls[0].arguments == "{\"list\":\"Errands\"}" else {
+                print("SELFTEST ERROR: streamed native tool accumulation"); exit(1)
+            }
+
+            let requestClient = NativeChatClient(config: NativeChatConfig(
+                baseURL: URL(string: "https://models.example/v1")!, apiKey: nil,
+                model: "local-model", chatTemplateKwargs: "{\"enable_thinking\":false}"))
+            let request = try requestClient.request(
+                messages: [NativeChatMessage(role: "user", content: "List reminders")],
+                model: "local-model",
+                tools: registry.active(enabledIDs: ["apple-reminders"]).map(\.schema))
+            let requestBody = try JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any]
+            let requestTools = requestBody?["tools"] as? [[String: Any]]
+            let requestKwargs = requestBody?["chat_template_kwargs"] as? [String: Any]
+            let requestNames = requestTools?.compactMap { ($0["function"] as? [String: Any])?["name"] as? String }
+            guard requestTools?.count == 4,
+                  requestNames?.contains("apple_reminders_list") == true,
+                  requestNames?.contains("apple_reminders_get_lists") == true,
+                  requestKwargs?["enable_thinking"] as? Bool == false,
+                  requestBody?["tool_choice"] as? String == "auto" else {
+                print("SELFTEST ERROR: standard native tool request shape"); exit(1)
+            }
+
+            let transport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "call_1", name: "apple_reminders_list", arguments: "{}"),
+                    NativeChatToolCall(id: "call_2", name: "apple_reminders_list", arguments: "{\"completed\":true}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "You have two reminders.", toolCalls: [], finishReason: "stop")],
+            ])
+            let loop = NativeToolLoop(transport: transport, registry: registry)
+            var final: NativeToolTurnSnapshot?
+            for try await snapshot in loop.stream(
+                messages: [NativeChatMessage(role: "user", content: "What is due?")],
+                model: "local-model", enabledToolIDs: ["apple-reminders"]) {
+                final = snapshot
+            }
+            guard final?.content == "You have two reminders.",
+                  final?.activities.count == 2,
+                  final?.activities.allSatisfy({ $0.state == .succeeded }) == true,
+                  service.listCalls == 2,
+                  transport.histories.count == 2,
+                  transport.histories[0].first(where: { $0.role == "system" })?.content.contains(
+                    "Do not claim that you lack access") == true,
+                  transport.histories[1].contains(where: { $0.role == "tool" && $0.toolCallID == "call_1" }) else {
+                print("SELFTEST ERROR: native tool continuation"); exit(1)
+            }
+
+            let invalidTransport = ScriptedNativeToolTransport(rounds: [[
+                NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "bad", name: "apple_reminders_create", arguments: "{\"title\":7}"),
+                ], finishReason: "tool_calls")
+            ], [NativeChatStreamSnapshot(content: "I could not create it.", toolCalls: [], finishReason: "stop")]])
+            var invalidFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(transport: invalidTransport, registry: registry).stream(
+                messages: [NativeChatMessage(role: "user", content: "Add it")],
+                model: "local-model", enabledToolIDs: ["apple-reminders"]) {
+                invalidFinal = snapshot
+            }
+            guard invalidFinal?.activities.first?.state == .failed, service.createCalls == 0 else {
+                print("SELFTEST ERROR: malformed native tool executed"); exit(1)
+            }
+
+            let unknownTransport = ScriptedNativeToolTransport(rounds: [[
+                NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "unknown", name: "not_registered", arguments: "{}"),
+                ], finishReason: "tool_calls")
+            ], [NativeChatStreamSnapshot(content: "That tool is unavailable.", toolCalls: [], finishReason: "stop")]])
+            var unknownFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(transport: unknownTransport, registry: registry).stream(
+                messages: [NativeChatMessage(role: "user", content: "Use another tool")],
+                model: "local-model", enabledToolIDs: []) {
+                unknownFinal = snapshot
+            }
+            guard unknownFinal?.activities.first?.state == .failed,
+                  unknownTransport.schemas.first?.isEmpty == true else {
+                print("SELFTEST ERROR: unknown or disabled native tool executed"); exit(1)
+            }
+
+            var interruptedFinal: NativeToolTurnSnapshot?
+            do {
+                for try await snapshot in NativeToolLoop(
+                    transport: InterruptedNativeToolTransport(), registry: registry
+                ).stream(
+                    messages: [NativeChatMessage(role: "user", content: "List reminders")],
+                    model: "local-model", enabledToolIDs: ["apple-reminders"]
+                ) {
+                    interruptedFinal = snapshot
+                }
+                print("SELFTEST ERROR: interrupted native tool stream completed"); exit(1)
+            } catch NativeToolError.failed(let detail) where detail == "Test transport interruption" {
+            }
+            guard interruptedFinal?.content == "Partial response",
+                  interruptedFinal?.activities.first?.state == .failed,
+                  interruptedFinal?.activities.first?.result?.contains("Test transport interruption") == true else {
+                print("SELFTEST ERROR: interrupted native tool remained pending"); exit(1)
+            }
+
+            let baselineLists = service.listCalls
+            let limitedTransport = ScriptedNativeToolTransport(rounds: (1...(NativeToolLoop.maximumRounds + 1)).map { round in
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(
+                        id: "limit_\(round)",
+                        name: round > NativeToolLoop.maximumRounds ? "apple_reminders_list" : "not_registered",
+                        arguments: "{}"),
+                ], finishReason: "tool_calls")]
+            })
+            var limitedFinal: NativeToolTurnSnapshot?
+            do {
+                for try await snapshot in NativeToolLoop(transport: limitedTransport, registry: registry).stream(
+                    messages: [NativeChatMessage(role: "user", content: "Keep going")],
+                    model: "local-model", enabledToolIDs: ["apple-reminders"]) {
+                    limitedFinal = snapshot
+                }
+                print("SELFTEST ERROR: native tool round limit not enforced"); exit(1)
+            } catch NativeToolLoop.LoopError.roundLimit {
+            }
+            guard service.listCalls == baselineLists,
+                  limitedFinal?.activities.last?.state == .failed else {
+                print("SELFTEST ERROR: native tool executed beyond round limit"); exit(1)
+            }
+
+            let active = registry.active(enabledIDs: ["apple-reminders"])
+            let create = active.first { $0.name == "apple_reminders_create" }!
+            let complete = active.first { $0.name == "apple_reminders_complete" }!
+            _ = try await create.execute(create.validatedArguments("{\"list\":\"Errands\",\"title\":\"Buy milk\"}"))
+            _ = try await complete.execute(complete.validatedArguments("{\"id\":\"created\"}"))
+            guard service.createCalls == 1, service.completeCalls == 1 else {
+                print("SELFTEST ERROR: reminders create or complete executor"); exit(1)
+            }
+            service.shouldFail = true
+            do {
+                _ = try await create.execute(create.validatedArguments("{\"list\":\"Errands\",\"title\":\"Fail\"}"))
+                print("SELFTEST ERROR: reminders executor failure hidden"); exit(1)
+            } catch NativeToolError.failed(let detail) where detail == "EventKit test failure" {
+            }
+            service.shouldFail = false
+
+            let textTransport = ScriptedNativeToolTransport(rounds: [[
+                NativeChatStreamSnapshot(content: "Plain text works.", toolCalls: [], finishReason: "stop")
+            ]])
+            var textFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(transport: textTransport, registry: registry).stream(
+                messages: [NativeChatMessage(role: "user", content: "Hello")],
+                model: "local-model", enabledToolIDs: []) {
+                textFinal = snapshot
+            }
+            guard textFinal?.content == "Plain text works.", textFinal?.activities.isEmpty == true,
+                  textTransport.schemas.first?.isEmpty == true else {
+                print("SELFTEST ERROR: text-only native endpoint behavior"); exit(1)
+            }
+
+            let confirmationState = SelfTestToolExecutionState()
+            let confirmationDefinition = NativeToolDefinition(
+                id: "confirmation-test", name: "confirmation_test", title: "Confirmation test",
+                description: "Exercise confirmation gating.",
+                parameters: .object([
+                    "type": .string("object"), "properties": .object([:]),
+                    "required": .array([]), "additionalProperties": .bool(false),
+                ]),
+                confirmation: .required,
+                isAvailable: { true },
+                execute: { _ in confirmationState.execute() })
+            let confirmationRegistry = NativeToolRegistry(definitions: [confirmationDefinition])
+            func confirmationTransport(_ id: String) -> ScriptedNativeToolTransport {
+                ScriptedNativeToolTransport(rounds: [[
+                    NativeChatStreamSnapshot(content: "", toolCalls: [
+                        NativeChatToolCall(id: id, name: "confirmation_test", arguments: "{}"),
+                    ], finishReason: "tool_calls")
+                ], [NativeChatStreamSnapshot(content: "Finished.", toolCalls: [], finishReason: "stop")]])
+            }
+            var deniedFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: confirmationTransport("denied"), registry: confirmationRegistry
+            ).stream(
+                messages: [NativeChatMessage(role: "user", content: "Run it")],
+                model: "local-model", enabledToolIDs: ["confirmation-test"]
+            ) {
+                deniedFinal = snapshot
+            }
+            guard deniedFinal?.activities.first?.state == .failed,
+                  deniedFinal?.activities.first?.result?.contains("not confirmed") == true,
+                  confirmationState.count == 0 else {
+                print("SELFTEST ERROR: confirmation denial executed native tool"); exit(1)
+            }
+            var confirmedFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: confirmationTransport("confirmed"), registry: confirmationRegistry,
+                confirm: { _ in true }
+            ).stream(
+                messages: [NativeChatMessage(role: "user", content: "Run it")],
+                model: "local-model", enabledToolIDs: ["confirmation-test"]
+            ) {
+                confirmedFinal = snapshot
+            }
+            guard confirmedFinal?.activities.first?.state == .succeeded,
+                  confirmationState.count == 1 else {
+                print("SELFTEST ERROR: confirmed native tool did not execute"); exit(1)
+            }
+
+            let stalledDefinition = NativeToolDefinition(
+                id: "timeout-test", name: "timeout_test", title: "Timeout test",
+                description: "Exercise bounded execution.",
+                parameters: .object([
+                    "type": .string("object"), "properties": .object([:]),
+                    "required": .array([]), "additionalProperties": .bool(false),
+                ]),
+                confirmation: .none,
+                isAvailable: { true },
+                execute: { _ in
+                    await withUnsafeContinuation { (_: UnsafeContinuation<NativeJSONValue, Never>) in }
+                })
+            let timeoutTransport = ScriptedNativeToolTransport(rounds: [[
+                NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "stalled", name: "timeout_test", arguments: "{}"),
+                ], finishReason: "tool_calls")
+            ], [NativeChatStreamSnapshot(content: "The tool failed safely.", toolCalls: [], finishReason: "stop")]])
+            var timeoutFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: timeoutTransport,
+                registry: NativeToolRegistry(definitions: [stalledDefinition]),
+                executionTimeout: .milliseconds(25)
+            ).stream(
+                messages: [NativeChatMessage(role: "user", content: "Run it")],
+                model: "local-model", enabledToolIDs: ["timeout-test"]
+            ) {
+                timeoutFinal = snapshot
+            }
+            guard timeoutFinal?.content == "The tool failed safely.",
+                  timeoutFinal?.activities.first?.state == .failed,
+                  timeoutFinal?.activities.first?.result?.contains("timed out") == true else {
+                print("SELFTEST ERROR: stalled native tool did not time out safely"); exit(1)
+            }
+            print("  native tools OK (registry, standard request, fragmented calls, continuation, validation, limits, confirmation, timeout, reminders, text-only)")
+        } catch {
+            print("SELFTEST ERROR: native tools \(error)"); exit(1)
+        }
     }
 
     private static func runNativeSettings() {
@@ -168,6 +558,35 @@ enum SelfTest {
                   try repository.messages(conversationID: conversation.id).count == 4 else {
                 print("SELFTEST ERROR: native store multi-turn persistence"); exit(1)
             }
+            let toolService = SelfTestRemindersService()
+            let toolTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "store-call", name: "apple_reminders_list", arguments: "{}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "One reminder.", toolCalls: [], finishReason: "stop")],
+            ])
+            let toolRepository = try LocalChatRepository(inMemory: true)
+            let toolStore = ChatStore(
+                config: nil,
+                client: nil,
+                socket: nil,
+                nativeConfig: config,
+                nativeTransport: toolTransport,
+                repository: toolRepository,
+                hasLegacyOWUI: false,
+                nativeEnabledToolIDs: ["apple-reminders"],
+                nativeToolRegistry: NativeToolRegistry(
+                    definitions: NativeRemindersTools.definitions(service: toolService)))
+            await toolStore.connect()
+            toolStore.sendText("List reminders")
+            await waitForGeneration(toolStore)
+            guard let toolConversation = toolStore.selected,
+                  let toolReply = toolConversation.messages.last,
+                  toolReply.text == "One reminder.",
+                  toolReply.toolActivities.first?.state == .succeeded,
+                  try toolRepository.messages(conversationID: toolConversation.id).last?.toolActivities.first?.id == "store-call" else {
+                print("SELFTEST ERROR: native store tool activity progression or persistence"); exit(1)
+            }
             transport.interrupt = true
             store.sendText("Fail")
             await waitForGeneration(store)
@@ -230,7 +649,7 @@ enum SelfTest {
                   unavailable.chatConfigurationError == "database unavailable" else {
                 print("SELFTEST ERROR: native chat proceeded without persistence"); exit(1)
             }
-            print("  native store OK (progressive turns, interrupted exclusion, serialized sends, required persistence)")
+            print("  native store OK (progressive turns and tools, interrupted exclusion, serialized sends, required persistence)")
         } catch {
             print("SELFTEST ERROR: native store \(error)"); exit(1)
         }
@@ -464,7 +883,16 @@ enum SelfTest {
                 id: UUID(), role: .user, text: "hello", createdAt: Date(timeIntervalSince1970: 110), state: .complete)
             var assistant = Message(
                 id: UUID(), role: .assistant, text: "par", createdAt: Date(timeIntervalSince1970: 120),
-                state: .streaming, modelID: "local-model")
+                state: .streaming, modelID: "local-model", toolActivities: [
+                    NativeToolActivity(
+                        id: "persisted-call", toolID: "apple-reminders", name: "apple_reminders_list",
+                        title: "List reminders", round: 1, request: "{}",
+                        result: "{\"reminders\":[]}", state: .succeeded, confirmationRequired: false),
+                    NativeToolActivity(
+                        id: "interrupted-call", toolID: "apple-reminders", name: "apple_reminders_create",
+                        title: "Create reminder", round: 2, request: "{\"title\":\"Milk\"}",
+                        result: nil, state: .pending, confirmationRequired: false),
+                ])
             try repository.saveMessage(user, conversationID: conversationID, ordinal: 0)
             try repository.saveMessage(assistant, conversationID: conversationID, ordinal: 1)
             assistant.text = "partial"
@@ -478,6 +906,9 @@ enum SelfTest {
                   storedConversations[0].updatedAt.timeIntervalSince1970 == 300,
                   storedMessages.count == 2, storedMessages[0].text == "hello",
                   storedMessages[1].text == "partial", storedMessages[1].state == .interrupted,
+                  storedMessages[1].toolActivities.first?.result == "{\"reminders\":[]}",
+                  storedMessages[1].toolActivities.last?.state == .failed,
+                  storedMessages[1].toolActivities.last?.result?.contains("interrupted") == true,
                   storedMessages[1].failure == "The response was interrupted when Vera closed" else {
                 print("SELFTEST ERROR: native local history round-trip"); exit(1)
             }
@@ -487,7 +918,7 @@ enum SelfTest {
                 print("SELFTEST ERROR: native conversation cascade delete"); exit(1)
             }
             try? FileManager.default.removeItem(at: databaseDir)
-            print("  native history OK (migration, CRUD, restart, interrupted reply, cascade)")
+            print("  native history OK (migration, CRUD, restart, durable tool activity, interrupted reply, cascade)")
 
             // vera:ask block parses out of an assistant reply (pure, local).
             let demo = "Sure, happy to help.\n```vera:ask\n{\"question\":\"Pick one\",\"multiSelect\":false,\"options\":[{\"label\":\"A\",\"description\":\"first\"},{\"label\":\"B\",\"description\":\"second\"}]}\n```"

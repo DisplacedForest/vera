@@ -2,6 +2,23 @@ import EventKit
 import Foundation
 import Network
 
+private final class ReminderFetchResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reminders: [EKReminder] = []
+
+    func store(_ reminders: [EKReminder]) {
+        lock.lock()
+        self.reminders = reminders
+        lock.unlock()
+    }
+
+    func load() -> [EKReminder] {
+        lock.lock()
+        defer { lock.unlock() }
+        return reminders
+    }
+}
+
 /// In-app Apple Reminders bridge. Serves the same HTTP contract as the standalone
 /// vera-reminders service (GET /health, /lists, /reminders; POST /reminders; PATCH
 /// /reminders/{id}) so vera-api's proxy and the OWUI tool reach it unchanged. It runs
@@ -82,16 +99,18 @@ final class RemindersBridge: @unchecked Sendable {
         return calendars().first { $0.title.trimmingCharacters(in: .whitespaces).lowercased() == want }
     }
 
-    private func fetch(_ cals: [EKCalendar]) -> [EKReminder] {
+    private func fetch(_ cals: [EKCalendar]) throws -> [EKReminder] {
         let pred = store.predicateForReminders(in: cals.isEmpty ? nil : cals)
         let sem = DispatchSemaphore(value: 0)
-        var out: [EKReminder] = []
+        let result = ReminderFetchResult()
         store.fetchReminders(matching: pred) { items in
-            out = items ?? []
+            result.store(items ?? [])
             sem.signal()
         }
-        sem.wait()
-        return out
+        guard sem.wait(timeout: .now() + 15) == .success else {
+            throw NativeToolError.failed("Apple Reminders did not respond in time")
+        }
+        return result.load()
     }
 
     private func iso(_ c: DateComponents?) -> String? {
@@ -161,8 +180,12 @@ final class RemindersBridge: @unchecked Sendable {
             } else {
                 cals = calendars()
             }
-            let items = fetch(cals).filter { $0.isCompleted == wantCompleted }.map(normalize)
-            return (200, ["ok": true, "reminders": items])
+            do {
+                let items = try fetch(cals).filter { $0.isCompleted == wantCompleted }.map(normalize)
+                return (200, ["ok": true, "reminders": items])
+            } catch {
+                return (500, ["detail": error.localizedDescription])
+            }
 
         case ("POST", "/reminders"):
             guard let list = req.body["list"] as? String, let title = req.body["title"] as? String else {
@@ -268,5 +291,91 @@ final class RemindersBridge: @unchecked Sendable {
         var out = Data(head.utf8)
         out.append(payload)
         conn.send(content: out, completion: .contentProcessed { _ in conn.cancel() })
+    }
+}
+
+extension RemindersBridge: NativeRemindersService {
+    var nativeAuthorization: NativeRemindersAuthorization {
+        switch EKEventStore.authorizationStatus(for: .reminder) {
+        case .fullAccess: return .authorized
+        case .notDetermined: return .notDetermined
+        default: return .denied
+        }
+    }
+
+    func nativeRequestAccess() async -> Bool {
+        await requestAccess()
+    }
+
+    func nativeLists() async throws -> [NativeReminderList] {
+        try requireNativeAccess()
+        return calendars().map { NativeReminderList(id: $0.calendarIdentifier, name: $0.title) }
+    }
+
+    func nativeReminders(list: String?, completed: Bool) async throws -> [NativeReminder] {
+        try requireNativeAccess()
+        let selected: [EKCalendar]
+        if let list {
+            guard let calendar = calendar(named: list) else {
+                throw NativeToolError.failed("No reminders list named '\(list)'")
+            }
+            selected = [calendar]
+        } else {
+            selected = calendars()
+        }
+        return try fetch(selected).filter { $0.isCompleted == completed }.map(nativeReminder)
+    }
+
+    func nativeCreateReminder(
+        list: String, title: String, notes: String?, due: String?
+    ) async throws -> NativeReminder {
+        try requireNativeAccess()
+        guard let calendar = calendar(named: list) else {
+            throw NativeToolError.failed("No reminders list named '\(list)'")
+        }
+        let reminder = EKReminder(eventStore: store)
+        reminder.calendar = calendar
+        reminder.title = sentenceCased(title)
+        reminder.notes = notes
+        if let due {
+            guard let value = components(due) else {
+                throw NativeToolError.invalidArguments("Due must be an ISO 8601 date or date-time")
+            }
+            reminder.dueDateComponents = value
+        }
+        do {
+            try store.save(reminder, commit: true)
+        } catch {
+            throw NativeToolError.failed(error.localizedDescription)
+        }
+        return nativeReminder(reminder)
+    }
+
+    func nativeCompleteReminder(id: String) async throws -> NativeReminder {
+        try requireNativeAccess()
+        guard let reminder = store.calendarItem(withIdentifier: id) as? EKReminder else {
+            throw NativeToolError.failed("No reminder with identifier '\(id)'")
+        }
+        reminder.isCompleted = true
+        do {
+            try store.save(reminder, commit: true)
+        } catch {
+            throw NativeToolError.failed(error.localizedDescription)
+        }
+        return nativeReminder(reminder)
+    }
+
+    private func requireNativeAccess() throws {
+        guard nativeAuthorization == .authorized else { throw NativeToolError.unavailable }
+    }
+
+    private func nativeReminder(_ reminder: EKReminder) -> NativeReminder {
+        NativeReminder(
+            id: reminder.calendarItemIdentifier,
+            title: reminder.title ?? "",
+            notes: reminder.notes,
+            due: iso(reminder.dueDateComponents),
+            completed: reminder.isCompleted,
+            list: reminder.calendar?.title)
     }
 }

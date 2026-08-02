@@ -608,7 +608,10 @@ private struct SaveSection: View {
             status = "Saved. Add a /v1 model endpoint and model id to connect"
             return
         }
-        store.adoptNative(resolved, systemPrompt: config.nativeSettings.systemPrompt)
+        store.adoptNative(
+            resolved,
+            systemPrompt: config.nativeSettings.systemPrompt,
+            enabledToolIDs: config.nativeSettings.enabledToolIDs)
         status = "Saved"
     }
 }

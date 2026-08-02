@@ -217,6 +217,9 @@ final class ConfigStore: ObservableObject {
         var updated = nativeSettings
         if enabled { updated.enabledToolIDs.insert(id) } else { updated.enabledToolIDs.remove(id) }
         nativeSettings = updated
+        if enabled, id == "apple-reminders" {
+            Task { _ = await RemindersBridge.shared.nativeRequestAccess() }
+        }
     }
 
     func beginOnboarding(at step: Int? = nil) {

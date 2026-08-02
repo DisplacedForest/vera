@@ -72,7 +72,7 @@ Vera attaches to Open WebUI as a set of tools (model-invokable capabilities) and
 2. **Functions** — Admin → Functions → create, paste from `services/owui-functions/` (the memory filter; `vision_autosee.py` if you run a vision endpoint), enable them.
 3. **The model** — give your Vera model the tools you imported (model settings → tools) so chat can invoke them.
 
-Open WebUI tools and features do not apply to native text chat. Native chat sends the saved system prompt, selected model, and completed local conversation history directly to `POST /v1/chat/completions`. It sends tool schemas only for enabled tools that the native loop can invoke. The app currently reports connected-service and Reminders tools as unavailable in native chat, so no tool schema is sent for them.
+Open WebUI tools and features do not apply to native text chat. Native chat sends the saved system prompt, selected model, and completed local conversation history directly to `POST /v1/chat/completions`. It uses only the standard OpenAI `tools`, streamed `tool_calls`, assistant tool-call, and `tool` result fields. No Open WebUI fallback or model-specific text convention is used. Endpoints that return text only continue to work as text chat.
 
 If you install the Mac app, its integration store performs the per-integration OWUI wiring (attaching kitchen/media tools when you connect Grocy or Overseerr, etc.) automatically — the manual steps above are only needed once for the base tools.
 
@@ -90,9 +90,13 @@ scripts/deploy.sh    # packages Vera.app, ad-hoc signs it, installs it to /Appli
 
 First launch runs **onboarding**. Give the endpoint a friendly saved name, enter its OpenAI-compatible URL ending in `/v1`, and add an optional API key. The key is stored in the Mac keychain. Discover models, inspect every returned identifier, choose one explicitly, review the local system prompt, and inspect the native tool picker. The guide can be skipped and resumed from Settings, Endpoints. A valid configuration from an earlier release migrates into a saved endpoint and opens the app normally. Native conversations live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history. Existing Open WebUI history is left untouched and is not imported.
 
-Settings, Models keeps the last successful discovery result, shows the active model and whether it was restored, recommended, or chosen by you, and distinguishes an empty response, unusable model entries, authentication failure, network failure, and malformed data. Refresh never clears a known selection just because discovery fails. Settings, Persona edits or resets the prompt used for future turns. Settings, Tools clearly separates callable tools from unavailable integrations and persists enabled choices.
+Settings, Models keeps the last successful discovery result, shows the active model and whether it was restored, recommended, or chosen by you, and distinguishes an empty response, unusable model entries, authentication failure, network failure, and malformed data. Refresh never clears a known selection just because discovery fails. Settings, Persona edits or resets the prompt used for future turns. Settings, Tools clearly separates callable tools from unavailable integrations and persists enabled choices. Apple Reminders starts disabled. Enabling it deliberately requests macOS Reminders access. Denied or unavailable tools are omitted from model requests even when their saved preference remains on.
 
-Native chat is text only in this release. Attachments, voice, native tool invocation, memory retrieval, document knowledge, and Pulse continuation are unavailable in the native chat path. A failed stream keeps any partial assistant text and marks the reply interrupted. It does not resume automatically.
+Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api, the standalone bridge service, or Open WebUI. They are available only during an explicit chat turn. Pulse, dreaming, scheduled work, voice, and other autonomous paths cannot invoke them.
+
+Each call renders as a pending, succeeded, or failed activity chip. Expand it to inspect the JSON request and result. Activity is stored with local conversation history without endpoint credentials or authorization headers. Unknown tools, disabled or unavailable tools, invalid JSON arguments, and calls past the loop limits do not execute. Their bounded error result is returned to the model. A turn stops after four tool rounds or eight total calls. A tool failure, malformed stream, endpoint outage, or exhausted limit keeps received text and activity and marks the assistant turn interrupted when no final answer arrives.
+
+Attachments, voice, memory retrieval, document knowledge, MCP, custom HTTP tools, Vera API tools, and Pulse continuation remain unavailable in the native chat path.
 
 When vera-api is configured, Pulse and the other ambient surfaces continue operating independently. The two opt-in surfaces afterward each live inside the feature they drive:
 
@@ -136,15 +140,18 @@ on a **Mac signed into the iCloud account whose lists Vera should see** — it s
 lists, so items added by Siri on any household device appear and Vera's writes sync back
 to everyone.
 
-**If you run the Vera Mac app, you do not need this service.** The app hosts the bridge
-itself: open Settings, Plugins, and toggle **Apple Reminders** on. That grants the
-permission (a native prompt), points vera-api at the app, and installs the Open WebUI
-tool in one step. It serves while the app is open, which is all reminders need — Vera
-only touches them on an explicit chat ask. `services/vera-reminders` remains as the
-headless reference for deployments with no Mac app: run `scripts/deploy-vera-reminders.sh`
-on a signed-in Mac, approve the one-time prompt, then enable the Apple Reminders
-integration with the bridge URL and install `services/owui-tools/reminders.py` as an
-Open WebUI tool.
+**If you run the Vera Mac app, native chat does not need this service.** Open Settings,
+Tools and enable **Apple Reminders**. The native permission prompt appears, and standard
+OpenAI tool calls then reach EventKit directly inside the app. The separate Apple
+Reminders switch in Settings, Plugins controls optional legacy service wiring and does
+not expose the native chat schema. This path needs neither
+vera-api nor Open WebUI and runs only for an explicit chat ask. Settings, Plugins still
+owns the separate optional wiring for legacy Open WebUI and vera-api use.
+
+`services/vera-reminders` remains the headless reference for deployments with no Mac
+app. Run `scripts/deploy-vera-reminders.sh` on a signed-in Mac, approve the one-time
+prompt, then enable the Apple Reminders integration with the bridge URL and install
+`services/owui-tools/reminders.py` as an Open WebUI tool.
 
 Every satellite env var (models, ports, voices, paths) is documented in `.env.example`'s
 companion-services section; voice installs with one command (`scripts/deploy-vera-voice.sh` —

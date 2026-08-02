@@ -230,7 +230,7 @@ private struct PluginCard: View {
 
             HStack(spacing: 10) {
                 if entry.id == "apple_reminders" {
-                    Text("Runs inside Vera. Toggle on to grant access and connect.")
+                    Text("This switch controls optional legacy service wiring. Enable native chat access separately in Settings, Tools.")
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {

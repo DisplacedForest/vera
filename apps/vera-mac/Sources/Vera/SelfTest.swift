@@ -75,6 +75,22 @@ final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendabl
     }
 }
 
+final class InterruptedNativeToolTransport: NativeChatTransport, @unchecked Sendable {
+    func discoverModels() async throws -> [String] { ["local-model"] }
+
+    func stream(
+        messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
+    ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(NativeChatStreamSnapshot(
+                content: "Partial response", toolCalls: [
+                    NativeChatToolCall(id: "interrupted", name: "apple_reminders_list", arguments: "{}"),
+                ], finishReason: nil))
+            continuation.finish(throwing: NativeToolError.failed("Test transport interruption"))
+        }
+    }
+}
+
 final class SelfTestRemindersService: NativeRemindersService, @unchecked Sendable {
     var authorized = true
     var shouldFail = false
@@ -259,6 +275,25 @@ enum SelfTest {
             guard unknownFinal?.activities.first?.state == .failed,
                   unknownTransport.schemas.first?.isEmpty == true else {
                 print("SELFTEST ERROR: unknown or disabled native tool executed"); exit(1)
+            }
+
+            var interruptedFinal: NativeToolTurnSnapshot?
+            do {
+                for try await snapshot in NativeToolLoop(
+                    transport: InterruptedNativeToolTransport(), registry: registry
+                ).stream(
+                    messages: [NativeChatMessage(role: "user", content: "List reminders")],
+                    model: "local-model", enabledToolIDs: ["apple-reminders"]
+                ) {
+                    interruptedFinal = snapshot
+                }
+                print("SELFTEST ERROR: interrupted native tool stream completed"); exit(1)
+            } catch NativeToolError.failed(let detail) where detail == "Test transport interruption" {
+            }
+            guard interruptedFinal?.content == "Partial response",
+                  interruptedFinal?.activities.first?.state == .failed,
+                  interruptedFinal?.activities.first?.result?.contains("Test transport interruption") == true else {
+                print("SELFTEST ERROR: interrupted native tool remained pending"); exit(1)
             }
 
             let baselineLists = service.listCalls

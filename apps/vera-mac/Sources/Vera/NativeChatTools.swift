@@ -448,28 +448,38 @@ struct NativeToolLoop: Sendable {
                     var callCount = 0
                     for round in 1...(Self.maximumRounds + 1) {
                         var last = NativeChatStreamSnapshot(content: "", toolCalls: [], finishReason: nil)
-                        for try await snapshot in transport.stream(messages: history, model: model, tools: schemas) {
-                            last = snapshot
-                            for call in snapshot.toolCalls {
-                                let definition = definitions[call.name]
-                                let activity = NativeToolActivity(
-                                    id: call.id,
-                                    toolID: definition?.id ?? call.name,
-                                    name: call.name,
-                                    title: definition?.title ?? call.name,
-                                    round: round,
-                                    request: call.arguments,
-                                    result: nil,
-                                    state: .pending,
-                                    confirmationRequired: definition?.confirmation == .required)
-                                if let index = activities.firstIndex(where: { $0.id == call.id }) {
-                                    if activities[index].state == .pending { activities[index] = activity }
-                                } else {
-                                    activities.append(activity)
+                        do {
+                            for try await snapshot in transport.stream(messages: history, model: model, tools: schemas) {
+                                last = snapshot
+                                for call in snapshot.toolCalls {
+                                    let definition = definitions[call.name]
+                                    let activity = NativeToolActivity(
+                                        id: call.id,
+                                        toolID: definition?.id ?? call.name,
+                                        name: call.name,
+                                        title: definition?.title ?? call.name,
+                                        round: round,
+                                        request: call.arguments,
+                                        result: nil,
+                                        state: .pending,
+                                        confirmationRequired: definition?.confirmation == .required)
+                                    if let index = activities.firstIndex(where: { $0.id == call.id }) {
+                                        if activities[index].state == .pending { activities[index] = activity }
+                                    } else {
+                                        activities.append(activity)
+                                    }
                                 }
+                                continuation.yield(NativeToolTurnSnapshot(
+                                    content: Self.join(content, snapshot.content), activities: activities))
                             }
+                        } catch is CancellationError {
+                            throw CancellationError()
+                        } catch {
+                            content = Self.join(content, last.content)
+                            Self.failPending(in: &activities, message: error.localizedDescription)
                             continuation.yield(NativeToolTurnSnapshot(
-                                content: Self.join(content, snapshot.content), activities: activities))
+                                content: content, activities: activities))
+                            throw error
                         }
                         content = Self.join(content, last.content)
                         guard !last.toolCalls.isEmpty else {
@@ -582,6 +592,13 @@ struct NativeToolLoop: Sendable {
                 activities[index].state = .failed
                 activities[index].result = errorJSON(message)
             }
+        }
+    }
+
+    private static func failPending(in activities: inout [NativeToolActivity], message: String) {
+        for index in activities.indices where activities[index].state == .pending {
+            activities[index].state = .failed
+            activities[index].result = errorJSON(message)
         }
     }
 

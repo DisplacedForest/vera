@@ -79,7 +79,7 @@ enum NativeMemorySafety {
         #"(?i)[<\[{(][^>\]})\n]{0,20}(think|analysis|reasoning|scratchpad)[^>\]})\n]{0,20}[>\]})]"#,
         #"(?i)\b(begin|end)\s+(hidden\s+)?(reasoning|analysis|chain[- ]of[- ]thought)\b"#,
         #"(?i)\b(internal reasoning|hidden reasoning|chain[- ]of[- ]thought|private scratchpad)\b"#,
-        #"(?im)^\s*(analysis|reasoning|thoughts|scratchpad)\s*:"#,
+        #"(?im)^\s*(analysis|reasoning|thoughts?|scratchpad)\b"#,
     ]
 
     private static let sensitiveKeys: Set<String> = [
@@ -98,6 +98,7 @@ enum NativeMemorySafety {
         }
         guard let data = value.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) else { return false }
+        if object is [String: Any] || object is [Any] { return true }
         return structuredValueIsSensitive(object)
     }
 
@@ -157,12 +158,24 @@ enum NativeMemorySafety {
             || normalized == "setting"
             || normalized == "settings"
             || normalized == "model"
+            || normalized == "url"
+            || normalized == "uri"
+            || normalized == "host"
+            || normalized == "server"
+            || normalized == "service"
+            || normalized == "provider"
+            || normalized == "options"
+            || normalized == "parameters"
+            || normalized == "temperature"
             || normalized.contains("credential")
             || normalized.hasSuffix("token")
             || normalized.hasSuffix("secret")
             || normalized.contains("apiurl")
             || normalized.contains("baseurl")
             || normalized.contains("endpoint")
+            || normalized.hasSuffix("url")
+            || normalized.hasSuffix("uri")
+            || normalized.hasSuffix("host")
     }
 }
 

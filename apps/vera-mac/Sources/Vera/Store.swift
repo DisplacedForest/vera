@@ -536,6 +536,10 @@ final class ChatStore: ObservableObject {
 
     func requestMemoryChange(_ request: String) {
         let trimmed = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !NativeMemorySafety.containsSensitiveData(trimmed) else {
+            memoryServiceState = .failed("Memory skipped text that looks like a credential or secret.")
+            return
+        }
         guard nativeMemorySettings.enabled, !trimmed.isEmpty,
               let service = nativeMemoryService,
               let memoryRepository = repository as? any NativeMemoryRepository else {
@@ -547,12 +551,62 @@ final class ChatStore: ObservableObject {
             do {
                 let proposals = try await service.proposal(
                     request: trimmed, existing: try memoryRepository.approvedMemories(), now: Date())
-                for proposal in proposals { try memoryRepository.saveProposal(proposal) }
+                try await saveMemoryProposals(
+                    proposals, service: service, repository: memoryRepository)
                 reloadNativeMemory()
             } catch {
                 memoryServiceState = .retrievalUnavailable(error.localizedDescription)
             }
         }
+    }
+
+    func searchPastChatsForMemory() {
+        guard nativeMemorySettings.enabled, nativeMemorySettings.searchPastChats,
+              let service = nativeMemoryService,
+              let memoryRepository = repository as? any NativeMemoryRepository else {
+            memoryServiceState = nativeMemorySettings.enabled ? .setupRequired : .off
+            return
+        }
+        let candidates = conversations.filter { !$0.memoryExcluded }.prefix(12)
+        memoryServiceState = .indexing
+        Task {
+            do {
+                var reviewedTurns = 0
+                for conversation in candidates where reviewedTurns < 12 {
+                    let messages = conversation.messages.isEmpty
+                        ? try repository?.messages(conversationID: conversation.id) ?? []
+                        : conversation.messages
+                    for index in messages.indices where reviewedTurns < 12 {
+                        guard messages[index].role == .user,
+                              messages.indices.contains(index + 1),
+                              messages[index + 1].role == .assistant,
+                              NativeMemoryExtractionPolicy.disposition(
+                                user: messages[index].text, assistant: messages[index + 1],
+                                conversationExcluded: conversation.memoryExcluded) == .eligible else { continue }
+                        let proposals = try await service.proposals(
+                            user: messages[index].text, assistant: messages[index + 1].text,
+                            sourceConversationID: conversation.id,
+                            sourceMessageID: messages[index + 1].id.uuidString,
+                            existing: try memoryRepository.approvedMemories(), now: Date())
+                        try await saveMemoryProposals(
+                            proposals, service: service, repository: memoryRepository)
+                        reviewedTurns += 1
+                    }
+                }
+                reloadNativeMemory()
+            } catch {
+                memoryServiceState = .retrievalUnavailable(error.localizedDescription)
+            }
+        }
+    }
+
+    func openMemorySource(conversationID: String?) {
+        guard let conversationID,
+              conversations.contains(where: { $0.id == conversationID }) else {
+            memoryServiceState = .failed("The source conversation is no longer available on this Mac.")
+            return
+        }
+        select(conversationID)
     }
 
     func acceptMemoryProposal(_ proposal: NativeMemoryProposal, editedDetails: [String]? = nil) {
@@ -583,9 +637,9 @@ final class ChatStore: ObservableObject {
                 target.embedding = nil
                 target.updatedAt = Date()
                 try memoryRepository.saveMemory(
-                    target, decision: proposal.kind == .merge ? .merged : .edited,
+                    target, decision: proposal.kind == .update ? .edited : .merged,
                     note: "Approved memory proposal")
-                if proposal.kind == .merge {
+                if proposal.kind == .merge || proposal.kind == .consolidate {
                     for id in proposal.targetIDs where id != target.id { try memoryRepository.deleteMemory(id) }
                 }
             case .suppress:
@@ -684,7 +738,10 @@ final class ChatStore: ObservableObject {
     private func indexApprovedMemoryIfNeeded() {
         guard nativeMemorySettings.enabled, let service = nativeMemoryService,
               let memoryRepository = repository as? any NativeMemoryRepository else { return }
-        let missing = memoryRecords.filter { $0.status == .approved && $0.embedding == nil && $0.eligible(at: Date()) }
+        let missing = memoryRecords.filter {
+            $0.status == .approved && $0.embedding == nil && $0.eligible(at: Date())
+                && NativeMemorySafety.recordIsSafe($0)
+        }
         guard !missing.isEmpty else { return }
         memoryServiceState = .indexing
         Task {
@@ -699,6 +756,23 @@ final class ChatStore: ObservableObject {
                 }
             }
             reloadNativeMemory()
+        }
+    }
+
+    private func saveMemoryProposals(
+        _ proposals: [NativeMemoryProposal], service: any NativeMemoryServing,
+        repository: any NativeMemoryRepository
+    ) async throws {
+        let existing = try repository.approvedMemories()
+        for proposal in proposals where NativeMemorySafety.proposalIsSafe(proposal) {
+            var reconciled = proposal
+            if proposal.kind == .create,
+               existing.contains(where: { $0.embedding != nil }),
+               let embedding = try? await service.embed(proposal.details.joined(separator: "\n")) {
+                reconciled = NativeMemoryReconciliation.reconcile(
+                    proposal, candidateEmbedding: embedding, existing: existing)
+            }
+            try repository.saveProposal(reconciled)
         }
     }
 
@@ -922,6 +996,9 @@ final class ChatStore: ObservableObject {
                 if memorySettings.enabled {
                     if memorySettings.embeddingsModel.isEmpty || memoryService == nil {
                         memoryServiceState = .setupRequired
+                    } else if NativeMemorySafety.containsSensitiveData(text) {
+                        memoryServiceState = memoryProposals.isEmpty
+                            ? .ready : .pendingReview(memoryProposals.count)
                     } else if let memoryRepository = repository as? any NativeMemoryRepository,
                               let memoryService {
                         do {
@@ -983,7 +1060,8 @@ final class ChatStore: ObservableObject {
                                     sourceConversationID: id,
                                     sourceMessageID: completedAssistant.id.uuidString,
                                     existing: try memoryRepository.approvedMemories(), now: Date())
-                                for proposal in proposals { try memoryRepository.saveProposal(proposal) }
+                                try await self.saveMemoryProposals(
+                                    proposals, service: memoryService, repository: memoryRepository)
                                 reloadNativeMemory()
                             } catch {
                                 memoryServiceState = .retrievalUnavailable(error.localizedDescription)

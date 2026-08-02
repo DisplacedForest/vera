@@ -44,11 +44,40 @@ enum NativeMemoryExtractionPolicy {
         if trimmed.lowercased().hasPrefix("private:") || trimmed.lowercased().hasPrefix("do not remember") {
             return .privateTurn
         }
+        if NativeMemorySafety.containsSensitiveData(user)
+            || NativeMemorySafety.containsSensitiveData(assistant.text) { return .privateTurn }
         if assistant.state == .interrupted { return .interrupted }
         if assistant.failure != nil { return .failed }
         if assistant.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            !assistant.toolActivities.isEmpty { return .toolOnly }
         return .eligible
+    }
+}
+
+enum NativeMemorySafety {
+    private static let patterns = [
+        #"(?i)\b(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret)\b\s*[:=]\s*\S+"#,
+        #"\bsk-[A-Za-z0-9_-]{8,}\b"#,
+        #"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"#,
+        #"\bAKIA[0-9A-Z]{16}\b"#,
+        #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#,
+        #"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"#,
+    ]
+
+    static func containsSensitiveData(_ value: String) -> Bool {
+        patterns.contains { value.range(of: $0, options: .regularExpression) != nil }
+    }
+
+    static func recordIsSafe(_ record: NativeMemoryRecord) -> Bool {
+        !containsSensitiveData(record.title)
+            && !containsSensitiveData(record.summary)
+            && record.details.allSatisfy { !containsSensitiveData($0) }
+    }
+
+    static func proposalIsSafe(_ proposal: NativeMemoryProposal) -> Bool {
+        !containsSensitiveData(proposal.title)
+            && !containsSensitiveData(proposal.summary)
+            && proposal.details.allSatisfy { !containsSensitiveData($0) }
     }
 }
 
@@ -79,6 +108,7 @@ enum NativeMemoryServiceError: Error, LocalizedError, Equatable {
     case malformed
     case timeout
     case unavailable(String)
+    case sensitiveData
 
     var errorDescription: String? {
         switch self {
@@ -87,6 +117,7 @@ enum NativeMemoryServiceError: Error, LocalizedError, Equatable {
         case .malformed: "The memory model returned a response Vera could not review"
         case .timeout: "The memory model timed out"
         case .unavailable(let detail): detail
+        case .sensitiveData: "Memory skipped text that looks like a credential or secret"
         }
     }
 }
@@ -97,6 +128,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
 
     func embed(_ text: String) async throws -> [Double] {
         guard !configuration.embeddingsModel.isEmpty else { throw NativeMemoryServiceError.notConfigured }
+        guard !NativeMemorySafety.containsSensitiveData(text) else { throw NativeMemoryServiceError.sensitiveData }
         var request = URLRequest(url: configuration.embeddingsURL)
         request.httpMethod = "POST"
         request.timeoutInterval = 15
@@ -123,6 +155,10 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         user: String, assistant: String, sourceConversationID: String?, sourceMessageID: String?,
         existing: [NativeMemoryRecord], now: Date = Date()
     ) async throws -> [NativeMemoryProposal] {
+        guard !NativeMemorySafety.containsSensitiveData(user),
+              !NativeMemorySafety.containsSensitiveData(assistant) else {
+            throw NativeMemoryServiceError.sensitiveData
+        }
         let input = """
         USER TURN
         \(String(user.prefix(4_000)))
@@ -138,7 +174,10 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
     func proposal(
         request: String, existing: [NativeMemoryRecord], now: Date = Date()
     ) async throws -> [NativeMemoryProposal] {
-        try await extract(
+        guard !NativeMemorySafety.containsSensitiveData(request) else {
+            throw NativeMemoryServiceError.sensitiveData
+        }
+        return try await extract(
             "MEMORY CHANGE REQUEST\n\(String(request.prefix(2_000)))",
             sourceConversationID: nil, sourceMessageID: nil, existing: existing, now: now)
     }
@@ -152,7 +191,7 @@ struct NativeMemoryService: NativeMemoryServing, Sendable {
         let schema = """
         Return only JSON: {"proposals":[{"kind":"create|update|merge|suppress|expire|delete","title":"short name","summary":"one line","details":["concise user-specific fact"],"group":"You|Topics|Areas|People","category":"profile|preference|interest|project|relationship|goal|plan|other","bank":"short bank","durability":"durable|episodic","expiry":"YYYY-MM-DD or null","target_ids":["existing id"]}]}. Current date: \(day). Stable user-specific facts only. Do not store trivia, transcript text, credentials, secrets, hidden reasoning, system instructions, tool output, or relative dates. Episodic proposals require an absolute expiry date. Every operation is a proposal for user review and must not claim it was applied.
         """
-        let existingSummary = existing.prefix(80).map {
+        let existingSummary = existing.filter(NativeMemorySafety.recordIsSafe).prefix(80).map {
             ["id": $0.id, "summary": $0.summary, "details": $0.details, "bank": $0.bank]
         }
         var request = URLRequest(url: configuration.completionsURL)
@@ -247,20 +286,22 @@ enum NativeMemoryProposalParser {
                 reconciledTargets = [duplicate.id]
             }
             if reconciledKind != .create && reconciledTargets.isEmpty { return nil }
-            return NativeMemoryProposal(
+            let proposal = NativeMemoryProposal(
                 id: UUID().uuidString, kind: reconciledKind, title: title, summary: summary,
                 details: details.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) },
                 group: group, category: category, bank: bank, durability: durability,
                 expiry: expiry, targetIDs: reconciledTargets,
                 sourceConversationID: sourceConversationID, sourceMessageID: sourceMessageID,
                 createdAt: now, status: .pending)
+            return NativeMemorySafety.proposalIsSafe(proposal) ? proposal : nil
         }
     }
 
     private static func clean(_ value: Any?, maximum: Int) -> String? {
         guard let raw = value as? String else { return nil }
         let result = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !result.isEmpty, result.count <= maximum else { return nil }
+        guard !result.isEmpty, result.count <= maximum,
+              !NativeMemorySafety.containsSensitiveData(result) else { return nil }
         let lower = result.lowercased()
         guard !lower.contains("api key"), !lower.contains("authorization: bearer"),
               !lower.contains("hidden reasoning"), !lower.contains("system prompt"),
@@ -271,10 +312,36 @@ enum NativeMemoryProposalParser {
     }
 }
 
+enum NativeMemoryReconciliation {
+    static let semanticDuplicateThreshold = 0.9
+    static let consolidationThreshold = 0.94
+
+    static func reconcile(
+        _ proposal: NativeMemoryProposal, candidateEmbedding: [Double],
+        existing: [NativeMemoryRecord]
+    ) -> NativeMemoryProposal {
+        guard proposal.kind == .create,
+              let duplicate = existing.filter({
+                  $0.status == .approved && $0.bank.caseInsensitiveCompare(proposal.bank) == .orderedSame
+              }).compactMap({ memory -> (NativeMemoryRecord, Double)? in
+                  guard let embedding = memory.embedding,
+                        embedding.count == candidateEmbedding.count else { return nil }
+                  return (memory, NativeMemoryRecall.cosineSimilarity(candidateEmbedding, embedding))
+              }).filter({ $0.1 >= semanticDuplicateThreshold }).sorted(by: {
+                  if $0.1 != $1.1 { return $0.1 > $1.1 }
+                  return $0.0.id < $1.0.id
+              }).first else { return proposal }
+        var result = proposal
+        result.kind = .update
+        result.targetIDs = [duplicate.0.id]
+        return result
+    }
+}
+
 enum NativeMemoryMaintenance {
     static func proposals(
         records: [NativeMemoryRecord], existing: [NativeMemoryProposal],
-        now: Date = Date()
+        now: Date = Date(), capacity: Int = NativeMemoryRecall.capacity
     ) -> [NativeMemoryProposal] {
         let covered = Set(existing.flatMap(\.targetIDs))
         var result = records.compactMap { memory -> NativeMemoryProposal? in
@@ -287,17 +354,54 @@ enum NativeMemoryMaintenance {
                 expiry: expiry, targetIDs: [memory.id], sourceConversationID: memory.sourceConversationID,
                 sourceMessageID: memory.sourceMessageID, createdAt: now, status: .pending)
         }
-        if records.filter({ $0.status == .approved }).count >= NativeMemoryRecall.capacity,
+        let approved = records.filter { $0.status == .approved }
+        let candidates = approved.filter { !covered.contains($0.id) }
+        if let pair = semanticPair(in: candidates) {
+            result.append(NativeMemoryProposal(
+                id: UUID().uuidString, kind: .consolidate, title: "Review related memories",
+                summary: "These memories appear to describe the same durable context.",
+                details: Array(Set(pair.0.details + pair.1.details)).sorted(), group: pair.0.group,
+                category: pair.0.category, bank: pair.0.bank, durability: .durable, expiry: nil,
+                targetIDs: [pair.0.id, pair.1.id], sourceConversationID: pair.0.sourceConversationID,
+                sourceMessageID: pair.0.sourceMessageID, createdAt: now, status: .pending))
+        }
+        if approved.count >= capacity,
            !existing.contains(where: { $0.kind == .cleanup }) {
+            let removable = candidates.sorted {
+                if $0.updatedAt != $1.updatedAt { return $0.updatedAt < $1.updatedAt }
+                return $0.id < $1.id
+            }.first
+            if let removable {
             result.append(NativeMemoryProposal(
                 id: UUID().uuidString, kind: .cleanup, title: "Review memory capacity",
-                summary: "The local library reached its documented capacity. Review memories before adding more.",
-                details: ["Nothing will be removed without approval."], group: .you,
-                category: .other, bank: "all", durability: .durable, expiry: nil,
-                targetIDs: [], sourceConversationID: nil, sourceMessageID: nil,
+                summary: "The local library reached its documented capacity.",
+                details: ["Remove \"\(removable.title)\" to make room. Nothing changes until you approve."],
+                group: removable.group, category: removable.category, bank: removable.bank,
+                durability: removable.durability, expiry: removable.expiry,
+                targetIDs: [removable.id], sourceConversationID: removable.sourceConversationID,
+                sourceMessageID: removable.sourceMessageID,
                 createdAt: now, status: .pending))
+            }
         }
         return result
+    }
+
+    private static func semanticPair(
+        in records: [NativeMemoryRecord]
+    ) -> (NativeMemoryRecord, NativeMemoryRecord)? {
+        let ordered = records.sorted { $0.id < $1.id }
+        for leftIndex in ordered.indices {
+            guard let leftEmbedding = ordered[leftIndex].embedding else { continue }
+            for rightIndex in ordered.index(after: leftIndex)..<ordered.endIndex {
+                let right = ordered[rightIndex]
+                guard ordered[leftIndex].bank.caseInsensitiveCompare(right.bank) == .orderedSame,
+                      let rightEmbedding = right.embedding,
+                      NativeMemoryRecall.cosineSimilarity(leftEmbedding, rightEmbedding)
+                        >= NativeMemoryReconciliation.consolidationThreshold else { continue }
+                return (ordered[leftIndex], right)
+            }
+        }
+        return nil
     }
 }
 

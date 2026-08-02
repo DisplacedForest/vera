@@ -310,7 +310,20 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
             throw NSError(domain: "NativeMemory", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Episodic memory requires an absolute expiry date"])
         }
+        guard NativeMemorySafety.recordIsSafe(memory) else {
+            throw NSError(domain: "NativeMemory", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "Memory cannot store credentials or secrets"])
+        }
         try database.write { db in
+            let exists = try Bool.fetchOne(
+                db, sql: "SELECT EXISTS(SELECT 1 FROM native_memories WHERE id = ?)",
+                arguments: [memory.id]) ?? false
+            let approvedCount = try Int.fetchOne(
+                db, sql: "SELECT COUNT(*) FROM native_memories WHERE status = 'approved'") ?? 0
+            if memory.status == .approved, !exists, approvedCount >= NativeMemoryRecall.capacity {
+                throw NSError(domain: "NativeMemory", code: 4,
+                              userInfo: [NSLocalizedDescriptionKey: "Review the capacity proposal before adding memory"])
+            }
             try Self.writeMemory(memory, db: db)
             try Self.writeChange(
                 NativeMemoryChange(
@@ -323,6 +336,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         guard proposal.durability == .durable || proposal.expiry != nil else {
             throw NSError(domain: "NativeMemory", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "Episodic proposal requires an absolute expiry date"])
+        }
+        guard NativeMemorySafety.proposalIsSafe(proposal) else {
+            throw NSError(domain: "NativeMemory", code: 5,
+                          userInfo: [NSLocalizedDescriptionKey: "Memory proposals cannot store credentials or secrets"])
         }
         let raw = try Self.encode(proposal)
         let targets = try Self.encode(proposal.targetIDs)

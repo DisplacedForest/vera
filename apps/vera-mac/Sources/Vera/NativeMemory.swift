@@ -202,7 +202,7 @@ enum NativeMemoryRecall {
                   bankScope == "all" || record.bank.caseInsensitiveCompare(bankScope) == .orderedSame,
                   let embedding = record.embedding,
                   embedding.count == query.count else { return nil }
-            let score = cosine(query, embedding)
+            let score = cosineSimilarity(query, embedding)
             guard score >= minimumScore else { return nil }
             return NativeMemoryRanked(record: record, score: score)
         }.sorted {
@@ -232,7 +232,8 @@ enum NativeMemoryRecall {
         Set(value.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
     }
 
-    private static func cosine(_ left: [Double], _ right: [Double]) -> Double {
+    static func cosineSimilarity(_ left: [Double], _ right: [Double]) -> Double {
+        guard left.count == right.count, !left.isEmpty else { return 0 }
         let dot = zip(left, right).reduce(0) { $0 + $1.0 * $1.1 }
         let lm = sqrt(left.reduce(0) { $0 + $1 * $1 })
         let rm = sqrt(right.reduce(0) { $0 + $1 * $1 })

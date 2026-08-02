@@ -633,12 +633,55 @@ enum SelfTest {
                 .create, .update, .merge, .suppress, .expire, .delete,
             ]), NativeMemoryProposalParser.parse(
                 "{\"proposals\":[{\"kind\":\"create\",\"title\":\"Tomorrow\",\"summary\":\"Plan tomorrow\",\"details\":[\"Do it tomorrow\"],\"group\":\"Areas\",\"category\":\"plan\",\"bank\":\"personal\",\"durability\":\"durable\",\"expiry\":null,\"target_ids\":[]}]}",
-                sourceConversationID: nil, sourceMessageID: nil, existing: [], now: now).isEmpty else {
+                sourceConversationID: nil, sourceMessageID: nil, existing: [], now: now).isEmpty,
+                  NativeMemoryProposalParser.parse(
+                    "{\"proposals\":[{\"kind\":\"create\",\"title\":\"Credential\",\"summary\":\"OPENAI_API_KEY=sk-1234567890abcdef\",\"details\":[\"Keep this secret\"],\"group\":\"You\",\"category\":\"other\",\"bank\":\"personal\",\"durability\":\"durable\",\"expiry\":null,\"target_ids\":[]}]}",
+                    sourceConversationID: nil, sourceMessageID: nil, existing: [], now: now).isEmpty,
+                  NativeMemorySafety.containsSensitiveData("OPENAI_API_KEY=sk-1234567890abcdef") else {
                 print("SELFTEST ERROR: native memory structured proposal validation"); exit(1)
+            }
+            let similar = NativeMemoryRecord(
+                id: "similar", title: "Drink preference", summary: "Likes natural wine",
+                details: ["The user likes natural wine"], group: .you, category: .preference,
+                bank: "personal", durability: .durable, expiry: nil, status: .approved,
+                embedding: [0.99, 0.01], sourceConversationID: nil, sourceMessageID: nil,
+                createdAt: now.addingTimeInterval(-10), updatedAt: now.addingTimeInterval(-10))
+            let semanticCreate = NativeMemoryProposal(
+                id: "semantic", kind: .create, title: "Wine preference",
+                summary: "Enjoys natural wine", details: ["The user enjoys natural wine"],
+                group: .you, category: .preference, bank: "personal", durability: .durable,
+                expiry: nil, targetIDs: [], sourceConversationID: nil, sourceMessageID: nil,
+                createdAt: now, status: .pending)
+            let reconciled = NativeMemoryReconciliation.reconcile(
+                semanticCreate, candidateEmbedding: [1, 0], existing: [similar])
+            let maintenance = NativeMemoryMaintenance.proposals(
+                records: [approved, similar], existing: [], now: now,
+                capacity: 2)
+            guard reconciled.kind == .update, reconciled.targetIDs == [similar.id],
+                  maintenance.contains(where: { $0.kind == .consolidate && Set($0.targetIDs) == Set([approved.id, similar.id]) }),
+                  maintenance.contains(where: { $0.kind == .cleanup && !$0.targetIDs.isEmpty }) else {
+                print("SELFTEST ERROR: native memory semantic reconciliation or actionable maintenance"); exit(1)
+            }
+            let capacityRepository = try LocalChatRepository(inMemory: true)
+            for index in 0..<NativeMemoryRecall.capacity {
+                var item = approved
+                item.id = "capacity-\(index)"
+                try capacityRepository.saveMemory(item, decision: .accepted, note: "Capacity test")
+            }
+            var overCapacity = approved
+            overCapacity.id = "capacity-overflow"
+            do {
+                try capacityRepository.saveMemory(
+                    overCapacity, decision: .accepted, note: "Capacity test")
+                print("SELFTEST ERROR: native memory capacity was not enforced"); exit(1)
+            } catch let error as NSError where error.domain == "NativeMemory" && error.code == 4 {
             }
             let privateAssistant = Message(role: .assistant, text: "Done", state: .complete)
             guard NativeMemoryExtractionPolicy.disposition(
                     user: "private: do not save this", assistant: privateAssistant,
+                    conversationExcluded: false) == .privateTurn,
+                  NativeMemoryExtractionPolicy.disposition(
+                    user: "password=hunter2", assistant: privateAssistant,
                     conversationExcluded: false) == .privateTurn,
                   NativeMemoryExtractionPolicy.disposition(
                     user: "remember this", assistant: privateAssistant,
@@ -680,11 +723,34 @@ enum SelfTest {
             for _ in 0..<100 where memoryService.extractionCalls == 0 {
                 try? await Task.sleep(nanoseconds: 10_000_000)
             }
-            guard memoryService.embedCalls == 1, memoryService.extractionCalls == 1,
+            guard memoryService.embedCalls == 2, memoryService.extractionCalls == 1,
                   chatTransport.histories.first?.map(\.role) == ["system", "system", "user"],
                   chatTransport.histories.first?[1].content.contains("Favorite drink") == true,
                   try repository.pendingProposals().contains(where: { $0.title == "Meeting preference" }) else {
                 print("SELFTEST ERROR: native memory recall or review-only extraction integration"); exit(1)
+            }
+            var scanSettings = memorySettings
+            scanSettings.searchPastChats = true
+            let extractionsBeforeScan = memoryService.extractionCalls
+            store.updateNativeMemory(settings: scanSettings, service: memoryService)
+            store.searchPastChatsForMemory()
+            for _ in 0..<100 where memoryService.extractionCalls == extractionsBeforeScan {
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            guard memoryService.extractionCalls > extractionsBeforeScan else {
+                print("SELFTEST ERROR: native memory past-chat search"); exit(1)
+            }
+            let sourceConversationID = store.selectedID
+            store.section = .memory
+            store.openMemorySource(conversationID: sourceConversationID)
+            guard store.section == .chat, store.selectedID == sourceConversationID else {
+                print("SELFTEST ERROR: native memory source inspection"); exit(1)
+            }
+            let callsBeforeSecret = memoryService.embedCalls + memoryService.extractionCalls
+            store.requestMemoryChange("OPENAI_API_KEY=sk-1234567890abcdef")
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            guard memoryService.embedCalls + memoryService.extractionCalls == callsBeforeSecret else {
+                print("SELFTEST ERROR: native memory secret sent to optional service"); exit(1)
             }
             let disabledService = SelfTestMemoryService()
             let disabledTransport = SelfTestNativeTransport()

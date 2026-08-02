@@ -118,9 +118,9 @@ struct MemoryView: View {
             HStack(spacing: 12) {
                 MemoryActionCard(
                     icon: "text.magnifyingglass",
-                    title: config.nativeSettings.memory.searchPastChats ? "Past-chat search is on" : "Search past chats",
-                    detail: "Searches completed chats on this Mac and proposes useful facts for review.",
-                    action: { toggle(\.searchPastChats) })
+                    title: config.nativeSettings.memory.searchPastChats ? "Search past chats again" : "Search past chats",
+                    detail: "Scans up to 12 completed local turns and creates proposals for review.",
+                    action: searchPastChats)
                 MemoryActionCard(
                     icon: "sparkles",
                     title: config.nativeSettings.memory.generateFromChats ? "Chat generation is on" : "Generate from chats",
@@ -200,6 +200,15 @@ struct MemoryView: View {
         store.updateNativeMemory(
             settings: config.nativeSettings.memory,
             service: config.nativeMemoryService)
+    }
+
+    private func searchPastChats() {
+        config.updateMemory { $0.searchPastChats = true }
+        try? config.save()
+        store.updateNativeMemory(
+            settings: config.nativeSettings.memory,
+            service: config.nativeMemoryService)
+        store.searchPastChatsForMemory()
     }
 
 }
@@ -333,10 +342,15 @@ private struct MemoryProposalReviewView: View {
             TextEditor(text: $details).font(.system(size: 13)).frame(minHeight: 180)
                 .padding(6).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
             HStack {
-                Text(proposal.sourceConversationID == nil
-                     ? "Requested in Memory"
-                     : "Suggested from a completed local conversation")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                if let source = proposal.sourceConversationID {
+                    Button("Open source conversation") {
+                        store.openMemorySource(conversationID: source)
+                        dismiss()
+                    }
+                } else {
+                    Text("Requested in Memory")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
                 Spacer()
                 Button("Dismiss") { store.dismissMemoryProposal(proposal); dismiss() }
                 Button("Accept edited proposal") {
@@ -357,7 +371,6 @@ private struct MemoryDetailView: View {
     @State private var title: String
     @State private var summary: String
     @State private var details: String
-    @State private var showSource = false
     @State private var confirmDelete = false
 
     init(memory: NativeMemoryRecord) {
@@ -380,9 +393,14 @@ private struct MemoryDetailView: View {
             TextEditor(text: $details).font(.system(size: 13)).frame(minHeight: 180)
                 .padding(6).background(Theme.surface, in: RoundedRectangle(cornerRadius: 8))
             HStack {
-                Button("Source") { showSource.toggle() }
-                if showSource {
-                    Text(sourceLabel).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                if let source = memory.sourceConversationID {
+                    Button("Open source conversation") {
+                        store.openMemorySource(conversationID: source)
+                        dismiss()
+                    }
+                } else {
+                    Text("Created in Memory")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()
                 Button("Delete", role: .destructive) { confirmDelete = true }
@@ -401,10 +419,6 @@ private struct MemoryDetailView: View {
         }
     }
 
-    private var sourceLabel: String {
-        if memory.sourceConversationID != nil { return "Saved from a local conversation" }
-        return "Created in Memory"
-    }
 }
 
 struct NativeMemoryShotSurface: View {
@@ -547,7 +561,7 @@ struct NativeMemoryShotSurface: View {
                 Text("Prefers direct practical answers with clear tradeoffs")
                     .font(.system(size: 12)).padding(12).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Theme.bg, in: RoundedRectangle(cornerRadius: 8))
-                HStack { Text("Source: local conversation").font(.system(size: 10)).foregroundStyle(Theme.textSecondary); Spacer(); Text("Delete").foregroundStyle(.red); Text("Save").foregroundStyle(Theme.accent) }
+                HStack { Text("Open source conversation").font(.system(size: 10)).foregroundStyle(Theme.accent); Spacer(); Text("Delete").foregroundStyle(.red); Text("Save").foregroundStyle(Theme.accent) }
             }.padding(22).frame(width: 560).background(Theme.surface, in: RoundedRectangle(cornerRadius: 14))
         case "memory-clear":
             VStack(alignment: .leading, spacing: 14) {

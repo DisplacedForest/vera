@@ -24,6 +24,8 @@ Semantic recall uses the embeddings model configured in Settings, Memory, at the
 * 8 selected records per turn
 * about 700 memory-context tokens per turn
 * cosine similarity of at least 0.2
+* semantic duplicate comparison at 0.9 similarity
+* reviewable consolidation suggestions at 0.94 similarity within a bank
 * deterministic ties by newest update and then stable record identifier
 * selected bank scope, with `all` as the inclusive scope
 * 1,000 approved records before a capacity-review proposal appears
@@ -33,6 +35,8 @@ The saved system prompt stays first. A clearly delimited block of approved, unex
 If embeddings or extraction is unconfigured, unreachable, unauthorized, malformed, or slow, Vera sends the ordinary chat request without memory and shows an understandable local status. Native streaming, endpoint selection, conversation history, the saved system prompt, the tool loop, Apple Reminders, and tool preferences continue to work.
 
 After an eligible completed turn, the optional extraction model receives only bounded user and assistant turn text plus a bounded summary of existing approved memory. It returns structured create, update, merge, suppress, expire, or delete proposals. Empty, private, excluded, failed, interrupted, or tool-only turns do not create proposals. A conversation can be excluded from memory suggestions from its sidebar menu.
+
+The past-chat search control scans at most 12 eligible completed local turns per run and creates reviewable proposals with direct source-conversation links. Text that matches credential, token, password, private-key, or similar secret patterns is not sent to memory services and cannot be stored as a record or proposal.
 
 ## Legacy behavior and native differences
 
@@ -63,3 +67,5 @@ The native design intentionally differs in these ways:
 The review queue supports accept and dismiss for all proposal types. Accepted creates become approved records and are embedded before recall. Accepted updates and merges replace only the records named in the visible proposal. User edits invalidate the old embedding and reindex the approved text. Delete and suppress decisions remove the record from recall immediately.
 
 Maintenance never performs network work when memory is off or the optional memory service is unavailable. Expired episodic records and capacity pressure create proposals. They do not delete or prune records on their own.
+
+At 1,000 approved records, the local repository rejects another approved create until the user accepts an actionable cleanup or consolidation proposal. The proposal names and links the exact records it would replace or remove.

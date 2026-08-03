@@ -355,7 +355,6 @@ async def _do_run(req: PulseRequest, workflow_definition: dict | None = None, wo
         "style": style, "run_id": workflow_run_id,
         "gates": {"dedup": 0, "freshness": 0, "coherence": 0, "empty": 0, "interest_cap": 0},
         "shipped": {}, "pending_audit": [], "items_by_card": {}, "attempt": 0,
-        "topic_meta": {},
     })
     try:
         await workflow_executor.execute(definition, ctx,
@@ -474,9 +473,11 @@ async def _do_run_all(req: RunAllRequest):
     if not users:
         users = [{"id": store.DEFAULT_USER, "name": None}]
     out = {"ok": True, "users": []}
+    definition = workflow_store.active("pulse")["definition"]
     for u in users:
         r = await _do_run(PulseRequest(user_id=u["id"], user_name=u.get("name"),
-                                       max_cards=req.max_cards, sweep_only=False))
+                                       max_cards=req.max_cards, sweep_only=False),
+                          workflow_definition=definition)
         out["users"].append({"user_id": u["id"], "name": u.get("name"),
                              "injected": r.get("injected", []), "errors": r.get("errors", []),
                              "gates": r.get("gates", {}), "rounds": r.get("rounds", [])})

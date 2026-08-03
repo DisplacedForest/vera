@@ -4,6 +4,17 @@ from . import workflow_executor
 from . import workflow_store
 
 
+def _meta_for(topic, d):
+    meta = topic.get("_wf_meta")
+    if meta:
+        return meta
+    interest = (topic.get("interest") or "").strip()
+    return {"item": {"round": d["triage_state"]["rnd"], "title": topic.get("title"),
+                     "angle": topic.get("angle"), "interest": interest or None},
+            "interest": interest,
+            "record": d.get("record") or {"proposed": [], "injected": [], "skipped": []}}
+
+
 async def _triage_pull(node, ctx):
     from . import pulse as p
     d = ctx.data
@@ -19,10 +30,9 @@ async def _triage_pull(node, ctx):
         if s["buffer"]:
             topic = s["buffer"].pop(0)
             interest = (topic.get("interest") or "").strip()
-            item = {"round": s["rnd"], "title": topic.get("title"),
-                    "angle": topic.get("angle"), "interest": interest or None}
-            d["topic_meta"][id(topic)] = {"item": item, "interest": interest,
-                                          "record": d["record"]}
+            topic["_wf_meta"] = {"item": {"round": s["rnd"], "title": topic.get("title"),
+                                          "angle": topic.get("angle"), "interest": interest or None},
+                                 "interest": interest, "record": d["record"]}
             return [topic]
         rnd = s["rnd"]
         if rnd >= p.PULSE_TRIAGE_ROUNDS:
@@ -54,7 +64,7 @@ async def _gates_run(node, items, ctx):
     out = d["out"]
     passed = []
     for topic in items:
-        meta = d["topic_meta"][id(topic)]
+        meta = _meta_for(topic, d)
         item, interest, record = meta["item"], meta["interest"], meta["record"]
         if interest and d["shipped"].get(interest.lower(), 0) >= p.PULSE_MAX_PER_INTEREST:
             d["gates"]["interest_cap"] += 1
@@ -65,7 +75,6 @@ async def _gates_run(node, items, ctx):
             item.update({"status": "cap", "gate": "interest_cap", "reason": "interest cap",
                          "detail": interest})
             out["items"].append(item)
-            d["topic_meta"].pop(id(topic), None)
             continue
         passed.append(topic)
     ctx.summaries[node["id"]] = {"gates": d["gates"]}
@@ -78,7 +87,8 @@ async def _synthesis_run(node, items, ctx):
     out = d["out"]
     cards = []
     for topic in items:
-        meta = d["topic_meta"].pop(id(topic))
+        meta = _meta_for(topic, d)
+        topic.pop("_wf_meta", None)
         item, interest, record = meta["item"], meta["interest"], meta["record"]
         before = len(out["errors"])
         oc = {}
@@ -126,12 +136,12 @@ async def _claim_audit_run(node, items, ctx):
     from . import pulse as p
     d = ctx.data
     out = d["out"]
+    ctx.summaries[node["id"]] = {"audited": len(d["pending_audit"])}
     try:
         await p._audit_phase(d["pending_audit"], out["errors"], d["items_by_card"])
     finally:
         d["vision_resumed"] = True
         await p._vision(pause=False)
-    ctx.summaries[node["id"]] = {"items": len(out["items"])}
     return items
 
 

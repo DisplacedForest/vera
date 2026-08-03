@@ -219,3 +219,119 @@ def test_node_implementation_modules_reference_no_owui():
         source = open(path).read()
         assert "OWUI_BASE" not in source
         assert "OWUI_KEY" not in source
+
+
+def test_branching_pull_source_graph_is_rejected(stub_types):
+    async def source_pull(node, ctx):
+        return None
+
+    async def noop(node, items, ctx):
+        return items
+
+    stub_types("g.pull", pull=source_pull)
+    stub_types("g.noop", run=noop)
+    definition = {
+        "id": "generic",
+        "nodes": [{"id": "src", "type": "g.pull"}, {"id": "a", "type": "g.noop"},
+                  {"id": "b", "type": "g.noop"}],
+        "edges": [{"from": "src", "to": "a"}, {"from": "src", "to": "b"}],
+    }
+    ctx = workflow_executor.RunContext(definition)
+    with pytest.raises(ValueError, match="single path"):
+        run(workflow_executor.execute(definition, ctx))
+
+
+class _Recorder:
+    def __init__(self):
+        self.rows = {}
+
+    def start_node(self, run_id, node_id, input=None):
+        self.rows[node_id] = {"state": "running", "input": input, "output": None, "error": None}
+        return node_id
+
+    def finish_node(self, node_run_id, state, output=None, error=None, input=None):
+        row = self.rows[node_run_id]
+        row.update({"state": state, "output": output, "error": error})
+        if input is not None:
+            row["input"] = input
+
+
+def test_streaming_failure_finalizes_every_open_row(stub_types):
+    pulls = [[1], None]
+
+    async def source_pull(node, ctx):
+        return pulls.pop(0)
+
+    async def fine(node, items, ctx):
+        return items
+
+    async def broken(node, items, ctx):
+        raise RuntimeError("mid-flow failure")
+
+    stub_types("g.pull", pull=source_pull)
+    stub_types("g.fine", run=fine)
+    stub_types("g.broken", run=broken)
+    definition = {
+        "id": "generic",
+        "nodes": [{"id": "src", "type": "g.pull"}, {"id": "ok", "type": "g.fine"},
+                  {"id": "boom", "type": "g.broken"}],
+        "edges": [{"from": "src", "to": "ok"}, {"from": "ok", "to": "boom"}],
+    }
+    recorder = _Recorder()
+    ctx = workflow_executor.RunContext(definition, run_id="r1")
+    with pytest.raises(RuntimeError, match="mid-flow failure"):
+        run(workflow_executor.execute(definition, ctx, recorder=recorder))
+    assert recorder.rows["boom"]["state"] == "error"
+    assert recorder.rows["src"]["state"] == "incomplete"
+    assert recorder.rows["ok"]["state"] == "incomplete"
+    assert all(row["state"] != "running" for row in recorder.rows.values())
+
+
+def test_source_pull_failure_records_an_error_row(stub_types):
+    async def source_pull(node, ctx):
+        raise RuntimeError("source exploded")
+
+    stub_types("g.pull", pull=source_pull)
+    definition = {"id": "generic", "nodes": [{"id": "src", "type": "g.pull"}], "edges": []}
+    recorder = _Recorder()
+    ctx = workflow_executor.RunContext(definition, run_id="r1")
+    with pytest.raises(RuntimeError, match="source exploded"):
+        run(workflow_executor.execute(definition, ctx, recorder=recorder))
+    assert recorder.rows["src"]["state"] == "error"
+    assert "source exploded" in recorder.rows["src"]["error"]
+
+
+def test_inserted_transform_may_copy_items_between_triage_and_gates(pulse_harness, stub_types):
+    async def copying(node, items, ctx):
+        return [dict(item) for item in items]
+
+    stub_types("stub.transform", run=copying)
+    definition = _with_stub(workflow_store.baseline_definition(),
+                            upstream="triage", downstream="gates")
+    out, record = _tracked_run(definition)
+    assert out["injected"] == ["A"]
+    rows = {row["id"]: row for row in record["nodes"]}
+    assert rows["stub"]["state"] == "ok"
+    assert rows["gates"]["state"] == "ok"
+
+
+def test_claim_audit_reports_real_item_counts(pulse_harness):
+    out, record = _tracked_run()
+    rows = {row["id"]: row for row in record["nodes"]}
+    assert rows["claim_audit"]["output"]["items"] == 1
+    assert rows["claim_audit"]["output"]["audited"] == 1
+
+
+def test_run_all_executes_the_active_definition(pulse_harness, monkeypatch):
+    async def nobody():
+        return []
+
+    monkeypatch.setattr(pulse, "_active_users", nobody)
+    draft = workflow_store.create_draft("pulse")
+    definition = draft["definition"]
+    next(n for n in definition["nodes"] if n["id"] == "cover_art")["config"] = {"style": "photographic"}
+    workflow_store.save_draft(draft["id"], definition)
+    workflow_store.promote(draft["id"])
+    out = run(pulse._do_run_all(pulse.RunAllRequest()))
+    assert out["users"][0]["injected"] == ["A"]
+    assert pulse_harness["research_kwargs"] == [{"style_profile": "photographic"}]

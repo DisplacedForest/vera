@@ -113,6 +113,8 @@ async def execute(definition: dict, ctx: RunContext, recorder=None) -> list:
 
     source = states[ordered[0]["id"]] if ordered[0]["id"] in states else None
     if source is not None and source.impl.get("pull"):
+        if any(len(downstream[nid]) > 1 or len(upstream[nid]) > 1 for nid in downstream):
+            raise ValueError("a workflow with a pull source must be a single path")
         path = [n["id"] for n in ordered]
 
         async def _flow(index: int, items: list):
@@ -126,27 +128,40 @@ async def execute(definition: dict, ctx: RunContext, recorder=None) -> list:
                 _open(st)
                 items = await _invoke(st, items)
 
-        _open(source)
-        while True:
-            batch = await source.impl["pull"](source.node, ctx)
-            if batch is None:
-                break
-            batch = list(batch)
-            source.items_out += len(batch)
-            await _flow(1, batch)
-        _close(source)
-        for pos in range(1, len(path)):
-            st = states[path[pos]]
-            if st.impl["barrier"]:
-                items = st.buffer
-                st.buffer = []
-                _open(st, {"items": len(items)})
-                out = await _invoke(st, items)
-                _close(st)
-                await _flow(pos + 1, out)
-            else:
-                _open(st)
-                _close(st)
+        try:
+            _open(source)
+            while True:
+                try:
+                    batch = await source.impl["pull"](source.node, ctx)
+                except Exception as e:
+                    source.state = "error"
+                    source.error = str(e)
+                    raise
+                if batch is None:
+                    break
+                batch = list(batch)
+                source.items_out += len(batch)
+                await _flow(1, batch)
+            _close(source)
+            for pos in range(1, len(path)):
+                st = states[path[pos]]
+                if st.impl["barrier"]:
+                    items = st.buffer
+                    st.buffer = []
+                    _open(st, {"items": len(items)})
+                    out = await _invoke(st, items)
+                    _close(st)
+                    await _flow(pos + 1, out)
+                else:
+                    _open(st)
+                    _close(st)
+        except Exception:
+            for st in states.values():
+                if st.row is not None:
+                    if st.state == "ok":
+                        st.state = "incomplete"
+                    _close(st)
+            raise
         return []
 
     outputs: dict[str, list] = {}

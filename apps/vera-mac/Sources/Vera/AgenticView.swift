@@ -134,6 +134,7 @@ struct AgenticView: View {
     @StateObject private var activity = ActivityStore()
     @StateObject private var graphStore = GraphStore()
     @StateObject private var pulseRun = PulseRunStore()
+    @StateObject private var pulseWorkflow = PulseWorkflowStore()
     @State private var editing: SchedulerJob?
 
     var body: some View {
@@ -141,7 +142,8 @@ struct AgenticView: View {
             switch store.agenticPane {
             case .canvas:
                 AgenticCanvasView(graphStore: graphStore, sched: sched, activity: activity,
-                                  pulseRun: pulseRun, onEditSchedule: { editing = $0 })
+                                  pulseRun: pulseRun, pulseWorkflow: pulseWorkflow,
+                                  onEditSchedule: { editing = $0 })
             case .activity:
                 AgenticActivityView(activity: activity)
             }
@@ -153,18 +155,21 @@ struct AgenticView: View {
             activity.configure(base: config.veraAPIBase)
             graphStore.configure(base: config.veraAPIBase)
             pulseRun.configure(base: config.veraAPIBase)
+            pulseWorkflow.configure(base: config.veraAPIBase)
             async let s: Void = sched.refresh()
             async let a: Void = activity.refresh()
             async let g: Void = graphStore.refresh()
             async let p: Void = pulseRun.refresh()
-            _ = await (s, a, g, p)
+            async let w: Void = pulseWorkflow.refresh()
+            _ = await (s, a, g, p, w)
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
                 async let s2: Void = sched.refresh()
                 async let a2: Void = activity.refresh()
                 async let g2: Void = graphStore.refresh()
                 async let p2: Void = pulseRun.refresh()
-                _ = await (s2, a2, g2, p2)
+                async let w2: Void = pulseWorkflow.refresh()
+                _ = await (s2, a2, g2, p2, w2)
             }
         }
         .sheet(item: $editing) { job in

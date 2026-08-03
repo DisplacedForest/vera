@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PulseWorkflowNode: Identifiable, Hashable {
     var id: String
@@ -575,19 +576,18 @@ struct PulseWorkflowPalette: View {
             if snapshot {
                 paletteNodeLabel(template, installed: installed)
             } else {
-                Button {
+                paletteNodeLabel(template, installed: installed)
+                .onTapGesture {
                     if let node = store.displayed?.definition.nodes.first(where: { $0.type == template.type }) {
                         store.selectedNodeID = node.id
                     } else {
                         Task { await store.placeNode(template.type, at: CGPoint(x: 360, y: 320)) }
                     }
-                } label: {
-                    paletteNodeLabel(template, installed: installed)
                 }
-                .buttonStyle(.plain)
-                .draggable(template.type)
+                .onDrag { NSItemProvider(object: template.type as NSString) }
                 .help(installed ? "Drag to reposition" : "Drag to add")
-                .disabled(store.phase != .ready || store.busy)
+                .opacity(store.phase == .ready && !store.busy ? 1 : 0.5)
+                .allowsHitTesting(store.phase == .ready && !store.busy)
             }
         }
     }
@@ -708,9 +708,13 @@ struct PulseWorkflowEditor: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8)).padding(14).allowsHitTesting(false)
                     }
                     .frame(width: width, height: height)
-                    .dropDestination(for: String.self) { items, location in
-                        guard let type = items.first, PulseWorkflowNodeTemplate.template(for: type) != nil else { return false }
-                        Task { await store.placeNode(type, at: location) }
+                    .onDrop(of: [UTType.plainText], isTargeted: nil) { providers, location in
+                        guard let provider = providers.first else { return false }
+                        provider.loadObject(ofClass: NSString.self) { object, _ in
+                            guard let type = object as? String,
+                                  PulseWorkflowNodeTemplate.template(for: type) != nil else { return }
+                            Task { @MainActor in await store.placeNode(type, at: location) }
+                        }
                         return true
                     }
                 }

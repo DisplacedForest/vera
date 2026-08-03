@@ -11,7 +11,7 @@ enum Shot {
         let scheme: ColorScheme = appearance == "light" ? .light : .dark
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let store = ChatStore()
-        let size = CGSize(width: 1180, height: 760)
+        let size = view == "agentic-editor" ? CGSize(width: 2048, height: 1100) : CGSize(width: 1180, height: 760)
 
         let content: AnyView
         if view == "voice" {

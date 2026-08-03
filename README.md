@@ -88,6 +88,8 @@ When a monitored situation deserves follow-through (a vein alert, or simply "kee
 
 The Agentic tab opens on a living canvas: every flow Vera runs on her own: briefings, vein runs, grooming, the heartbeat: drawn as a node graph connected to the surfaces it feeds, served by the API as a manifest (`GET /agentic/graph`) so new capabilities appear on the canvas without an app update. Running flows glow, outcomes tint their nodes, recent events travel their edges, and a node that used a tool carries a badge naming it on hover. Clicking a flow opens an inspector with run-now, enable/disable, and plain-English schedule editing; flows with internal stages (the Pulse pipeline, the heartbeat's branches) drill into their own maps with per-stage state from the last run. All of it rides the built-in scheduler: a job tied to a vein or integration does not fire until that vein or integration is enabled, and gated jobs report why they are not running.
 
+Opening Pulse turns the existing app sidebar into a searchable node library and dedicates the main workspace to the connected workflow and selected-node inspector. Nodes can be added, wired, configured, and arranged in a draft. The published flow stays unchanged until that draft is explicitly promoted.
+
 Everything Vera does on her own is also auditable in one place: an Activity feed (`GET /agentic/activity`) merges heartbeat outcomes, scheduled job runs, and autonomous actions into a single newest-first list, rendered as the Activity pane of the Agentic tab. Autonomy is wanted, and it is always visible.
 
 <div align="center"><img src="docs/assets/agentic.png" alt="The Agentic canvas: every autonomous flow, live" width="850"></div>

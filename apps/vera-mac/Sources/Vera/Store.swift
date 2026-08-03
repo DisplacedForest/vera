@@ -9,6 +9,7 @@ final class ChatStore: ObservableObject {
     @Published var section: AppSection = .chat
     @Published var settingsTab: SettingsTab = .connection  // selected Settings tab; deep links set it before opening Settings
     @Published var agenticPane: AgenticPane = .canvas   // which Agentic surface the sidebar shows
+    @Published var agenticFlowID: String?
     @Published var pulseCards: [PulseCard] = []
     @Published var pulseVeins: [PulseVein] = []   // pinned ambient veins, populated from vera-api
     @Published var memories: [MemoryItem] = []

@@ -469,16 +469,9 @@ final class PulseWorkflowStore: ObservableObject {
         ]
         let definition = PulseWorkflowDefinition(id: "pulse", nodes: nodes,
                                                  edges: Array(zip(nodes, nodes.dropFirst())).map { PulseWorkflowEdge(from: $0.id, to: $1.id) },
-                                                 positions: [
-                                                     "triage": PulseWorkflowPoint(x: 110, y: 140),
-                                                     "gates": PulseWorkflowPoint(x: 320, y: 140),
-                                                     "synthesis": PulseWorkflowPoint(x: 530, y: 140),
-                                                     "claim_audit": PulseWorkflowPoint(x: 110, y: 290),
-                                                     "cover_art": PulseWorkflowPoint(x: 320, y: 290),
-                                                     "visual_review": PulseWorkflowPoint(x: 530, y: 290),
-                                                     "cover_retry": PulseWorkflowPoint(x: 215, y: 440),
-                                                     "inject": PulseWorkflowPoint(x: 425, y: 440)
-                                                 ])
+                                                 positions: Dictionary(uniqueKeysWithValues: nodes.enumerated().map {
+                                                     ($0.element.id, PulseWorkflowPoint(x: 105 + CGFloat($0.offset) * 185, y: 310))
+                                                 }))
         store.active = PulseWorkflowVersion(id: "fixture", number: 2, state: "active", definition: definition)
         if editing { store.draft = store.active }
         store.selectedNodeID = "visual_review"
@@ -487,82 +480,45 @@ final class PulseWorkflowStore: ObservableObject {
     }
 }
 
-struct PulseWorkflowEditor: View {
+struct PulseWorkflowPalette: View {
     @ObservedObject var store: PulseWorkflowStore
+    @Binding var searchText: String
     var snapshot = false
-    @State private var searchText = ""
+    var onBack: () -> Void = {}
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: onBack) {
+                Label("All workflows", systemImage: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14).padding(.vertical, 10)
             Divider().overlay(Theme.hairline)
-            switch store.phase {
-            case .loading:
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .unavailable:
-                CanvasStatusCard(icon: "exclamationmark.triangle", title: "Workflow unavailable", note: "Connect vera-api to edit Pulse.")
-            case .ready:
-                HStack(alignment: .top, spacing: 0) {
-                    palette
-                    Divider().overlay(Theme.hairline)
-                    canvas
-                    Divider().overlay(Theme.hairline)
-                    inspector
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .background(Theme.bg)
-    }
-
-    private var toolbar: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "point.3.connected.trianglepath.dotted")
-                .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.accent)
-                .frame(width: 32, height: 32).background(Theme.accent.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Pulse workflow").font(.system(size: 17, weight: .semibold))
-                Text("Build and configure the published pipeline").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
-            }
-            if store.displayed != nil {
-                Text(store.isEditing ? "Draft" : "Active")
-                    .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(store.isEditing ? Theme.accent : Theme.textSecondary)
-                    .padding(.horizontal, 8).padding(.vertical, 4).background((store.isEditing ? Theme.accent : Theme.textSecondary).opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            Spacer()
-            if store.isEditing {
-                if let message = store.validationMessage {
-                    Label(message, systemImage: "circle.dashed")
-                        .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.orange).lineLimit(1)
-                } else {
-                    Label("Ready to save", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.green)
-                }
-                Button("Discard") { store.discardDraft() }.buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
-                Button("Save draft") { Task { await store.save() } }.buttonStyle(.bordered).disabled(!store.canSave)
-                Button("Promote") { Task { await store.promote() } }.buttonStyle(.borderedProminent).disabled(!store.canPromote)
-            } else {
-                Button("Edit workflow") { Task { await store.beginDraft() } }
-                    .buttonStyle(.borderedProminent).disabled(store.busy)
-            }
-        }
-        .padding(.horizontal, 20).padding(.vertical, 11)
-    }
-
-    private var palette: some View {
-        VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Nodes").font(.system(size: 15, weight: .semibold))
-                Text("Drag a node onto the canvas").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                Text("Drag onto the workflow canvas").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
             }
-            searchField
-            if snapshot { paletteList } else { ScrollView { paletteList } }
-            Text("Installed nodes can be dragged to reposition them.")
-                .font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
+            searchField.padding(.horizontal, 12).padding(.bottom, 10)
+            if snapshot {
+                paletteList.padding(.horizontal, 10)
+            } else {
+                ScrollView {
+                    paletteList.padding(.horizontal, 10)
+                }
+            }
+            Text(store.isEditing ? "Drop to add or reposition a node." : "Dropping a node creates a draft first.")
+                .font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(12)
         }
-        .padding(14).frame(width: 246).frame(maxHeight: .infinity, alignment: .topLeading).background(Theme.bg)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.sidebar)
+        .onAppear { searchText = "" }
     }
 
     private var paletteGroups: [String] {
@@ -623,22 +579,23 @@ struct PulseWorkflowEditor: View {
                     if let node = store.displayed?.definition.nodes.first(where: { $0.type == template.type }) {
                         store.selectedNodeID = node.id
                     } else {
-                        Task { await store.placeNode(template.type, at: CGPoint(x: 220, y: 220)) }
+                        Task { await store.placeNode(template.type, at: CGPoint(x: 360, y: 320)) }
                     }
                 } label: {
                     paletteNodeLabel(template, installed: installed)
                 }
                 .buttonStyle(.plain)
-                .onDrag { NSItemProvider(object: template.type as NSString) }
+                .draggable(template.type)
                 .help(installed ? "Drag to reposition" : "Drag to add")
+                .disabled(store.phase != .ready || store.busy)
             }
         }
     }
 
     private func paletteNodeLabel(_ template: PulseWorkflowNodeTemplate, installed: Bool) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: template.icon).font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(graphTint(template.tint)).frame(width: 32, height: 32)
+        HStack(spacing: 9) {
+            Image(systemName: template.icon).font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(graphTint(template.tint)).frame(width: 30, height: 30)
                 .background(graphTint(template.tint).opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 2) {
                 Text(template.label).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
@@ -648,9 +605,71 @@ struct PulseWorkflowEditor: View {
             Image(systemName: installed ? "scope" : "plus")
                 .font(.system(size: 9, weight: .bold)).foregroundStyle(installed ? Theme.textSecondary : Theme.accent)
         }
-        .padding(.horizontal, 9).frame(height: 48).contentShape(Rectangle())
-        .background(Theme.surface.opacity(0.82)).clipShape(RoundedRectangle(cornerRadius: 9))
+        .padding(.horizontal, 8).frame(height: 46).contentShape(Rectangle())
+        .background(Theme.surface.opacity(0.76)).clipShape(RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
+    }
+}
+
+struct PulseWorkflowEditor: View {
+    @ObservedObject var store: PulseWorkflowStore
+    var snapshot = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            toolbar
+            Divider().overlay(Theme.hairline)
+            switch store.phase {
+            case .loading:
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .unavailable:
+                CanvasStatusCard(icon: "exclamationmark.triangle", title: "Workflow unavailable", note: "Connect vera-api to edit Pulse.")
+            case .ready:
+                HStack(alignment: .top, spacing: 0) {
+                    canvas
+                    Divider().overlay(Theme.hairline)
+                    inspector
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(Theme.bg)
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "point.3.connected.trianglepath.dotted")
+                .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.accent)
+                .frame(width: 32, height: 32).background(Theme.accent.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Pulse workflow").font(.system(size: 17, weight: .semibold))
+                Text("Build and configure the published pipeline").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+            }
+            if store.displayed != nil {
+                Text(store.isEditing ? "Draft" : "Active")
+                    .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(store.isEditing ? Theme.accent : Theme.textSecondary)
+                    .padding(.horizontal, 8).padding(.vertical, 4).background((store.isEditing ? Theme.accent : Theme.textSecondary).opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            Spacer()
+            if store.isEditing {
+                if let message = store.validationMessage {
+                    Label(message, systemImage: "circle.dashed")
+                        .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.orange).lineLimit(1)
+                } else {
+                    Label("Ready to save", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.green)
+                }
+                Button("Discard") { store.discardDraft() }.buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+                Button("Save draft") { Task { await store.save() } }.buttonStyle(.bordered).disabled(!store.canSave)
+                Button("Promote") { Task { await store.promote() } }.buttonStyle(.borderedProminent).disabled(!store.canPromote)
+            } else {
+                Button("Edit workflow") { Task { await store.beginDraft() } }
+                    .buttonStyle(.borderedProminent).disabled(store.busy)
+            }
+        }
+        .padding(.horizontal, 20).padding(.vertical, 11)
     }
 
     @ViewBuilder private var canvas: some View {
@@ -912,8 +931,22 @@ struct WorkflowNodeCard: View {
 
 struct PulseWorkflowEditorShot: View {
     @StateObject private var store = PulseWorkflowStore.fixture(editing: true)
+    @State private var searchText = ""
 
     var body: some View {
-        PulseWorkflowEditor(store: store, snapshot: true)
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    VeraMark(size: 18)
+                    Text("Vera").font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                }
+                .padding(.horizontal, 14).frame(height: 42)
+                PulseWorkflowPalette(store: store, searchText: $searchText, snapshot: true)
+            }
+            .frame(width: 248).background(Theme.sidebar)
+            Divider().overlay(Theme.hairline)
+            PulseWorkflowEditor(store: store, snapshot: true)
+        }
     }
 }

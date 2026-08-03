@@ -13,17 +13,13 @@ from .pulse_llm import OWUI_BASE, OWUI_KEY, _request_json
 log = logging.getLogger("vera.pulse")
 
 VERA_IMAGE_BASE = os.environ.get("VERA_IMAGE_BASE", "")          # optional image-gen service; cards skip cover art without it
-VERA_VISION_BASE = os.environ.get("VERA_VISION_BASE", "").rstrip("/")
-VERA_VISION_MODEL = os.environ.get("VERA_VISION_MODEL", "")
-
-
 def _vision_config() -> tuple[str, str]:
     try:
         from . import integrations
         config = integrations.integration("vision_review") or {}
     except Exception:
         config = {}
-    return (config.get("url") or VERA_VISION_BASE).rstrip("/"), config.get("model") or VERA_VISION_MODEL
+    return config.get("url", "").rstrip("/"), config.get("model", "")
 
 
 # Image generation resolves through the integrations registry's 'image_gen' entry

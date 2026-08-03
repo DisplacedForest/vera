@@ -58,3 +58,23 @@ def test_run_records_node_outputs():
     assert [node["id"] for node in run["nodes"]] == [
         "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
     assert next(node for node in run["nodes"] if node["id"] == "cover_art")["output"]["generated"] == 1
+
+
+def test_run_records_the_version_selected_at_start():
+    workflow_store.start_run("pulse", "run-1")
+    draft = workflow_store.create_draft("pulse")
+    definition = draft["definition"]
+    definition["nodes"].insert(-1, {"id": "visual_review", "type": "pulse.visual_review", "label": "Visual review"})
+    definition["nodes"].insert(-1, {"id": "cover_retry", "type": "pulse.cover_retry", "label": "Retry"})
+    definition["edges"] = [edge for edge in definition["edges"] if edge != {"from": "cover_art", "to": "inject"}]
+    definition["edges"].extend([
+        {"from": "cover_art", "to": "visual_review"},
+        {"from": "visual_review", "to": "cover_retry"},
+        {"from": "cover_retry", "to": "inject"},
+    ])
+    workflow_store.save_draft(draft["id"], definition)
+    workflow_store.promote(draft["id"])
+    workflow_store.record_node_runs("run-1", {"items": []})
+    run = workflow_store.latest_run("pulse")
+    assert [node["id"] for node in run["nodes"]] == [
+        "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]

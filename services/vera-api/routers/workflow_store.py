@@ -179,7 +179,13 @@ def record_node_runs(run_id: str, output: dict):
         "cover_retry": {"attempted": sum(1 for item in output.get("items") or [] if item.get("visual_retry"))},
         "inject": {"cards": len(output.get("injected") or [])},
     }
-    nodes = active("pulse")["definition"]["nodes"]
+    with _conn() as conn:
+        row = conn.execute("""SELECT v.definition FROM workflow_runs r
+                              JOIN workflow_versions v ON v.id=r.workflow_version_id
+                              WHERE r.id=?""", (run_id,)).fetchone()
+    if not row:
+        raise ValueError("workflow run not found")
+    nodes = json.loads(row["definition"])["nodes"]
     rows = [
         ("triage", {"rounds": len(output.get("rounds") or []), "proposed": len(output.get("topics") or [])}),
         *[(node["id"], outputs.get(node["id"], {})) for node in nodes if node["id"] != "triage"],

@@ -46,7 +46,28 @@ struct AgenticCanvasView: View {
     @ViewBuilder
     private var header: some View {
         if let id = drilled, let graph = graphStore.graph, let flow = graph.flow(id) {
-            VStack(alignment: .leading, spacing: 6) {
+            if id == "pulse" {
+                HStack(spacing: 10) {
+                    Button {
+                        drilled = nil
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "chevron.left").font(.system(size: 10, weight: .bold))
+                            Text("Agentic").font(.system(size: 13, weight: .medium))
+                        }
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 11).padding(.vertical, 5)
+                        .background(Theme.surface).clipShape(Capsule())
+                        .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    Text("Pulse").font(.system(size: 22, weight: .bold))
+                    Spacer()
+                }
+                .padding(.horizontal, 28).padding(.top, 22).padding(.bottom, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 10) {
                     Button {
                         drilled = nil
@@ -81,6 +102,7 @@ struct AgenticCanvasView: View {
             }
             .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
+            }
         } else {
             HStack(spacing: 10) {
                 Text("Agentic").font(.system(size: 22, weight: .bold))
@@ -154,7 +176,14 @@ struct AgenticCanvasView: View {
                             } else {
                                 OrganismMap(graph: graph, jobs: jobsByID, size: geo.size,
                                             selected: selected, pulses: pulses,
-                                            onSelect: { selected = $0 },
+                                            onSelect: { id in
+                                                if id == "pulse" {
+                                                    drilled = id
+                                                    selected = nil
+                                                } else {
+                                                    selected = id
+                                                }
+                                            },
                                             onDrill: { drilled = $0; selected = nil })
                             }
                         }

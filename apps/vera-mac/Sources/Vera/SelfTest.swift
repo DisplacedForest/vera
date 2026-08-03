@@ -1398,6 +1398,25 @@ enum SelfTest {
                   (workflow.jsonObject()["nodes"] as? [[String: Any]])?[2]["config"] as? [String: Any] != nil else {
                 print("SELFTEST ERROR: pulse workflow parse"); exit(1)
             }
+            let editorStore = PulseWorkflowStore.fixture()
+            editorStore.startConnection(from: "cover_art")
+            guard editorStore.connectionSourceID == nil else {
+                print("SELFTEST ERROR: active workflow connection"); exit(1)
+            }
+            editorStore.draft = editorStore.active
+            editorStore.startConnection(from: "cover_art")
+            editorStore.completeConnection(to: "inject")
+            guard !(editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "inject")) ?? true) else {
+                print("SELFTEST ERROR: visual workflow connection"); exit(1)
+            }
+            editorStore.removeVisualLoop()
+            editorStore.addVisualLoop()
+            let visualEdges = editorStore.draft?.definition.edges ?? []
+            guard visualEdges.contains(PulseWorkflowEdge(from: "cover_art", to: "visual_review")),
+                  visualEdges.contains(PulseWorkflowEdge(from: "visual_review", to: "cover_retry")),
+                  visualEdges.contains(PulseWorkflowEdge(from: "cover_retry", to: "inject")) else {
+                print("SELFTEST ERROR: visual workflow insertion"); exit(1)
+            }
             print("  pulse workflow OK (editable node graph + typed controls)")
 
             // Config file round-trip on a temp path: write → read preserves strings + unknown keys.

@@ -1425,7 +1425,8 @@ enum SelfTest {
             editorStore.completeConnection(to: "visual_review")
             editorStore.startConnection(from: "visual_review")
             editorStore.completeConnection(to: "cover_retry")
-            guard editorStore.validationMessage == nil else {
+            guard editorStore.validationMessage == nil,
+                  editorStore.draft?.definition.edges == editorStore.draft?.definition.expectedEdges else {
                 print("SELFTEST ERROR: visual workflow completion"); exit(1)
             }
             let nodeCount = editorStore.draft?.definition.nodes.count

@@ -139,13 +139,25 @@ struct PulseWorkflowDefinition: Hashable {
         if hasVisualReview != hasCoverRetry {
             return hasVisualReview ? "Add One retry to complete the visual path." : "Add Visual review to complete the visual path."
         }
-        let orderedTypes = PulseWorkflowNodeTemplate.all.filter { $0.required || hasVisualLoop }.map(\.type)
-        let orderedNodes = orderedTypes.compactMap { type in nodes.first { $0.type == type } }
-        let expectedEdges = Array(zip(orderedNodes, orderedNodes.dropFirst())).map { PulseWorkflowEdge(from: $0.id, to: $1.id) }
-        if Set(edges) != Set(expectedEdges) || edges.count != expectedEdges.count {
+        if edges != expectedEdges {
             return "Connect every node in the approved Pulse order."
         }
         return nil
+    }
+
+    var expectedEdges: [PulseWorkflowEdge] {
+        let orderedTypes = PulseWorkflowNodeTemplate.all.filter { $0.required || hasVisualLoop }.map(\.type)
+        let orderedNodes = orderedTypes.compactMap { type in nodes.first { $0.type == type } }
+        return Array(zip(orderedNodes, orderedNodes.dropFirst())).map { PulseWorkflowEdge(from: $0.id, to: $1.id) }
+    }
+
+    mutating func normalizeEdgeOrder() {
+        let order = Dictionary(uniqueKeysWithValues: nodes.enumerated().map { ($0.element.id, $0.offset) })
+        edges.sort {
+            let left = order[$0.from] ?? Int.max
+            let right = order[$1.from] ?? Int.max
+            return left == right ? (order[$0.to] ?? Int.max) < (order[$1.to] ?? Int.max) : left < right
+        }
     }
 
     func jsonObject() -> [String: Any] {
@@ -387,6 +399,7 @@ final class PulseWorkflowStore: ObservableObject {
         var next = draft
         next.definition.edges.removeAll { $0.from == source || $0.to == nodeID }
         next.definition.edges.append(PulseWorkflowEdge(from: source, to: nodeID))
+        next.definition.normalizeEdgeOrder()
         self.draft = next
         connectionSourceID = nil
         note = "Connection added."

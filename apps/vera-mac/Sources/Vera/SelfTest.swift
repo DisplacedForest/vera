@@ -1527,6 +1527,15 @@ enum SelfTest {
                   PulseWorkflowRun.classify(pinnedObject).unreadable == false else {
                 print("SELFTEST ERROR: workflow run classification"); exit(1)
             }
+            let brokenVersion = PulseWorkflowRun.classify(["id": "r3", "state": "ok", "started_at": 1754250000,
+                                                          "version": ["broken": true]])
+            let nullVersion = PulseWorkflowRun.classify(["id": "r4", "state": "ok", "started_at": 1754250000,
+                                                        "version": NSNull()])
+            guard brokenVersion == (nil, true),
+                  nullVersion.unreadable == false,
+                  nullVersion.run?.version == nil else {
+                print("SELFTEST ERROR: workflow run version strictness"); exit(1)
+            }
             let evidence = fixtureRun.cardEvidence
             guard evidence.count == 3,
                   evidence[1].cardID == "card-2",

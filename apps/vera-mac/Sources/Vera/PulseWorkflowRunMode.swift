@@ -147,12 +147,17 @@ struct PulseWorkflowRun: Hashable {
               let id = object["id"] as? String,
               let state = object["state"] as? String,
               let startedAt = workflowEpoch(object["started_at"]) else { return nil }
+        var version: PulseWorkflowVersion?
+        if let versionRaw = object["version"], !(versionRaw is NSNull) {
+            guard let parsed = PulseWorkflowVersion.parse(versionRaw) else { return nil }
+            version = parsed
+        }
         let nodes = (object["nodes"] as? [Any] ?? []).compactMap(PulseWorkflowNodeRun.parse)
         let visual = (object["visual_runs"] as? [Any] ?? []).compactMap(PulseWorkflowVisualRun.parse)
         return PulseWorkflowRun(id: id, state: state, startedAt: startedAt,
                                 finishedAt: workflowEpoch(object["finished_at"]),
                                 error: object["error"] as? String,
-                                version: object["version"].flatMap(PulseWorkflowVersion.parse),
+                                version: version,
                                 nodes: nodes, visualRuns: visual)
     }
 

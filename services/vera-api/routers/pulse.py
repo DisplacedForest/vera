@@ -27,7 +27,9 @@ from . import pulse_images
 from . import pulse_gates
 from . import pulse_synthesis
 from . import pulse_audit
+from . import workflow_executor
 from . import workflow_store
+from . import pulse_nodes
 from .websearch import search as web_search
 from .pulse_llm import (
     OWUI_BASE, OWUI_KEY, VERA_BASE, MODEL, TZ,
@@ -313,147 +315,6 @@ def _workflow_node(workflow_definition, node_type):
     return next((node for node in (workflow_definition or {}).get("nodes", []) if node.get("type") == node_type), {})
 
 
-async def _run_novelty_loop(req, out, user_id, who, persona, all_interests, memories, target, workflow_definition=None, workflow_run_id=None):
-    # 2) the novelty loop: triage -> per-topic research (deep-research -> illustrate ->
-    # synthesize -> cover art -> inject; the per-topic pipeline lives in research_topic() so
-    # the heartbeat shares it). When the dedup gate kills proposals, re-triage — up to
-    # PULSE_TRIAGE_ROUNDS — until at least PULSE_MIN_CARDS novel cards land. The feed corpus
-    # seeds the exclusion list (the gate stays the guarantee; exclusions save wasted
-    # triage->gate round trips), and every proposal joins it so a retry can't re-pitch a
-    # rewording of a topic the gate just killed.
-    exclusions = [c["title"] for c in _recent_for_user(user_id)]
-    out["rounds"] = []
-    out["items"] = []  # structured per-candidate outcomes for the drill-in (additive to rounds/gates)
-    items_by_card = {}  # card id -> its item, so the audit phase can stamp per-card verdicts
-    attempt = 0  # running per-topic index across rounds (rotates cover-art styles)
-    gates = {"dedup": 0, "freshness": 0, "coherence": 0, "empty": 0, "interest_cap": 0}
-    shipped_per_interest = {}  # lowercased interest -> cards shipped this run
-    pending_audit = []  # (card, full sources) — audited in one batch after the cover loop
-
-    style_profile = (_workflow_node(workflow_definition, "pulse.cover_art").get("config") or {}).get("style", "rotating")
-    await _vision(pause=True)  # ask the image service to make room for cover-gen (restored below)
-    try:
-        for rnd in range(PULSE_TRIAGE_ROUNDS):
-            want = target - len(out["injected"])
-            if want <= 0:
-                break
-            try:
-                topics = await _select_topics(rnd, who=who, persona=persona,
-                                              all_interests=all_interests, memories=memories,
-                                              exclusions=exclusions, want=want,
-                                              recent_texts=exclusions)
-            except Exception as e:
-                out["errors"].append(f"triage round {rnd + 1}: {e}")
-                break
-            if not topics:
-                break  # nothing genuinely new left to propose
-            record = {"proposed": [t.get("title") for t in topics], "injected": [], "skipped": []}
-            exclusions.extend(t["title"] for t in topics if t.get("title"))
-            out["topics"].extend(record["proposed"])
-            for t in topics:
-                if len(out["injected"]) >= target:
-                    break
-                interest = (t.get("interest") or "").strip()
-                item = {"round": rnd + 1, "title": t.get("title"), "angle": t.get("angle"),
-                        "interest": interest or None}
-                if interest and shipped_per_interest.get(interest.lower(), 0) >= PULSE_MAX_PER_INTEREST:
-                    gates["interest_cap"] += 1
-                    out["errors"].append(
-                        f"skipped (interest cap): {t.get('title')} — '{interest}' already shipped this run")
-                    out["skipped"].append(t.get("title"))
-                    record["skipped"].append(t.get("title"))
-                    item.update({"status": "cap", "gate": "interest_cap", "reason": "interest cap",
-                                 "detail": interest})
-                    out["items"].append(item)
-                    continue
-                before = len(out["errors"])
-                oc = {}
-                try:
-                    research_args = {"who": who, "user_id": user_id, "idx": attempt,
-                                     "provenance": "scheduled", "errors": out["errors"],
-                                     "defer_audit": True, "outcome": oc}
-                    if style_profile != "rotating":
-                        research_args["style_profile"] = style_profile
-                    card = await research_topic(t, **research_args)
-                    if card:
-                        pending_audit.append((card, card.pop("_corpus", [])))
-                        if t.get("seed_node_id"):
-                            from . import learn_store
-                            learn_store.record_card(card["id"], [t["seed_node_id"]],
-                                                    t.get("scores") or {}, int(time.time()))
-                        out["injected"].append(card["title"])
-                        record["injected"].append(card["title"])
-                        item.update({"title": card["title"], "status": "injected",
-                                     "card_id": card["id"],
-                                     "cover_generated": oc.get("cover_generated", False),
-                                     "audit": None})  # filled by the audit phase below
-                        items_by_card[card["id"]] = item
-                        if interest:
-                            shipped_per_interest[interest.lower()] = \
-                                shipped_per_interest.get(interest.lower(), 0) + 1
-                            _stamp_interest(interest)
-                    else:
-                        gates[_gate_kind(out["errors"][before:])] += 1
-                        out["skipped"].append(t.get("title"))  # a gate fired or synthesis was empty
-                        record["skipped"].append(t.get("title"))
-                        item.update({"status": "killed", "gate": oc.get("gate"),
-                                     "reason": oc.get("reason"), "detail": oc.get("detail")})
-                    out["items"].append(item)
-                except Exception as e:
-                    out["errors"].append(f"{t.get('title')}: {e}")
-                    item.update({"status": "error", "reason": str(e)})
-                    out["items"].append(item)
-                attempt += 1
-            out["rounds"].append(record)
-        # Batched claim audit, strictly after the cover loop and before vision resumes: the
-        # image model is done, so the (possibly woken) audit model never runs alongside it.
-        await _audit_phase(pending_audit, out["errors"], items_by_card)
-    finally:
-        await _vision(pause=False)  # bring the vision model back up after the image batch
-    workflow_definition = workflow_definition or {"nodes": []}
-    review_node = _workflow_node(workflow_definition, "pulse.visual_review")
-    retry_node = _workflow_node(workflow_definition, "pulse.cover_retry")
-    if review_node:
-        threshold = (review_node.get("config") or {}).get("threshold", 0.8)
-        max_attempts = (retry_node.get("config") or {}).get("max_attempts", 1) if retry_node else 0
-        for item in out["items"]:
-            if item.get("status") != "injected" or not item.get("card_id"):
-                continue
-            card = store.get_card(item["card_id"])
-            if not card or not card.get("image_url"):
-                continue
-            node_run = workflow_store.start_node(workflow_run_id, review_node["id"]) if workflow_run_id else None
-            review = await pulse_images.review_cover(card["image_url"], card["title"], card["summary"], card["body"])
-            item["visual_review"] = review or {"accept": True, "reason": "vision unavailable"}
-            accepted = not review or (review["accept"] and review.get("score", 1) >= threshold)
-            if node_run:
-                workflow_store.finish_node(node_run, "ok", {"card_id": card["id"], "review": item["visual_review"], "threshold": threshold})
-            if workflow_run_id:
-                workflow_store.record_visual_run(workflow_run_id, card["id"], card["image_url"], item["visual_review"], 0,
-                                                 "accepted" if accepted else "retrying")
-            if not accepted and max_attempts:
-                retry_run = workflow_store.start_node(workflow_run_id, retry_node["id"]) if workflow_run_id else None
-                await _vision(pause=True)
-                try:
-                    image_url, tint, generated = await make_cover(card["title"], card["summary"], card["body"],
-                                                                  {"title": card["title"]}, [], 1_000_000 + attempt, out["errors"], style_profile)
-                finally:
-                    await _vision(pause=False)
-                if generated:
-                    card["image_url"] = image_url
-                    card["tint"] = tint
-                    store.insert_card(card)
-                    item["visual_retry"] = {"attempted": True, "published": True}
-                else:
-                    item["visual_retry"] = {"attempted": True, "published": False}
-                if retry_run:
-                    workflow_store.finish_node(retry_run, "ok" if generated else "warning", {"card_id": card["id"], "published": generated})
-                if workflow_run_id:
-                    workflow_store.record_visual_run(workflow_run_id, card["id"], image_url if generated else card["image_url"],
-                                                     item["visual_review"], 1, "retried" if generated else "retry_failed")
-    return gates
-
-
 def _finalize_run(out, gates, target):
     out["gates"] = gates
     if len(out["injected"]) < target and any(gates.values()):
@@ -471,8 +332,6 @@ def _finalize_run(out, gates, target):
 
 
 async def _do_run(req: PulseRequest, workflow_definition: dict | None = None, workflow_run_id: str | None = None):
-    """The full synchronous Pulse pipeline (sweep -> triage -> per-topic research/inject). Returns the
-    result dict. The HTTP endpoint runs this in the background so no caller holds a long request open."""
     out = {"ok": True, "topics": [], "injected": [], "skipped": [], "expired": 0, "errors": []}
 
     # 0) cleanup sweep (best-effort): expire untouched prior-day cards in the store
@@ -484,11 +343,26 @@ async def _do_run(req: PulseRequest, workflow_definition: dict | None = None, wo
     if req.sweep_only:
         return out
 
-    workflow_definition = workflow_definition or {"nodes": []}
     user_id, who, persona, all_interests, memories = await _build_run_context(req, out)
     target = min(req.max_cards or PULSE_MAX_CARDS, PULSE_MAX_CARDS)
-    gates = await _run_novelty_loop(req, out, user_id, who, persona, all_interests, memories, target, workflow_definition, workflow_run_id)
-    return _finalize_run(out, gates, target)
+    definition = workflow_definition or workflow_store.baseline_definition()
+    style = (_workflow_node(definition, "pulse.cover_art").get("config") or {}).get("style", "rotating")
+    out["rounds"] = []
+    out["items"] = []
+    ctx = workflow_executor.RunContext(definition, run_id=workflow_run_id, data={
+        "req": req, "out": out, "user_id": user_id, "who": who, "persona": persona,
+        "interests": all_interests, "memories": memories, "target": target,
+        "style": style, "run_id": workflow_run_id,
+        "gates": {"dedup": 0, "freshness": 0, "coherence": 0, "empty": 0, "interest_cap": 0},
+        "shipped": {}, "pending_audit": [], "items_by_card": {}, "attempt": 0,
+    })
+    try:
+        await workflow_executor.execute(definition, ctx,
+                                        recorder=workflow_store if workflow_run_id else None)
+    finally:
+        if ctx.data.get("triage_state") and not ctx.data.get("vision_resumed"):
+            await _vision(pause=False)
+    return out
 
 
 # ---- async run trigger + status (the scheduler triggers, then polls run_status to completion) ----
@@ -526,7 +400,6 @@ async def _runner(fn, req, run_id, kind):
                               "rounds": out.get("rounds", []) if kind != "run_all" else [],
                               "items": out.get("items", []) if kind != "run_all" else []})
         if tracked:
-            workflow_store.record_node_runs(run_id, out)
             workflow_store.finish_run(run_id, "ok", out)
     except Exception as e:
         store.set_run_status({"run_id": run_id, "state": "error", "kind": kind, "started_at": started,
@@ -600,9 +473,11 @@ async def _do_run_all(req: RunAllRequest):
     if not users:
         users = [{"id": store.DEFAULT_USER, "name": None}]
     out = {"ok": True, "users": []}
+    definition = workflow_store.active("pulse")["definition"]
     for u in users:
         r = await _do_run(PulseRequest(user_id=u["id"], user_name=u.get("name"),
-                                       max_cards=req.max_cards, sweep_only=False))
+                                       max_cards=req.max_cards, sweep_only=False),
+                          workflow_definition=definition)
         out["users"].append({"user_id": u["id"], "name": u.get("name"),
                              "injected": r.get("injected", []), "errors": r.get("errors", []),
                              "gates": r.get("gates", {}), "rounds": r.get("rounds", [])})

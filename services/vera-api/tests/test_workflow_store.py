@@ -49,17 +49,18 @@ def test_draft_rejects_an_unpaired_review_node():
         workflow_store.save_draft(draft["id"], definition)
 
 
-def test_run_records_node_outputs():
+def test_run_records_live_node_rows():
     workflow_store.start_run("pulse", "run-1")
-    output = {"rounds": [{"proposed": ["a"]}], "topics": ["a"], "injected": ["a"],
-              "gates": {"dedup": 0}, "items": [{"cover_generated": True}]}
-    workflow_store.record_node_runs("run-1", output)
-    workflow_store.finish_run("run-1", "ok", output)
+    node_run = workflow_store.start_node("run-1", "triage", input={"items": 0})
+    workflow_store.finish_node(node_run, "ok", {"items": 3, "rounds": 1}, input={"items": 0})
+    workflow_store.finish_run("run-1", "ok", {"injected": ["a"]})
     run = workflow_store.latest_run("pulse")
     assert run["state"] == "ok"
-    assert [node["id"] for node in run["nodes"]] == [
-        "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
-    assert next(node for node in run["nodes"] if node["id"] == "cover_art")["output"]["generated"] == 1
+    [row] = run["nodes"]
+    assert row["id"] == "triage" and row["state"] == "ok"
+    assert row["input"] == {"items": 0}
+    assert row["output"] == {"items": 3, "rounds": 1}
+    assert row["started_at"] and row["finished_at"] and row["started_at"] <= row["finished_at"]
 
 
 def test_run_records_the_version_selected_at_start():
@@ -75,10 +76,11 @@ def test_run_records_the_version_selected_at_start():
         {"from": "cover_retry", "to": "inject"},
     ])
     workflow_store.save_draft(draft["id"], definition)
-    workflow_store.promote(draft["id"])
-    workflow_store.record_node_runs("run-1", {"items": []})
+    promoted = workflow_store.promote(draft["id"])
     run = workflow_store.latest_run("pulse")
-    assert [node["id"] for node in run["nodes"]] == [
+    assert run["workflow_version_id"] != promoted["id"]
+    pinned = workflow_store.get_version(run["workflow_version_id"])
+    assert [node["id"] for node in pinned["definition"]["nodes"]] == [
         "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
 
 
@@ -98,15 +100,6 @@ def test_visual_evidence_keeps_each_card_attempt():
     workflow_store.record_visual_run("run-1", "card-1", "two", {"accept": False}, 1, "retried")
     workflow_store.finish_run("run-1", "ok", {})
     assert [item["retry_count"] for item in workflow_store.latest_run("pulse")["visual_runs"]] == [0, 1]
-
-
-def test_node_evidence_is_not_replaced_by_summary_rows():
-    workflow_store.start_run("pulse", "run-1")
-    node_run = workflow_store.start_node("run-1", "cover_art")
-    workflow_store.finish_node(node_run, "ok", {"card_id": "card-1"})
-    workflow_store.record_node_runs("run-1", {"items": [{"cover_generated": True}]})
-    run = workflow_store.latest_run("pulse")
-    assert next(node for node in run["nodes"] if node["id"] == "cover_art")["output"] == {"card_id": "card-1"}
 
 
 def test_malformed_nodes_are_a_controlled_bad_request():

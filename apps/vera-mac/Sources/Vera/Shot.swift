@@ -28,6 +28,19 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "pulse-detail-opening" {
+            content = AnyView(
+                ShotDetailView(card: Self.continuationMock(), continuation: .opening)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
+        } else if view == "pulse-detail-error" {
+            content = AnyView(
+                ShotDetailView(card: Self.continuationMock(),
+                               continuation: .failed("This Pulse card is no longer available."))
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "blocks" {
             let demo = """
             Here's how Openda's output stacks up, and why the Juventus dip is system, not talent. [1]
@@ -468,10 +481,24 @@ private struct ShotVeinConfigureView: View {
     }
 }
 
+extension Shot {
+    static func continuationMock() -> PulseCard {
+        var card = PulseCard.deepMock()
+        card.body = """
+        I'm surfacing this because Ashvale's entire summer hinges on one number, and it happens to be a club record. [1]
+
+        Joe Carter is being lined up as potentially the most expensive sale in the club's history [1], with reported interest pushing toward the £70m mark after a breakout campaign in midfield. [2]
+        """
+        card.inlineImages = []
+        return card
+    }
+}
+
 /// Render-safe mirror of the Pulse article detail (no ScrollView / Markdown, which ImageRenderer
 /// can't draw) — uses the same block model + citation chips / inline images / sources row.
 struct ShotDetailView: View {
     let card: PulseCard
+    var continuation: ChatStore.PulseContinuationState? = nil
     private var blocks: [PulseBlock] {
         pulseBlocks(PulseMarkers.stripSourcesSection(card.body), images: card.inlineImages)
     }
@@ -498,6 +525,27 @@ struct ShotDetailView: View {
                     }
                 }
                 if !card.sourceList.isEmpty { SourcesRow(sources: card.sourceList) }
+                HStack(spacing: 8) {
+                    if continuation == .opening {
+                        Image(systemName: "circle.dotted")
+                        Text("Opening…")
+                    } else {
+                        Image(systemName: "bubble.left")
+                        Text("Continue in chat")
+                    }
+                }
+                .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .background(Theme.surface).clipShape(Capsule())
+                .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
+                .opacity(continuation == .opening ? 0.7 : 1)
+                if case .failed(let reason) = continuation {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.circle")
+                        Text(reason)
+                    }
+                    .font(.system(size: 12)).foregroundStyle(Color.orange)
+                }
             }
             .padding(24).frame(maxWidth: 720, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
             Spacer()

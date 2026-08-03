@@ -80,8 +80,8 @@ struct PulseView: View {
             if let c = detail {
                 PulseDetailView(card: c, token: store.apiToken,
                                 onClose: { store.pulseDetail = nil },
-                                onContinue: { store.pulseDetail = nil; store.openPulseInChat(c) },
-                                canContinue: false, canBookmark: false)
+                                onContinue: { store.openPulseInChat(c) },
+                                canBookmark: false)
                     .transition(.opacity)
                     .zIndex(1)
             }
@@ -476,8 +476,8 @@ struct PulseVeinView: View {
             if let c = detail {
                 PulseDetailView(card: c, token: store.apiToken,
                                 onClose: { detail = nil },
-                                onContinue: { detail = nil; store.openPulseInChat(c) },
-                                canContinue: false, canBookmark: false)
+                                onContinue: { store.openPulseInChat(c, onOpened: { detail = nil }) },
+                                canBookmark: false)
                     .transition(.opacity).zIndex(1)
             }
         }

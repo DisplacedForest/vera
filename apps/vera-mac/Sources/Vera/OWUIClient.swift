@@ -10,6 +10,19 @@ func stringifyAttr(_ v: Any) -> String {
 }
 
 /// Decode one polymorphic grooming snapshot (belief | entity | type) from the change-set.
+enum PulseFeedResult: Sendable {
+    case success(cards: [PulseCard], rawIDs: Set<String>)
+    case unconfigured
+    case transport
+    case malformed
+}
+
+protocol PulseFeedProviding: Sendable {
+    func pulseFeed() async -> PulseFeedResult
+}
+
+extension OWUIClient: PulseFeedProviding {}
+
 func parseGroomSnapshot(_ d: [String: Any]) -> GroomSnapshot {
     var s = GroomSnapshot(kind: d["kind"] as? String ?? "belief", id: d["id"] as? String ?? "")
     s.topic = d["topic"] as? String ?? ""
@@ -306,11 +319,22 @@ struct OWUIClient: Sendable {
 
     /// The Pulse feed, served by vera-api (not an OWUI folder). Decodes clean JSON → PulseCard.
     func fetchPulseCards() async -> [PulseCard] {
-        guard let url = veraAPI("/pulse/cards"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let arr = obj["cards"] as? [[String: Any]] else { return [] }
-        return arr.compactMap { c in
+        if case .success(let cards, _) = await pulseFeed() { return cards }
+        return []
+    }
+
+    func pulseFeed() async -> PulseFeedResult {
+        guard let url = veraAPI("/pulse/cards") else { return .unconfigured }
+        guard let (data, response) = try? await URLSession.shared.data(from: url) else { return .transport }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) { return .transport }
+        return Self.parsePulseFeed(data)
+    }
+
+    static func parsePulseFeed(_ data: Data) -> PulseFeedResult {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = obj["cards"] as? [[String: Any]] else { return .malformed }
+        let rawIDs = Set(arr.compactMap { $0["id"] as? String })
+        let cards = arr.compactMap { c -> PulseCard? in
             guard let id = c["id"] as? String, let title = c["title"] as? String else { return nil }
             let sourceList: [PulseSource] = (c["sources"] as? [[String: Any]] ?? []).compactMap { s in
                 guard let n = s["n"] as? Int, let url = s["url"] as? String else { return nil }
@@ -358,6 +382,7 @@ struct OWUIClient: Sendable {
                              read: (c["read"] as? Bool) ?? false,
                              category: c["category"] as? String, changeSet: changeSet, items: items)
         }
+        return .success(cards: cards, rawIDs: rawIDs)
     }
 
     /// The pinned ambient-vein catalog from vera-api, ordered for the chip row.

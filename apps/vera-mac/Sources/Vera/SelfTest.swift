@@ -37,6 +37,59 @@ final class SelfTestNativeTransport: NativeChatTransport, @unchecked Sendable {
     }
 }
 
+final class SelfTestPulseFeed: PulseFeedProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var scripted: PulseFeedResult
+    private var served = 0
+
+    init(_ result: PulseFeedResult) { scripted = result }
+
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return served
+    }
+
+    func set(_ result: PulseFeedResult) {
+        lock.lock()
+        defer { lock.unlock() }
+        scripted = result
+    }
+
+    func pulseFeed() async -> PulseFeedResult { serve() }
+
+    private func serve() -> PulseFeedResult {
+        lock.lock()
+        defer { lock.unlock() }
+        served += 1
+        return scripted
+    }
+}
+
+final class SelfTestFailingCreateRepository: ChatRepository, @unchecked Sendable {
+    let inner: LocalChatRepository
+
+    init(inner: LocalChatRepository) { self.inner = inner }
+
+    func listConversations() throws -> [Conversation] { try inner.listConversations() }
+    func messages(conversationID: String) throws -> [Message] { try inner.messages(conversationID: conversationID) }
+    func recentMessages(conversationID: String, limit: Int) throws -> [Message] {
+        try inner.recentMessages(conversationID: conversationID, limit: limit)
+    }
+    func saveConversation(_ conversation: Conversation) throws { try inner.saveConversation(conversation) }
+    func saveMessage(_ message: Message, conversationID: String, ordinal: Int) throws {
+        try inner.saveMessage(message, conversationID: conversationID, ordinal: ordinal)
+    }
+    func deleteConversation(_ id: String) throws { try inner.deleteConversation(id) }
+    func conversation(originType: String, originID: String) throws -> Conversation? {
+        try inner.conversation(originType: originType, originID: originID)
+    }
+    func createOriginConversation(_ conversation: Conversation, seed: Message) throws {
+        throw NSError(domain: "SelfTest", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "scripted create failure"])
+    }
+}
+
 final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendable {
     private let lock = NSLock()
     private let rounds: [[NativeChatStreamSnapshot]]
@@ -202,6 +255,7 @@ enum SelfTest {
         await runNativeTools()
         await runNativeMemory()
         await runNativeStore()
+        await runPulseContinuation()
         guard let cfg = OWUIConfig.load() else {
             print("SELFTEST OK (offline). No OWUI config (~/.vera/config.json), live checks skipped")
             exit(0)
@@ -963,6 +1017,286 @@ enum SelfTest {
             print("  native store OK (progressive turns and tools, interrupted exclusion, serialized sends, required persistence)")
         } catch {
             print("SELFTEST ERROR: native store \(error)"); exit(1)
+        }
+    }
+
+    private static func pulseFixtureCard() -> PulseCard {
+        PulseCard(
+            id: "seed-card", title: "River briefing",
+            preview: "The gauge is trending up.", subtitle: "Pulse",
+            imageURL: "https://img.example/cover.png", tint: "#334455",
+            sources: ["https://a.example/one"],
+            sourceList: [
+                PulseSource(n: 1, title: "Gauge report", url: "https://a.example/one"),
+                PulseSource(n: 2, title: "Insecure source", url: "ftp://bad.example/two"),
+            ],
+            inlineImages: [
+                PulseInlineImage(n: 1, url: "https://img.example/inline.png", caption: "The gauge", sourceN: 1),
+                PulseInlineImage(n: 2, url: "file:///etc/passwd", caption: "Bad", sourceN: nil),
+            ],
+            body: "The river rose overnight. [1]",
+            status: "new", kind: "research", severity: "notice",
+            action: PulseAction(verb: "ha.service", preview: "Do a thing", risk: "low",
+                                reversible: true, token: "ACTION-COMMIT-TOKEN"),
+            provenance: "heartbeat", category: "vera",
+            items: [PulseDigestItem(itemID: "i1", title: "Pick", subtitle: "Sub", mediaType: nil,
+                                    tmdbID: nil, token: "ITEM-COMMIT-TOKEN", state: "pending")])
+    }
+
+    private static func waitForContinuation(_ store: ChatStore, _ cardID: String) async {
+        for _ in 0..<200 where store.pulseContinuation[cardID] == .opening {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
+    private static func continuationStore(
+        repository: any ChatRepository, feed: SelfTestPulseFeed,
+        transport: (any NativeChatTransport)? = nil
+    ) async -> ChatStore {
+        let config = NativeChatConfig(
+            baseURL: URL(string: "https://model.example/v1")!,
+            apiKey: nil, model: "local-model", chatTemplateKwargs: nil)
+        let store = ChatStore(
+            config: nil, client: nil, socket: nil,
+            nativeConfig: config, nativeTransport: transport,
+            repository: repository, hasLegacyOWUI: false, pulseFeed: feed)
+        await store.connect()
+        store.section = .pulse
+        return store
+    }
+
+    private static func runPulseContinuation() async {
+        let card = pulseFixtureCard()
+        let snapshot = PulseCardSnapshot(card: card, capturedAt: Date(timeIntervalSince1970: 1_000))
+        guard let json = snapshot.encodedJSON(),
+              !json.contains("ACTION-COMMIT-TOKEN"),
+              !json.contains("ITEM-COMMIT-TOKEN"),
+              !json.contains("ftp://"),
+              !json.contains("file://") else {
+            print("SELFTEST ERROR: pulse snapshot leaked tokens or non-web URLs"); exit(1)
+        }
+        guard let decoded = PulseCardSnapshot.decode(json) else {
+            print("SELFTEST ERROR: pulse snapshot round-trip decode"); exit(1)
+        }
+        let restored = decoded.card()
+        guard restored.action == nil,
+              restored.title == card.title,
+              restored.body == card.body,
+              restored.sourceList.map(\.url) == ["https://a.example/one"],
+              restored.inlineImages.map(\.url) == ["https://img.example/inline.png"],
+              restored.items.count == 1,
+              restored.items.first?.token == nil,
+              restored.provenance == "heartbeat",
+              restored.category == "vera",
+              restored.severity == "notice" else {
+            print("SELFTEST ERROR: pulse snapshot restore fidelity"); exit(1)
+        }
+        guard PulseCardSnapshot.decode(json.replacingOccurrences(
+            of: "\"version\":1", with: "\"version\":2")) == nil else {
+            print("SELFTEST ERROR: pulse snapshot accepted a future version"); exit(1)
+        }
+        var oversized = card
+        oversized.body = String(repeating: "x", count: PulseCardSnapshot.maximumEncodedBytes + 1)
+        guard PulseCardSnapshot(card: oversized, capturedAt: Date()).encodedJSON() == nil else {
+            print("SELFTEST ERROR: pulse snapshot ignored the size cap"); exit(1)
+        }
+        let seedText = PulseSeed.text(for: restored)
+        guard seedText.contains(card.title),
+              seedText.contains("The river rose overnight."),
+              seedText.contains("[1] Gauge report: https://a.example/one"),
+              !seedText.contains("ftp://"),
+              !seedText.contains("ACTION-COMMIT-TOKEN") else {
+            print("SELFTEST ERROR: pulse seed text shape"); exit(1)
+        }
+        let seed = PulseSeed.message(for: card)
+        guard seed.role == .assistant, seed.state == .complete,
+              seed.contentType == .pulseCard, seed.pulse?.action == nil,
+              seed.sources.map(\.n) == [1] else {
+            print("SELFTEST ERROR: pulse seed message shape"); exit(1)
+        }
+
+        guard case .malformed = OWUIClient.parsePulseFeed(Data("not json".utf8)) else {
+            print("SELFTEST ERROR: pulse feed malformed data accepted"); exit(1)
+        }
+        guard case .malformed = OWUIClient.parsePulseFeed(Data("{\"other\":true}".utf8)) else {
+            print("SELFTEST ERROR: pulse feed missing cards accepted"); exit(1)
+        }
+        guard case .success(let emptyCards, let emptyIDs) =
+                OWUIClient.parsePulseFeed(Data("{\"cards\":[]}".utf8)),
+              emptyCards.isEmpty, emptyIDs.isEmpty else {
+            print("SELFTEST ERROR: pulse feed valid empty"); exit(1)
+        }
+        let mixed = Data("""
+            {"cards":[{"id":"good","title":"Good","body":"Body"},{"id":"broken"}]}
+            """.utf8)
+        guard case .success(let mixedCards, let mixedIDs) = OWUIClient.parsePulseFeed(mixed),
+              mixedCards.map(\.id) == ["good"],
+              mixedIDs == ["good", "broken"] else {
+            print("SELFTEST ERROR: pulse feed partial parse"); exit(1)
+        }
+
+        do {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("vera-selftest-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let url = directory.appendingPathComponent("continuation.sqlite")
+            let repository = try LocalChatRepository(url: url)
+            let seeded = PulseSeed.message(for: card)
+            let conversation = Conversation(
+                id: UUID().uuidString, title: card.title, messages: [seeded],
+                updatedAt: Date(), isPersisted: true,
+                originType: PulseSeed.originType, originID: card.id)
+            try repository.createOriginConversation(conversation, seed: seeded)
+            guard let found = try repository.conversation(
+                originType: PulseSeed.originType, originID: card.id),
+                  found.id == conversation.id, found.originID == card.id else {
+                print("SELFTEST ERROR: pulse origin lookup"); exit(1)
+            }
+            let duplicate = Conversation(
+                id: UUID().uuidString, title: card.title, messages: [],
+                updatedAt: Date(), isPersisted: true,
+                originType: PulseSeed.originType, originID: card.id)
+            let duplicateSeed = PulseSeed.message(for: card)
+            do {
+                try repository.createOriginConversation(duplicate, seed: duplicateSeed)
+                print("SELFTEST ERROR: duplicate pulse origin accepted"); exit(1)
+            } catch {}
+            guard try repository.listConversations().count == 1,
+                  try repository.messages(conversationID: duplicate.id).isEmpty else {
+                print("SELFTEST ERROR: duplicate pulse origin left partial rows"); exit(1)
+            }
+            let orphan = Conversation(
+                id: UUID().uuidString, title: "Orphan", messages: [],
+                updatedAt: Date(), isPersisted: true,
+                originType: PulseSeed.originType, originID: "other-card")
+            do {
+                try repository.createOriginConversation(orphan, seed: seeded)
+                print("SELFTEST ERROR: conflicting seed insert accepted"); exit(1)
+            } catch {}
+            guard try repository.conversation(
+                originType: PulseSeed.originType, originID: "other-card") == nil else {
+                print("SELFTEST ERROR: failed create left a partial conversation"); exit(1)
+            }
+            let reopened = try LocalChatRepository(url: url)
+            let persisted = try reopened.messages(conversationID: conversation.id)
+            guard persisted.count == 1,
+                  let first = persisted.first,
+                  first.state == .complete,
+                  first.contentType == .pulseCard,
+                  first.pulse?.title == card.title,
+                  first.pulse?.action == nil,
+                  first.pulse?.sourceList.map(\.url) == ["https://a.example/one"],
+                  first.sources.map(\.n) == [1],
+                  first.text.contains("The river rose overnight.") else {
+                print("SELFTEST ERROR: pulse seed round-trip after restart"); exit(1)
+            }
+            try reopened.deleteConversation(conversation.id)
+            guard try reopened.messages(conversationID: conversation.id).isEmpty,
+                  try reopened.conversation(
+                    originType: PulseSeed.originType, originID: card.id) == nil else {
+                print("SELFTEST ERROR: pulse continuation cascade delete"); exit(1)
+            }
+        } catch {
+            print("SELFTEST ERROR: pulse continuation database \(error)"); exit(1)
+        }
+
+        do {
+            let repository = try LocalChatRepository(inMemory: true)
+            let transport = SelfTestNativeTransport()
+            let feed = SelfTestPulseFeed(.success(cards: [card], rawIDs: [card.id]))
+            let store = await continuationStore(repository: repository, feed: feed, transport: transport)
+            store.pulseDetail = card
+            store.openPulseInChat(card)
+            await waitForContinuation(store, card.id)
+            guard store.pulseContinuation[card.id] == nil,
+                  store.section == .chat,
+                  store.pulseDetail == nil,
+                  let selected = store.selected,
+                  selected.originType == PulseSeed.originType,
+                  selected.originID == card.id,
+                  selected.messages.count == 1,
+                  selected.messages.first?.state == .complete,
+                  selected.messages.first?.pulse != nil,
+                  transport.histories.isEmpty,
+                  try repository.conversation(
+                    originType: PulseSeed.originType, originID: card.id) != nil else {
+                print("SELFTEST ERROR: first-time pulse continuation"); exit(1)
+            }
+            let continuedID = selected.id
+            store.sendText("Tell me more")
+            await waitForGeneration(store)
+            guard let history = transport.histories.last,
+                  history.map(\.content) == [
+                    NativeChatSettings.defaultSystemPrompt,
+                    selected.messages.first?.text ?? "",
+                    "Tell me more",
+                  ],
+                  history[1].content.contains("[1] Gauge report: https://a.example/one"),
+                  !history.map(\.content).joined().contains("ACTION-COMMIT-TOKEN") else {
+                print("SELFTEST ERROR: pulse follow-up history shape"); exit(1)
+            }
+            store.section = .pulse
+            store.openPulseInChat(card)
+            await waitForContinuation(store, card.id)
+            guard store.selectedID == continuedID,
+                  store.section == .chat,
+                  try repository.listConversations().filter({ $0.originID == card.id }).count == 1,
+                  feed.callCount == 1 else {
+                print("SELFTEST ERROR: repeat pulse continuation duplicated"); exit(1)
+            }
+
+            let offlineFeed = SelfTestPulseFeed(.transport)
+            let offline = await continuationStore(repository: repository, feed: offlineFeed)
+            offline.openPulseInChat(card)
+            await waitForContinuation(offline, card.id)
+            guard offline.pulseContinuation[card.id] == nil,
+                  offline.section == .chat,
+                  offline.selected?.originID == card.id,
+                  offline.selected?.messages.first?.pulse != nil,
+                  offlineFeed.callCount == 0 else {
+                print("SELFTEST ERROR: existing pulse continuation required the network"); exit(1)
+            }
+
+            let failures: [(PulseFeedResult, String)] = [
+                (.unconfigured, "Pulse isn't connected. Set up Vera API to continue this card."),
+                (.transport, "Pulse couldn't be reached. Try again."),
+                (.malformed, "This Pulse card couldn't be opened."),
+                (.success(cards: [], rawIDs: []), "This Pulse card is no longer available."),
+                (.success(cards: [], rawIDs: [card.id]), "This Pulse card couldn't be opened."),
+            ]
+            for (result, expected) in failures {
+                let freshRepository = try LocalChatRepository(inMemory: true)
+                let failing = await continuationStore(
+                    repository: freshRepository, feed: SelfTestPulseFeed(result))
+                failing.pulseDetail = card
+                failing.openPulseInChat(card)
+                await waitForContinuation(failing, card.id)
+                guard failing.pulseContinuation[card.id] == .failed(expected),
+                      failing.section == .pulse,
+                      failing.pulseDetail?.id == card.id,
+                      try freshRepository.conversation(
+                        originType: PulseSeed.originType, originID: card.id) == nil else {
+                    print("SELFTEST ERROR: pulse continuation failure state for \(expected)"); exit(1)
+                }
+            }
+
+            let brokenInner = try LocalChatRepository(inMemory: true)
+            let broken = await continuationStore(
+                repository: SelfTestFailingCreateRepository(inner: brokenInner),
+                feed: SelfTestPulseFeed(.success(cards: [card], rawIDs: [card.id])))
+            broken.pulseDetail = card
+            broken.openPulseInChat(card)
+            await waitForContinuation(broken, card.id)
+            guard broken.pulseContinuation[card.id]
+                    == .failed(ChatStore.pulseContinuationDatabaseFailure),
+                  broken.section == .pulse,
+                  try brokenInner.conversation(
+                    originType: PulseSeed.originType, originID: card.id) == nil else {
+                print("SELFTEST ERROR: pulse continuation database failure state"); exit(1)
+            }
+            print("  pulse continuation OK (snapshot sanitization, typed feed, atomic origin create, offline reopen, failure states)")
+        } catch {
+            print("SELFTEST ERROR: pulse continuation store \(error)"); exit(1)
         }
     }
 

@@ -27,6 +27,7 @@ final class ChatStore: ObservableObject {
     @Published var restoreState: [String: String] = [:]   // "<cardID>:<opIndex>" → running/done/failed
     @Published var actionState: [String: String] = [:]    // Pulse cardID → running/done/dismissed/failed
     @Published var digestItemState: [String: String] = [:] // "<cardID>:<itemID>" → pending/running/approved/skipped/failed
+    @Published var pulseContinuation: [String: PulseContinuationState] = [:]
     @Published var pulseDetail: PulseCard? = nil    // open card detail (lifted here so the sidebar can dismiss it)
     @Published var pulseVeinDetail: PulseVein? = nil // open vein overlay (ditto)
     @Published var focusTick: Int = 0         // bump to move the cursor into the composer
@@ -49,6 +50,7 @@ final class ChatStore: ObservableObject {
     private let repository: (any ChatRepository)?
     private let repositoryInitializationError: String?
     private let hasLegacyOWUI: Bool
+    private let pulseFeedProvider: (any PulseFeedProviding)?
     var isLive: Bool { nativeTransport != nil && repository != nil }
     var canSubmitChat: Bool { !generating && repository != nil }
     var isPulseConfigured: Bool { config?.veraAPIBase != nil }
@@ -64,7 +66,8 @@ final class ChatStore: ObservableObject {
          nativeEnabledToolIDs: Set<String> = [],
          nativeMemorySettings: NativeMemorySettings = .fresh,
          nativeMemoryService: (any NativeMemoryServing)? = nil,
-         nativeToolRegistry: NativeToolRegistry? = nil) {
+         nativeToolRegistry: NativeToolRegistry? = nil,
+         pulseFeed: (any PulseFeedProviding)? = nil) {
         self.config = config
         self.client = client
         self.socket = socket
@@ -79,6 +82,7 @@ final class ChatStore: ObservableObject {
         self.repository = repository
         self.repositoryInitializationError = repositoryError
         self.hasLegacyOWUI = hasLegacyOWUI
+        self.pulseFeedProvider = pulseFeed
         chatConfigurationError = repositoryError
         selectedID = conversations.first?.id
         loadArtifacts()
@@ -858,7 +862,94 @@ final class ChatStore: ObservableObject {
         if selectedID == nil { newConversation() }
     }
 
-    func openPulseInChat(_ card: PulseCard) {
+    enum PulseContinuationState: Equatable {
+        case opening
+        case failed(String)
+    }
+
+    static let pulseContinuationDatabaseFailure = "Vera couldn't create the local conversation. Try again."
+
+    func openPulseInChat(_ card: PulseCard, onOpened: (() -> Void)? = nil) {
+        if pulseContinuation[card.id] == .opening { return }
+        guard let repository else {
+            pulseContinuation[card.id] = .failed(Self.pulseContinuationDatabaseFailure)
+            return
+        }
+        do {
+            if let existing = try repository.conversation(originType: PulseSeed.originType, originID: card.id) {
+                pulseContinuation[card.id] = nil
+                openContinuation(existing, onOpened: onOpened)
+                return
+            }
+        } catch {
+            pulseContinuation[card.id] = .failed(Self.pulseContinuationDatabaseFailure)
+            return
+        }
+        guard let provider = pulseFeedProvider ?? (client as (any PulseFeedProviding)?) else {
+            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up Vera API to continue this card.")
+            return
+        }
+        pulseContinuation[card.id] = .opening
+        Task {
+            let result = await provider.pulseFeed()
+            finishContinuation(card: card, result: result, repository: repository, onOpened: onOpened)
+        }
+    }
+
+    private func finishContinuation(
+        card: PulseCard, result: PulseFeedResult, repository: any ChatRepository,
+        onOpened: (() -> Void)?
+    ) {
+        switch result {
+        case .unconfigured:
+            pulseContinuation[card.id] = .failed("Pulse isn't connected. Set up Vera API to continue this card.")
+        case .transport:
+            pulseContinuation[card.id] = .failed("Pulse couldn't be reached. Try again.")
+        case .malformed:
+            pulseContinuation[card.id] = .failed("This Pulse card couldn't be opened.")
+        case .success(let cards, let rawIDs):
+            guard let fresh = cards.first(where: { $0.id == card.id }) else {
+                pulseContinuation[card.id] = .failed(rawIDs.contains(card.id)
+                    ? "This Pulse card couldn't be opened."
+                    : "This Pulse card is no longer available.")
+                return
+            }
+            let now = Date()
+            let seed = PulseSeed.message(for: fresh, at: now)
+            let conversation = Conversation(
+                id: UUID().uuidString, title: fresh.title, messages: [seed],
+                createdAt: now, updatedAt: now, isPersisted: true,
+                originType: PulseSeed.originType, originID: fresh.id)
+            do {
+                try repository.createOriginConversation(conversation, seed: seed)
+            } catch {
+                if let existing = try? repository.conversation(
+                    originType: PulseSeed.originType, originID: card.id) {
+                    pulseContinuation[card.id] = nil
+                    openContinuation(existing, onOpened: onOpened)
+                } else {
+                    pulseContinuation[card.id] = .failed(Self.pulseContinuationDatabaseFailure)
+                }
+                return
+            }
+            pulseContinuation[card.id] = nil
+            conversations.insert(conversation, at: 0)
+            pulseDetail = nil
+            onOpened?()
+            section = .chat
+            selectedID = conversation.id
+            focusTick &+= 1
+        }
+    }
+
+    private func openContinuation(_ conversation: Conversation, onOpened: (() -> Void)?) {
+        if !conversations.contains(where: { $0.id == conversation.id }) {
+            conversations.insert(conversation, at: 0)
+        }
+        pulseDetail = nil
+        onOpened?()
+        select(conversation.id)
+        focusTick &+= 1
     }
 
     // MARK: - Voice mode

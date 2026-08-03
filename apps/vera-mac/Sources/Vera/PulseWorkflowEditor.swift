@@ -179,6 +179,7 @@ final class PulseWorkflowStore: ObservableObject {
     @Published var active: PulseWorkflowVersion?
     @Published var draft: PulseWorkflowVersion?
     @Published var selectedNodeID: String?
+    @Published var connectionSourceID: String?
     @Published var busy = false
     @Published var note: String?
 
@@ -219,6 +220,7 @@ final class PulseWorkflowStore: ObservableObject {
     func discardDraft() {
         draft = nil
         selectedNodeID = active?.definition.nodes.first?.id
+        connectionSourceID = nil
         note = "Draft discarded."
     }
 
@@ -229,7 +231,7 @@ final class PulseWorkflowStore: ObservableObject {
         let retry = PulseWorkflowNode(id: "cover_retry", type: "pulse.cover_retry", config: ["max_attempts": "1"])
         draft.definition.nodes.insert(review, at: cover + 1)
         draft.definition.nodes.insert(retry, at: cover + 2)
-        draft.definition.edges = orderedEdges(for: draft.definition.nodes)
+        draft.definition.edges.removeAll { $0.from == "cover_art" && $0.to == "inject" }
         draft.definition.positions = defaultPositions(for: draft.definition.nodes)
         self.draft = draft
         selectedNodeID = review.id
@@ -264,11 +266,27 @@ final class PulseWorkflowStore: ObservableObject {
         self.draft = draft
     }
 
-    func wireInSequence() {
-        guard var draft else { return }
-        draft.definition.edges = orderedEdges(for: draft.definition.nodes)
-        self.draft = draft
-        note = "Nodes are wired in their displayed sequence."
+    func startConnection(from nodeID: String) {
+        guard isEditing else { return }
+        connectionSourceID = nodeID
+        note = "Choose an input port to connect this node."
+    }
+
+    func completeConnection(to nodeID: String) {
+        guard let source = connectionSourceID, source != nodeID else { return }
+        guard let draft,
+              let sourceNode = draft.definition.nodes.first(where: { $0.id == source }),
+              let targetNode = draft.definition.nodes.first(where: { $0.id == nodeID }),
+              approvedConnection(from: sourceNode.type, to: targetNode.type) else {
+            note = "That connection is not valid for Pulse."
+            return
+        }
+        var next = draft
+        next.definition.edges.removeAll { $0.from == source || $0.to == nodeID }
+        next.definition.edges.append(PulseWorkflowEdge(from: source, to: nodeID))
+        self.draft = next
+        connectionSourceID = nil
+        note = "Connection added."
     }
 
     func save() async {
@@ -300,6 +318,20 @@ final class PulseWorkflowStore: ObservableObject {
 
     private func orderedEdges(for nodes: [PulseWorkflowNode]) -> [PulseWorkflowEdge] {
         Array(zip(nodes, nodes.dropFirst())).map { PulseWorkflowEdge(from: $0.id, to: $1.id) }
+    }
+
+    private func approvedConnection(from: String, to: String) -> Bool {
+        let pairs = [
+            ("pulse.triage", "pulse.gates"),
+            ("pulse.gates", "pulse.synthesis"),
+            ("pulse.synthesis", "pulse.claim_audit"),
+            ("pulse.claim_audit", "pulse.cover_art"),
+            ("pulse.cover_art", "pulse.visual_review"),
+            ("pulse.cover_art", "pulse.inject"),
+            ("pulse.visual_review", "pulse.cover_retry"),
+            ("pulse.cover_retry", "pulse.inject")
+        ]
+        return pairs.contains { $0.0 == from && $0.1 == to }
     }
 
     private func defaultPositions(for nodes: [PulseWorkflowNode]) -> [String: PulseWorkflowPoint] {
@@ -384,7 +416,7 @@ struct PulseWorkflowEditor: View {
     private var palette: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Node library").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-            Text("Drag nodes onto the canvas").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary.opacity(0.8))
+            Text("Required nodes are already on the canvas").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary.opacity(0.8))
             librarySection("Pulse") {
                 libraryNode("Research", icon: "globe", enabled: false)
                 libraryNode("Synthesis", icon: "sparkles", enabled: false)
@@ -392,8 +424,7 @@ struct PulseWorkflowEditor: View {
             }
             librarySection("Image") {
                 libraryNode("Cover art", icon: "photo", enabled: false)
-                libraryNode("Visual review", icon: "eye", enabled: true)
-                libraryNode("One retry", icon: "arrow.clockwise", enabled: true)
+                libraryNode("Visual review + retry", icon: "eye", enabled: true)
             }
             librarySection("Output") {
                 libraryNode("Publish", icon: "arrow.down.to.line", enabled: false)
@@ -401,8 +432,6 @@ struct PulseWorkflowEditor: View {
             if store.isEditing {
                 Divider().overlay(Theme.hairline)
                 Button { store.removeVisualLoop() } label: { Label("Remove visual review", systemImage: "minus.circle") }
-                    .buttonStyle(.plain).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                Button { store.wireInSequence() } label: { Label("Repair sequence", systemImage: "point.3.connected.trianglepath.dotted") }
                     .buttonStyle(.plain).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
@@ -417,8 +446,8 @@ struct PulseWorkflowEditor: View {
         }
     }
 
-    private func libraryNode(_ title: String, icon: String, enabled: Bool) -> some View {
-        Button {
+    @ViewBuilder private func libraryNode(_ title: String, icon: String, enabled: Bool) -> some View {
+        let button = Button {
             guard enabled else { return }
             if store.isEditing {
                 store.addVisualLoop()
@@ -439,7 +468,11 @@ struct PulseWorkflowEditor: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .onDrag { NSItemProvider(object: enabled ? "visual-loop" as NSString : "" as NSString) }
+        if enabled {
+            button.onDrag { NSItemProvider(object: "visual-loop" as NSString) }
+        } else {
+            button
+        }
     }
 
     private var canvas: some View {
@@ -457,7 +490,10 @@ struct PulseWorkflowEditor: View {
                     }
                     ForEach(workflow.definition.nodes) { node in
                         if let point = workflow.definition.positions[node.id] {
-                            WorkflowNodeCard(node: node, selected: store.selectedNodeID == node.id)
+                            WorkflowNodeCard(node: node, selected: store.selectedNodeID == node.id,
+                                             connecting: store.connectionSourceID == node.id,
+                                             onInput: { store.completeConnection(to: node.id) },
+                                             onOutput: { store.startConnection(from: node.id) })
                                 .position(x: point.x, y: point.y)
                                 .onTapGesture { store.selectedNodeID = node.id }
                                 .gesture(store.isEditing ? DragGesture().onEnded { value in store.moveNode(node.id, by: value.translation) } : nil)
@@ -518,6 +554,9 @@ struct PulseWorkflowEditor: View {
 struct WorkflowNodeCard: View {
     let node: PulseWorkflowNode
     var selected: Bool
+    var connecting: Bool = false
+    var onInput: (() -> Void)? = nil
+    var onOutput: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -526,9 +565,19 @@ struct WorkflowNodeCard: View {
         }
         .padding(13).frame(width: 126, height: 86, alignment: .topLeading)
         .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Theme.accent : Theme.hairline, lineWidth: selected ? 1.5 : 1))
-        .overlay(alignment: .leading) { PortDot().offset(x: -3.5) }
-        .overlay(alignment: .trailing) { PortDot().offset(x: 3.5) }
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(connecting ? Theme.accent : (selected ? Theme.accent : Theme.hairline), lineWidth: (connecting || selected) ? 1.5 : 1))
+        .overlay(alignment: .leading) { connectionPort(action: onInput).offset(x: -3.5) }
+        .overlay(alignment: .trailing) { connectionPort(action: onOutput).offset(x: 3.5) }
+    }
+
+    @ViewBuilder private func connectionPort(action: (() -> Void)?) -> some View {
+        if let action {
+            Button(action: action) { PortDot() }
+                .buttonStyle(.plain)
+                .help("Connect")
+        } else {
+            PortDot()
+        }
     }
 }
 
@@ -567,15 +616,14 @@ struct PulseWorkflowEditorShot: View {
     private var editorLibrary: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Node library").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-            Text("Drag nodes onto the canvas").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary.opacity(0.8))
+            Text("Required nodes are already on the canvas").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary.opacity(0.8))
             Text("PULSE").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary.opacity(0.72))
             shotLibraryNode("Research", icon: "globe", installed: true)
             shotLibraryNode("Synthesis", icon: "sparkles", installed: true)
             shotLibraryNode("Claim audit", icon: "checkmark.shield", installed: true)
             Text("IMAGE").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary.opacity(0.72))
             shotLibraryNode("Cover art", icon: "photo", installed: true)
-            shotLibraryNode("Visual review", icon: "eye", installed: false)
-            shotLibraryNode("One retry", icon: "arrow.clockwise", installed: false)
+            shotLibraryNode("Visual review + retry", icon: "eye", installed: false)
             Text("OUTPUT").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary.opacity(0.72))
             shotLibraryNode("Publish", icon: "arrow.down.to.line", installed: true)
             Spacer()

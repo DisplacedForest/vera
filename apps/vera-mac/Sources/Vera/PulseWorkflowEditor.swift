@@ -251,14 +251,6 @@ final class PulseWorkflowStore: ObservableObject {
         mutateSelected { node in node.config["max_attempts"] = String(attempts) }
     }
 
-    func moveSelected(by offset: Int) {
-        guard var draft, let id = selectedNodeID,
-              var point = draft.definition.positions[id] else { return }
-        point.x += CGFloat(offset * 48)
-        draft.definition.positions[id] = point
-        self.draft = draft
-    }
-
     func moveNode(_ id: String, by translation: CGSize) {
         guard var draft, var point = draft.definition.positions[id] else { return }
         point.x = max(75, point.x + translation.width)
@@ -287,7 +279,8 @@ final class PulseWorkflowStore: ObservableObject {
         guard let client, let draft else { return }
         busy = true
         defer { busy = false }
-        guard let promoted = await client.promote(draft) else { note = "Couldn’t promote this draft."; return }
+        guard let saved = await client.save(draft) else { note = "The server rejected this graph."; return }
+        guard let promoted = await client.promote(saved) else { note = "Couldn’t promote this draft."; return }
         active = promoted
         self.draft = nil
         note = "This workflow is active for future Pulse runs."
@@ -390,6 +383,8 @@ struct PulseWorkflowEditor: View {
                 Button { store.wireInSequence() } label: { Label("Wire sequence", systemImage: "point.3.connected.trianglepath.dotted") }
                     .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
             } else {
+                Label("Visual review is available in a draft", systemImage: "eye")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 Text("Create a draft to add or configure nodes.").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
@@ -400,23 +395,26 @@ struct PulseWorkflowEditor: View {
     private var canvas: some View {
         ScrollView([.horizontal, .vertical]) {
             if let workflow = store.displayed {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text("Approved Pulse nodes").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                    HStack(spacing: 0) {
-                        ForEach(Array(workflow.definition.nodes.enumerated()), id: \.element.id) { index, node in
-                            if index > 0 {
-                                Image(systemName: "arrow.right")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(Theme.textSecondary)
-                                    .frame(width: 34)
-                            }
+                ZStack(alignment: .topLeading) {
+                    Canvas { context, _ in
+                        for edge in workflow.definition.edges {
+                            guard let from = workflow.definition.positions[edge.from],
+                                  let to = workflow.definition.positions[edge.to] else { continue }
+                            context.stroke(edgePath(CGPoint(x: from.x + 64, y: from.y),
+                                                    CGPoint(x: to.x - 64, y: to.y)),
+                                           with: .color(Theme.textSecondary.opacity(0.55)), lineWidth: 1.5)
+                        }
+                    }
+                    ForEach(workflow.definition.nodes) { node in
+                        if let point = workflow.definition.positions[node.id] {
                             WorkflowNodeCard(node: node, selected: store.selectedNodeID == node.id)
+                                .position(x: point.x, y: point.y)
                                 .onTapGesture { store.selectedNodeID = node.id }
                                 .gesture(store.isEditing ? DragGesture().onEnded { value in store.moveNode(node.id, by: value.translation) } : nil)
                         }
                     }
                 }
-                .padding(40).frame(minWidth: 900, minHeight: 360, alignment: .center)
+                .frame(width: max(900, (workflow.definition.positions.values.map(\.x).max() ?? 0) + 130), height: 460)
             }
         }
         .background(DotGrid())

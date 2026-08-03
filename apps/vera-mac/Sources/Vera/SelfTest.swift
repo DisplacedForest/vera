@@ -1382,21 +1382,70 @@ enum SelfTest {
             }
             print("  agentic graph OK (flows + stages + state, surfaces incl. nil stat)")
 
+            guard let editorCatalog = WorkflowCatalog.fixture(),
+                  editorCatalog.nodes.count == 8,
+                  editorCatalog.paletteNodes.count == 8,
+                  editorCatalog.paletteCategories == ["core", "visual"],
+                  editorCatalog.profile.canonicalOrder == ["pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit",
+                                                          "pulse.cover_art", "pulse.visual_review", "pulse.cover_retry", "pulse.inject"],
+                  editorCatalog.label(for: "pulse.inject") == "Inject" else {
+                print("SELFTEST ERROR: workflow catalog parse"); exit(1)
+            }
+            guard let reviewSpec = editorCatalog.node(for: "pulse.visual_review"),
+                  case .number(let lowBound, let highBound) = reviewSpec.fields.first?.kind,
+                  lowBound == 0, highBound == 1,
+                  reviewSpec.fields.first?.defaultValue == .double(0.8),
+                  let retrySpec = editorCatalog.node(for: "pulse.cover_retry"),
+                  case .choice(let attemptOptions) = retrySpec.fields.first?.kind,
+                  attemptOptions == [.int(0), .int(1)],
+                  retrySpec.defaultConfig["max_attempts"] == .int(1) else {
+                print("SELFTEST ERROR: workflow catalog schema"); exit(1)
+            }
+            let malformedCatalogJSON = """
+            {"nodes":[{"type":"pulse.triage","label":"Triage","icon":"globe","tint":"accent","category":"core","config_schema":{},"insertable":false},
+                      {"type":"broken","label":"Broken","icon":"globe","tint":"accent","category":"core",
+                       "config_schema":{"level":{"type":"choice","options":[]}},"insertable":true}],
+             "profile":{"id":"pulse","spine":[],"insertable_categories":[],"pairs":[]}}
+            """
+            guard let malformedObject = try? JSONSerialization.jsonObject(with: Data(malformedCatalogJSON.utf8)),
+                  WorkflowCatalog.parse(malformedObject) == nil else {
+                print("SELFTEST ERROR: workflow catalog strictness"); exit(1)
+            }
+            guard let openField = WorkflowSchemaField.parse(key: "budget", raw: ["type": "number", "min": 0]),
+                  case .number(let openLow, let openHigh) = openField.kind,
+                  openLow == 0, openHigh == nil,
+                  WorkflowSchemaField.parse(key: "mode", raw: ["type": "gradient"]) == nil,
+                  WorkflowSchemaField.parse(key: "budget", raw: ["type": "number", "min": "invalid"]) == nil,
+                  WorkflowCatalogNode.parse(["type": "x", "label": "X", "config_schema": "broken"]) == nil,
+                  WorkflowProfile.parse(["id": "pulse", "pairs": "broken"]) == nil,
+                  WorkflowProfile.parse(["id": "pulse", "pairs": [["types": ["a"]]]]) == nil,
+                  WorkflowProfile.parse(["id": "generic"])?.spine == [] else {
+                print("SELFTEST ERROR: workflow schema field bounds"); exit(1)
+            }
             let workflowJSON = """
             {"id":"pulse","nodes":[
-              {"id":"triage","type":"pulse.triage","config":{}},
               {"id":"cover_art","type":"pulse.cover_art","config":{"style":"editorial"}},
               {"id":"visual_review","type":"pulse.visual_review","config":{"threshold":0.8}},
-              {"id":"cover_retry","type":"pulse.cover_retry","config":{"max_attempts":1}},
-              {"id":"inject","type":"pulse.inject","config":{}}
-            ],"edges":[{"from":"triage","to":"cover_art"},{"from":"cover_art","to":"visual_review"},{"from":"visual_review","to":"cover_retry"},{"from":"cover_retry","to":"inject"}]}
+              {"id":"cover_retry","type":"pulse.cover_retry","config":{"max_attempts":1}}
+            ],"edges":[{"from":"cover_art","to":"visual_review"},{"from":"visual_review","to":"cover_retry"}]}
             """
             guard let workflowObject = try? JSONSerialization.jsonObject(with: Data(workflowJSON.utf8)),
                   let workflow = PulseWorkflowDefinition.parse(workflowObject),
-                  workflow.hasVisualLoop,
-                  workflow.nodes[2].label == "Visual review",
-                  (workflow.jsonObject()["nodes"] as? [[String: Any]])?[2]["config"] as? [String: Any] != nil else {
+                  workflow.nodes[1].config["threshold"] == .double(0.8),
+                  workflow.nodes[2].config["max_attempts"] == .int(1) else {
                 print("SELFTEST ERROR: pulse workflow parse"); exit(1)
+            }
+            let roundTripped = workflow.jsonObject()
+            guard let tripNodes = roundTripped["nodes"] as? [[String: Any]],
+                  let thresholdBack = (tripNodes[1]["config"] as? [String: Any])?["threshold"] as? Double,
+                  thresholdBack == 0.8,
+                  let attemptsBack = (tripNodes[2]["config"] as? [String: Any])?["max_attempts"] as? NSNumber,
+                  !CFNumberIsFloatType(attemptsBack), attemptsBack.intValue == 1 else {
+                print("SELFTEST ERROR: pulse workflow config round trip"); exit(1)
+            }
+            guard PulseWorkflowClient.rejectionMessage(from: Data(#"{"detail":"core stages are out of order"}"#.utf8)) == "core stages are out of order",
+                  PulseWorkflowClient.rejectionMessage(from: Data("{}".utf8)) == nil else {
+                print("SELFTEST ERROR: workflow rejection parse"); exit(1)
             }
             let editorStore = PulseWorkflowStore.fixture()
             editorStore.startConnection(from: "cover_art")
@@ -1411,23 +1460,24 @@ enum SelfTest {
             }
             editorStore.selectedNodeID = "visual_review"
             editorStore.removeSelectedNode()
-            guard editorStore.draft?.definition.hasVisualReview == false,
-                  editorStore.draft?.definition.hasCoverRetry == true,
-                  editorStore.validationMessage == "Add Visual review to complete the visual path." else {
+            guard editorStore.draft?.definition.nodes.contains(where: { $0.type == "pulse.visual_review" }) == false,
+                  editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "cover_retry")) == true,
+                  editorStore.validationMessage == "Add Visual review to complete this path.",
+                  editorStore.canSave == false else {
                 print("SELFTEST ERROR: visual workflow removal"); exit(1)
             }
-            editorStore.placeNodeInDraft("pulse.visual_review", at: CGPoint(x: 345, y: 275))
-            guard editorStore.draft?.definition.positions["visual_review"] == PulseWorkflowPoint(x: 345, y: 275),
-                  editorStore.validationMessage != nil else {
-                print("SELFTEST ERROR: visual workflow placement"); exit(1)
+            editorStore.placeNodeInDraft("pulse.visual_review", at: CGPoint(x: 1030, y: 310))
+            guard editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "visual_review")) == true,
+                  editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "visual_review", to: "cover_retry")) == true,
+                  editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "cover_retry")) == false,
+                  editorStore.draft?.definition.node(withID: "visual_review")?.config["threshold"] == .double(0.8),
+                  editorStore.validationMessage == nil else {
+                print("SELFTEST ERROR: visual workflow wire insertion"); exit(1)
             }
-            editorStore.startConnection(from: "cover_art")
-            editorStore.completeConnection(to: "visual_review")
-            editorStore.startConnection(from: "visual_review")
-            editorStore.completeConnection(to: "cover_retry")
-            guard editorStore.validationMessage == nil,
-                  editorStore.draft?.definition.edges == editorStore.draft?.definition.expectedEdges else {
-                print("SELFTEST ERROR: visual workflow completion"); exit(1)
+            editorStore.selectedNodeID = "visual_review"
+            editorStore.setConfigValue("threshold", .double(0.6))
+            guard editorStore.draft?.definition.node(withID: "visual_review")?.config["threshold"] == .double(0.6) else {
+                print("SELFTEST ERROR: schema config mutation"); exit(1)
             }
             let nodeCount = editorStore.draft?.definition.nodes.count
             editorStore.placeNodeInDraft("pulse.triage", at: CGPoint(x: 180, y: 120))
@@ -1435,7 +1485,7 @@ enum SelfTest {
                   editorStore.draft?.definition.positions["triage"] == PulseWorkflowPoint(x: 180, y: 120) else {
                 print("SELFTEST ERROR: installed workflow node placement"); exit(1)
             }
-            print("  pulse workflow OK (editable node graph + typed controls)")
+            print("  pulse workflow OK (served catalog + schema fields + profile validation)")
 
             // Config file round-trip on a temp path: write → read preserves strings + unknown keys.
             let tmp = FileManager.default.temporaryDirectory

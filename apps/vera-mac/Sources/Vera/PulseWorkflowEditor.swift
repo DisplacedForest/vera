@@ -4,85 +4,10 @@ import UniformTypeIdentifiers
 struct PulseWorkflowNode: Identifiable, Hashable {
     var id: String
     var type: String
-    var config: [String: String]
-
-    var label: String {
-        switch type {
-        case "pulse.triage": return "Triage"
-        case "pulse.gates": return "Gates"
-        case "pulse.synthesis": return "Synthesis"
-        case "pulse.claim_audit": return "Claim audit"
-        case "pulse.cover_art": return "Cover art"
-        case "pulse.visual_review": return "Visual review"
-        case "pulse.cover_retry": return "One retry"
-        case "pulse.inject": return "Publish"
-        default: return type
-        }
-    }
-
-    var icon: String {
-        switch type {
-        case "pulse.triage": return "globe"
-        case "pulse.gates": return "line.3.horizontal.decrease.circle"
-        case "pulse.synthesis": return "sparkles"
-        case "pulse.claim_audit": return "checkmark.shield"
-        case "pulse.cover_art": return "photo"
-        case "pulse.visual_review": return "eye"
-        case "pulse.cover_retry": return "arrow.clockwise"
-        case "pulse.inject": return "arrow.down.to.line"
-        default: return "square.stack.3d.up"
-        }
-    }
-
-    var tint: String {
-        switch type {
-        case "pulse.gates", "pulse.cover_retry": return "orange"
-        case "pulse.synthesis", "pulse.cover_art": return "purple"
-        case "pulse.claim_audit", "pulse.visual_review": return "cyan"
-        case "pulse.inject": return "green"
-        default: return "accent"
-        }
-    }
+    var config: [String: WorkflowConfigValue]
 
     var jsonConfig: [String: Any] {
-        if type == "pulse.visual_review" {
-            return ["threshold": Double(config["threshold"] ?? "0.8") ?? 0.8]
-        }
-        if type == "pulse.cover_retry" {
-            return ["max_attempts": Int(config["max_attempts"] ?? "1") ?? 1]
-        }
-        return config
-    }
-}
-
-struct PulseWorkflowNodeTemplate: Identifiable, Hashable {
-    let id: String
-    let type: String
-    let label: String
-    let group: String
-    let detail: String
-    let icon: String
-    let tint: String
-    let required: Bool
-    let config: [String: String]
-
-    func node() -> PulseWorkflowNode {
-        PulseWorkflowNode(id: id, type: type, config: config)
-    }
-
-    static let all = [
-        PulseWorkflowNodeTemplate(id: "triage", type: "pulse.triage", label: "Triage", group: "Research", detail: "Collect and rank signals", icon: "globe", tint: "accent", required: true, config: [:]),
-        PulseWorkflowNodeTemplate(id: "gates", type: "pulse.gates", label: "Gates", group: "Research", detail: "Filter weak candidates", icon: "line.3.horizontal.decrease.circle", tint: "orange", required: true, config: [:]),
-        PulseWorkflowNodeTemplate(id: "synthesis", type: "pulse.synthesis", label: "Synthesis", group: "Writing", detail: "Build the daily brief", icon: "sparkles", tint: "purple", required: true, config: [:]),
-        PulseWorkflowNodeTemplate(id: "claim_audit", type: "pulse.claim_audit", label: "Claim audit", group: "Writing", detail: "Check sourced claims", icon: "checkmark.shield", tint: "cyan", required: true, config: [:]),
-        PulseWorkflowNodeTemplate(id: "cover_art", type: "pulse.cover_art", label: "Cover art", group: "Image", detail: "Generate story artwork", icon: "photo", tint: "purple", required: true, config: ["style": "rotating"]),
-        PulseWorkflowNodeTemplate(id: "visual_review", type: "pulse.visual_review", label: "Visual review", group: "Image", detail: "Score the generated image", icon: "eye", tint: "cyan", required: false, config: ["threshold": "0.8"]),
-        PulseWorkflowNodeTemplate(id: "cover_retry", type: "pulse.cover_retry", label: "One retry", group: "Image", detail: "Retry a rejected image", icon: "arrow.clockwise", tint: "orange", required: false, config: ["max_attempts": "1"]),
-        PulseWorkflowNodeTemplate(id: "inject", type: "pulse.inject", label: "Publish", group: "Output", detail: "Send approved cards", icon: "arrow.down.to.line", tint: "green", required: true, config: [:])
-    ]
-
-    static func template(for type: String) -> PulseWorkflowNodeTemplate? {
-        all.first { $0.type == type }
+        config.mapValues(\.jsonValue)
     }
 }
 
@@ -111,47 +36,6 @@ struct PulseWorkflowDefinition: Hashable {
     var edges: [PulseWorkflowEdge]
     var positions: [String: PulseWorkflowPoint]
 
-    var hasVisualLoop: Bool {
-        hasVisualReview && hasCoverRetry
-    }
-
-    var hasVisualReview: Bool {
-        nodes.contains { $0.type == "pulse.visual_review" }
-    }
-
-    var hasCoverRetry: Bool {
-        nodes.contains { $0.type == "pulse.cover_retry" }
-    }
-
-    var hasVisualNodes: Bool {
-        hasVisualReview || hasCoverRetry
-    }
-
-    var validationMessage: String? {
-        let types = nodes.map(\.type)
-        let counts = Dictionary(grouping: types, by: { $0 }).mapValues(\.count)
-        if counts.values.contains(where: { $0 > 1 }) {
-            return "Pulse supports one instance of each node."
-        }
-        let missing = PulseWorkflowNodeTemplate.all.filter { $0.required && !types.contains($0.type) }
-        if let node = missing.first {
-            return "Add the required \(node.label) node."
-        }
-        if hasVisualReview != hasCoverRetry {
-            return hasVisualReview ? "Add One retry to complete the visual path." : "Add Visual review to complete the visual path."
-        }
-        if edges != expectedEdges {
-            return "Connect every node in the approved Pulse order."
-        }
-        return nil
-    }
-
-    var expectedEdges: [PulseWorkflowEdge] {
-        let orderedTypes = PulseWorkflowNodeTemplate.all.filter { $0.required || hasVisualLoop }.map(\.type)
-        let orderedNodes = orderedTypes.compactMap { type in nodes.first { $0.type == type } }
-        return Array(zip(orderedNodes, orderedNodes.dropFirst())).map { PulseWorkflowEdge(from: $0.id, to: $1.id) }
-    }
-
     mutating func normalizeEdgeOrder() {
         let order = Dictionary(uniqueKeysWithValues: nodes.enumerated().map { ($0.element.id, $0.offset) })
         edges.sort {
@@ -159,6 +43,10 @@ struct PulseWorkflowDefinition: Hashable {
             let right = order[$1.from] ?? Int.max
             return left == right ? (order[$0.to] ?? Int.max) < (order[$1.to] ?? Int.max) : left < right
         }
+    }
+
+    func node(withID id: String) -> PulseWorkflowNode? {
+        nodes.first { $0.id == id }
     }
 
     func jsonObject() -> [String: Any] {
@@ -177,9 +65,7 @@ struct PulseWorkflowDefinition: Hashable {
               let rawEdges = object["edges"] as? [[String: Any]] else { return nil }
         let nodes = rawNodes.compactMap { raw -> PulseWorkflowNode? in
             guard let id = raw["id"] as? String, let type = raw["type"] as? String else { return nil }
-            let config = (raw["config"] as? [String: Any] ?? [:]).reduce(into: [String: String]()) { result, item in
-                result[item.key] = String(describing: item.value)
-            }
+            let config = (raw["config"] as? [String: Any] ?? [:]).mapValues(WorkflowConfigValue.parse)
             return PulseWorkflowNode(id: id, type: type, config: config)
         }
         let edges = rawEdges.compactMap { raw -> PulseWorkflowEdge? in
@@ -194,7 +80,108 @@ struct PulseWorkflowDefinition: Hashable {
         }
         return nodes.isEmpty ? nil : PulseWorkflowDefinition(id: id, nodes: nodes, edges: edges, positions: positions)
     }
+}
 
+extension WorkflowCatalog {
+    func validationMessage(for definition: PulseWorkflowDefinition) -> String? {
+        var counts: [String: Int] = [:]
+        for node in definition.nodes { counts[node.type, default: 0] += 1 }
+        for stage in profile.spine {
+            guard let count = counts[stage] else { return "Add the required \(label(for: stage)) node." }
+            if count > 1 { return "Only one \(label(for: stage)) node is allowed." }
+        }
+        for pair in profile.pairs {
+            let present = pair.types.filter { counts[$0] != nil }
+            if !present.isEmpty, present.count != pair.types.count {
+                let missing = pair.types.filter { counts[$0] == nil }.map { label(for: $0) }.joined(separator: " and ")
+                return "Add \(missing) to complete this path."
+            }
+            for type in pair.types where counts[type, default: 0] > 1 {
+                return "Only one \(label(for: type)) node is allowed."
+            }
+        }
+        for entry in definition.nodes {
+            if profile.spine.contains(entry.type) || profile.pairTypes.contains(entry.type) { continue }
+            guard let spec = node(for: entry.type), spec.insertable,
+                  profile.insertableCategories.contains(spec.category) else {
+                return "\(label(for: entry.type)) cannot be added to this workflow."
+            }
+        }
+        guard !profile.spine.isEmpty else {
+            return isAcyclic(definition) ? nil : "Remove the cycle from this workflow."
+        }
+        guard let path = singlePath(definition) else { return "Connect every node into a single path." }
+        let order = path.compactMap { id in definition.node(withID: id)?.type }
+        guard order.first == profile.spine.first, order.last == profile.spine.last else {
+            return "The workflow must run from \(label(for: profile.spine.first ?? "")) to \(label(for: profile.spine.last ?? ""))."
+        }
+        guard order.filter({ profile.spine.contains($0) }) == profile.spine else {
+            return "Connect the core stages in order."
+        }
+        for pair in profile.pairs {
+            guard let firstType = pair.types.first, let start = order.firstIndex(of: firstType) else { continue }
+            let run = Array(order.dropFirst(start).prefix(pair.types.count))
+            guard run == pair.types else {
+                return "\(label(for: pair.types.last ?? "")) must directly follow \(label(for: firstType))."
+            }
+            guard let anchor = order.firstIndex(of: pair.after), let bound = order.firstIndex(of: pair.before),
+                  anchor < start, start + pair.types.count - 1 < bound else {
+                return "\(label(for: firstType)) belongs between \(label(for: pair.after)) and \(label(for: pair.before))."
+            }
+        }
+        return nil
+    }
+
+    func allowsConnection(from source: PulseWorkflowNode, to target: PulseWorkflowNode, in definition: PulseWorkflowDefinition) -> Bool {
+        guard source.id != target.id else { return false }
+        guard let sourceIndex = canonicalIndex(of: source.type),
+              let targetIndex = canonicalIndex(of: target.type) else { return true }
+        guard sourceIndex < targetIndex else { return false }
+        let installedBetween = definition.nodes.contains { node in
+            guard let index = canonicalIndex(of: node.type) else { return false }
+            return index > sourceIndex && index < targetIndex
+        }
+        return !installedBetween
+    }
+
+    private func singlePath(_ definition: PulseWorkflowDefinition) -> [String]? {
+        var outgoing: [String: String] = [:]
+        var indegree = Dictionary(uniqueKeysWithValues: definition.nodes.map { ($0.id, 0) })
+        var seen = Set<PulseWorkflowEdge>()
+        for edge in definition.edges {
+            guard !seen.contains(edge), outgoing[edge.from] == nil, indegree[edge.to] != nil else { return nil }
+            seen.insert(edge)
+            outgoing[edge.from] = edge.to
+            indegree[edge.to]! += 1
+        }
+        let starts = indegree.filter { $0.value == 0 }.map(\.key)
+        guard starts.count == 1, !indegree.values.contains(where: { $0 > 1 }) else { return nil }
+        var path = [starts[0]]
+        while let next = outgoing[path[path.count - 1]] {
+            path.append(next)
+            if path.count > definition.nodes.count { return nil }
+        }
+        return path.count == definition.nodes.count ? path : nil
+    }
+
+    private func isAcyclic(_ definition: PulseWorkflowDefinition) -> Bool {
+        var indegree = Dictionary(uniqueKeysWithValues: definition.nodes.map { ($0.id, 0) })
+        var downstream: [String: [String]] = [:]
+        for edge in definition.edges {
+            downstream[edge.from, default: []].append(edge.to)
+            indegree[edge.to, default: 0] += 1
+        }
+        var ready = indegree.filter { $0.value == 0 }.map(\.key)
+        var visited = 0
+        while let current = ready.popLast() {
+            visited += 1
+            for target in downstream[current] ?? [] {
+                indegree[target]! -= 1
+                if indegree[target] == 0 { ready.append(target) }
+            }
+        }
+        return visited == definition.nodes.count
+    }
 }
 
 struct PulseWorkflowVersion: Hashable {
@@ -213,11 +200,17 @@ struct PulseWorkflowVersion: Hashable {
     }
 }
 
+enum PulseWorkflowOutcome {
+    case success(PulseWorkflowVersion)
+    case rejected(String)
+    case failed
+}
+
 @MainActor
 struct PulseWorkflowClient {
     let base: URL
 
-    private func request(path: String, method: String = "GET", body: [String: Any]? = nil) async -> PulseWorkflowVersion? {
+    private func fetch(path: String, method: String = "GET", body: [String: Any]? = nil) async -> (Data, Int)? {
         var request = URLRequest(url: base.appendingPathComponent(path))
         request.httpMethod = method
         request.timeoutInterval = 8
@@ -226,25 +219,52 @@ struct PulseWorkflowClient {
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0),
-              let object = try? JSONSerialization.jsonObject(with: data),
-              let wrapped = object as? [String: Any] else { return nil }
-        return PulseWorkflowVersion.parse(wrapped["workflow"] as Any)
+              let status = (response as? HTTPURLResponse)?.statusCode else { return nil }
+        return (data, status)
+    }
+
+    private func request(path: String, method: String = "GET", body: [String: Any]? = nil) async -> PulseWorkflowOutcome {
+        guard let (data, status) = await fetch(path: path, method: method, body: body) else { return .failed }
+        if (200..<300).contains(status),
+           let object = try? JSONSerialization.jsonObject(with: data),
+           let wrapped = object as? [String: Any],
+           let version = PulseWorkflowVersion.parse(wrapped["workflow"] as Any) {
+            return .success(version)
+        }
+        if (400..<500).contains(status), let message = Self.rejectionMessage(from: data) {
+            return .rejected(message)
+        }
+        return .failed
+    }
+
+    static func rejectionMessage(from data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let detail = object["detail"] as? String, !detail.isEmpty else { return nil }
+        return detail
+    }
+
+    func catalog() async -> WorkflowCatalog? {
+        guard let (data, status) = await fetch(path: "/agentic/workflows/pulse/catalog"),
+              (200..<300).contains(status),
+              let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        return WorkflowCatalog.parse(object)
     }
 
     func active() async -> PulseWorkflowVersion? {
-        await request(path: "/agentic/workflows/pulse")
+        if case .success(let version) = await request(path: "/agentic/workflows/pulse") { return version }
+        return nil
     }
 
     func createDraft() async -> PulseWorkflowVersion? {
-        await request(path: "/agentic/workflows/pulse/drafts", method: "POST")
+        if case .success(let version) = await request(path: "/agentic/workflows/pulse/drafts", method: "POST") { return version }
+        return nil
     }
 
-    func save(_ version: PulseWorkflowVersion) async -> PulseWorkflowVersion? {
+    func save(_ version: PulseWorkflowVersion) async -> PulseWorkflowOutcome {
         await request(path: "/agentic/workflow-drafts/\(version.id)", method: "PUT", body: ["definition": version.definition.jsonObject()])
     }
 
-    func promote(_ version: PulseWorkflowVersion) async -> PulseWorkflowVersion? {
+    func promote(_ version: PulseWorkflowVersion) async -> PulseWorkflowOutcome {
         await request(path: "/agentic/workflow-drafts/\(version.id)/promote", method: "POST")
     }
 }
@@ -253,6 +273,7 @@ struct PulseWorkflowClient {
 final class PulseWorkflowStore: ObservableObject {
     enum Phase { case loading, unavailable, ready }
     @Published var phase: Phase = .loading
+    @Published var catalog: WorkflowCatalog?
     @Published var active: PulseWorkflowVersion?
     @Published var draft: PulseWorkflowVersion?
     @Published var selectedNodeID: String?
@@ -265,7 +286,10 @@ final class PulseWorkflowStore: ObservableObject {
     var displayed: PulseWorkflowVersion? { draft ?? active }
     var isEditing: Bool { draft != nil }
     var changed: Bool { draft?.definition != active?.definition }
-    var validationMessage: String? { displayed?.definition.validationMessage }
+    var validationMessage: String? {
+        guard let catalog, let definition = displayed?.definition else { return nil }
+        return catalog.validationMessage(for: definition)
+    }
     var canSave: Bool { isEditing && changed && validationMessage == nil && !busy }
     var canPromote: Bool { isEditing && validationMessage == nil && !busy }
 
@@ -276,6 +300,8 @@ final class PulseWorkflowStore: ObservableObject {
 
     func refresh() async {
         guard let client else { phase = .unavailable; return }
+        guard let served = await client.catalog() else { phase = .unavailable; return }
+        catalog = served
         guard let workflow = await client.active() else { phase = .unavailable; return }
         active = workflow
         if draft == nil { selectedNodeID = workflow.definition.nodes.first?.id }
@@ -305,65 +331,62 @@ final class PulseWorkflowStore: ObservableObject {
     }
 
     func placeNodeInDraft(_ type: String, at point: CGPoint) {
-        guard var draft, let template = PulseWorkflowNodeTemplate.template(for: type) else { return }
+        guard var draft, let catalog, let spec = catalog.node(for: type) else { return }
         let position = PulseWorkflowPoint(x: max(90, point.x), y: max(70, point.y))
-        if let existing = draft.definition.nodes.first(where: { $0.type == type }) {
+        let singleInstance = catalog.canonicalIndex(of: type) != nil
+        if singleInstance, let existing = draft.definition.nodes.first(where: { $0.type == type }) {
             draft.definition.positions[existing.id] = position
             self.draft = draft
             selectedNodeID = existing.id
-            note = "\(existing.label) moved."
+            note = "\(spec.label) moved."
             return
         }
-        let canonicalTypes = PulseWorkflowNodeTemplate.all.map(\.type)
-        let index = draft.definition.nodes.firstIndex { node in
-            guard let nodeOrder = canonicalTypes.firstIndex(of: node.type),
-                  let newOrder = canonicalTypes.firstIndex(of: type) else { return false }
-            return nodeOrder > newOrder
+        let node = PulseWorkflowNode(id: nodeID(for: type, in: draft.definition), type: type, config: spec.defaultConfig)
+        let index = draft.definition.nodes.firstIndex { existing in
+            guard let existingOrder = catalog.canonicalIndex(of: existing.type),
+                  let newOrder = catalog.canonicalIndex(of: type) else { return false }
+            return existingOrder > newOrder
         } ?? draft.definition.nodes.endIndex
-        let node = template.node()
         draft.definition.nodes.insert(node, at: index)
         draft.definition.positions[node.id] = position
-        if type == "pulse.visual_review" || type == "pulse.cover_retry" {
-            draft.definition.edges.removeAll { edge in
-                let source = draft.definition.nodes.first { $0.id == edge.from }?.type
-                let target = draft.definition.nodes.first { $0.id == edge.to }?.type
-                return source == "pulse.cover_art" && target == "pulse.inject"
-            }
+        if let edge = nearestEdge(to: point, in: draft.definition) {
+            draft.definition.edges.removeAll { $0 == edge }
+            draft.definition.edges.append(PulseWorkflowEdge(from: edge.from, to: node.id))
+            draft.definition.edges.append(PulseWorkflowEdge(from: node.id, to: edge.to))
+            draft.definition.normalizeEdgeOrder()
+            note = "\(spec.label) inserted into the path."
+        } else {
+            note = "\(spec.label) added. Connect it to complete the workflow."
         }
         self.draft = draft
         selectedNodeID = node.id
-        note = "\(node.label) added. Connect it to complete the workflow."
     }
 
     func removeSelectedNode() {
-        guard var draft, let id = selectedNodeID,
-              let node = draft.definition.nodes.first(where: { $0.id == id }),
-              PulseWorkflowNodeTemplate.template(for: node.type)?.required == false else { return }
+        guard var draft, let catalog, let id = selectedNodeID,
+              let node = draft.definition.node(withID: id),
+              !catalog.isRequired(node.type) else { return }
+        let incoming = draft.definition.edges.filter { $0.to == id }
+        let outgoing = draft.definition.edges.filter { $0.from == id }
         draft.definition.nodes.removeAll { $0.id == id }
         draft.definition.edges.removeAll { $0.from == id || $0.to == id }
         draft.definition.positions[id] = nil
-        if !draft.definition.hasVisualNodes,
-           let cover = draft.definition.nodes.first(where: { $0.type == "pulse.cover_art" }),
-           let publish = draft.definition.nodes.first(where: { $0.type == "pulse.inject" }) {
-            draft.definition.edges.removeAll { $0.from == cover.id || $0.to == publish.id }
-            draft.definition.edges.append(PulseWorkflowEdge(from: cover.id, to: publish.id))
+        if let source = incoming.first?.from, let target = outgoing.first?.to,
+           incoming.count == 1, outgoing.count == 1 {
+            let bridge = PulseWorkflowEdge(from: source, to: target)
+            if !draft.definition.edges.contains(bridge) {
+                draft.definition.edges.append(bridge)
+                draft.definition.normalizeEdgeOrder()
+            }
         }
         self.draft = draft
         selectedNodeID = draft.definition.nodes.first?.id
         connectionSourceID = nil
-        note = "\(node.label) removed."
+        note = "\(catalog.label(for: node.type)) removed."
     }
 
-    func setStyle(_ style: String) {
-        mutateSelected { node in node.config["style"] = style }
-    }
-
-    func setThreshold(_ threshold: Double) {
-        mutateSelected { node in node.config["threshold"] = threshold.formatted(.number.precision(.fractionLength(1))) }
-    }
-
-    func setAttempts(_ attempts: Int) {
-        mutateSelected { node in node.config["max_attempts"] = String(attempts) }
+    func setConfigValue(_ key: String, _ value: WorkflowConfigValue) {
+        mutateSelected { node in node.config[key] = value }
     }
 
     func moveNode(_ id: String, by translation: CGSize) {
@@ -390,11 +413,11 @@ final class PulseWorkflowStore: ObservableObject {
 
     func completeConnection(to nodeID: String) {
         guard let source = connectionSourceID, source != nodeID else { return }
-        guard let draft,
-              let sourceNode = draft.definition.nodes.first(where: { $0.id == source }),
-              let targetNode = draft.definition.nodes.first(where: { $0.id == nodeID }),
-              approvedConnection(from: sourceNode.type, to: targetNode.type, in: draft.definition) else {
-            note = "That connection is not valid for Pulse."
+        guard let draft, let catalog,
+              let sourceNode = draft.definition.node(withID: source),
+              let targetNode = draft.definition.node(withID: nodeID),
+              catalog.allowsConnection(from: sourceNode, to: targetNode, in: draft.definition) else {
+            note = "That connection is not valid for this workflow."
             return
         }
         var next = draft
@@ -408,30 +431,48 @@ final class PulseWorkflowStore: ObservableObject {
 
     func save() async {
         guard let client, let draft else { return }
-        guard draft.definition.validationMessage == nil else {
-            note = draft.definition.validationMessage
+        if let message = validationMessage {
+            note = message
             return
         }
         busy = true
         defer { busy = false }
-        guard let saved = await client.save(draft) else { note = "The server rejected this graph."; return }
-        self.draft = saved
-        note = "Draft saved. Promote it when you want Pulse to use it."
+        switch await client.save(draft) {
+        case .success(let saved):
+            self.draft = saved
+            note = "Draft saved. Promote it when you want Pulse to use it."
+        case .rejected(let message):
+            note = message
+        case .failed:
+            note = "Couldn’t reach the server to save this draft."
+        }
     }
 
     func promote() async {
         guard let client, let draft else { return }
-        guard draft.definition.validationMessage == nil else {
-            note = draft.definition.validationMessage
+        if let message = validationMessage {
+            note = message
             return
         }
         busy = true
         defer { busy = false }
-        guard let saved = await client.save(draft) else { note = "The server rejected this graph."; return }
-        guard let promoted = await client.promote(saved) else { note = "Couldn’t promote this draft."; return }
-        active = promoted
-        self.draft = nil
-        note = "This workflow is active for future Pulse runs."
+        switch await client.save(draft) {
+        case .success(let saved):
+            switch await client.promote(saved) {
+            case .success(let promoted):
+                active = promoted
+                self.draft = nil
+                note = "This workflow is active for future Pulse runs."
+            case .rejected(let message):
+                note = message
+            case .failed:
+                note = "Couldn’t promote this draft."
+            }
+        case .rejected(let message):
+            note = message
+        case .failed:
+            note = "Couldn’t reach the server to save this draft."
+        }
     }
 
     private func mutateSelected(_ change: (inout PulseWorkflowNode) -> Void) {
@@ -441,31 +482,54 @@ final class PulseWorkflowStore: ObservableObject {
         self.draft = draft
     }
 
-    private func approvedConnection(from: String, to: String, in definition: PulseWorkflowDefinition) -> Bool {
-        if definition.hasVisualNodes, from == "pulse.cover_art", to == "pulse.inject" { return false }
-        let pairs = [
-            ("pulse.triage", "pulse.gates"),
-            ("pulse.gates", "pulse.synthesis"),
-            ("pulse.synthesis", "pulse.claim_audit"),
-            ("pulse.claim_audit", "pulse.cover_art"),
-            ("pulse.cover_art", "pulse.visual_review"),
-            ("pulse.cover_art", "pulse.inject"),
-            ("pulse.visual_review", "pulse.cover_retry"),
-            ("pulse.cover_retry", "pulse.inject")
-        ]
-        return pairs.contains { $0.0 == from && $0.1 == to }
+    private func nodeID(for type: String, in definition: PulseWorkflowDefinition) -> String {
+        let base = type.split(separator: ".").last.map(String.init) ?? type
+        if definition.node(withID: base) == nil { return base }
+        var counter = 2
+        while definition.node(withID: "\(base)-\(counter)") != nil { counter += 1 }
+        return "\(base)-\(counter)"
+    }
+
+    private func nearestEdge(to point: CGPoint, in definition: PulseWorkflowDefinition) -> PulseWorkflowEdge? {
+        var best: (edge: PulseWorkflowEdge, distance: CGFloat)?
+        for edge in definition.edges {
+            guard let from = definition.positions[edge.from], let to = definition.positions[edge.to] else { continue }
+            let start = CGPoint(x: from.x + 82, y: from.y)
+            let end = CGPoint(x: to.x - 82, y: to.y)
+            let distance = distanceToWire(point, start, end)
+            if distance < 46, distance < (best?.distance ?? .greatestFiniteMagnitude) {
+                best = (edge, distance)
+            }
+        }
+        return best?.edge
+    }
+
+    private func distanceToWire(_ point: CGPoint, _ start: CGPoint, _ end: CGPoint) -> CGFloat {
+        let dx = (end.x - start.x) * 0.42
+        let control1 = CGPoint(x: start.x + dx, y: start.y)
+        let control2 = CGPoint(x: end.x - dx, y: end.y)
+        var best = CGFloat.greatestFiniteMagnitude
+        for sample in 0...24 {
+            let t = CGFloat(sample) / 24
+            let u = 1 - t
+            let x = u * u * u * start.x + 3 * u * u * t * control1.x + 3 * u * t * t * control2.x + t * t * t * end.x
+            let y = u * u * u * start.y + 3 * u * u * t * control1.y + 3 * u * t * t * control2.y + t * t * t * end.y
+            best = min(best, hypot(point.x - x, point.y - y))
+        }
+        return best
     }
 
     static func fixture(editing: Bool = false) -> PulseWorkflowStore {
         let store = PulseWorkflowStore()
+        store.catalog = WorkflowCatalog.fixture()
         let nodes = [
             PulseWorkflowNode(id: "triage", type: "pulse.triage", config: [:]),
             PulseWorkflowNode(id: "gates", type: "pulse.gates", config: [:]),
             PulseWorkflowNode(id: "synthesis", type: "pulse.synthesis", config: [:]),
             PulseWorkflowNode(id: "claim_audit", type: "pulse.claim_audit", config: [:]),
-            PulseWorkflowNode(id: "cover_art", type: "pulse.cover_art", config: ["style": "editorial"]),
-            PulseWorkflowNode(id: "visual_review", type: "pulse.visual_review", config: ["threshold": "0.8"]),
-            PulseWorkflowNode(id: "cover_retry", type: "pulse.cover_retry", config: ["max_attempts": "1"]),
+            PulseWorkflowNode(id: "cover_art", type: "pulse.cover_art", config: ["style": .string("editorial")]),
+            PulseWorkflowNode(id: "visual_review", type: "pulse.visual_review", config: ["threshold": .double(0.8)]),
+            PulseWorkflowNode(id: "cover_retry", type: "pulse.cover_retry", config: ["max_attempts": .int(1)]),
             PulseWorkflowNode(id: "inject", type: "pulse.inject", config: [:])
         ]
         let definition = PulseWorkflowDefinition(id: "pulse", nodes: nodes,
@@ -478,6 +542,32 @@ final class PulseWorkflowStore: ObservableObject {
         store.selectedNodeID = "visual_review"
         store.phase = .ready
         return store
+    }
+}
+
+extension WorkflowCatalog {
+    static func fixture() -> WorkflowCatalog? {
+        let json = """
+        {"nodes":[
+          {"type":"pulse.triage","label":"Triage","icon":"globe","tint":"accent","category":"core","config_schema":{},"insertable":false},
+          {"type":"pulse.gates","label":"Gates","icon":"line.3.horizontal.decrease.circle","tint":"orange","category":"core","config_schema":{},"insertable":false},
+          {"type":"pulse.synthesis","label":"Synthesis","icon":"sparkles","tint":"purple","category":"core","config_schema":{},"insertable":false},
+          {"type":"pulse.claim_audit","label":"Claim audit","icon":"checkmark.shield","tint":"cyan","category":"core","config_schema":{},"insertable":false},
+          {"type":"pulse.cover_art","label":"Cover art","icon":"photo","tint":"purple","category":"core",
+           "config_schema":{"style":{"type":"choice","default":"rotating","options":["rotating","photographic","illustrated","editorial"]}},"insertable":false},
+          {"type":"pulse.visual_review","label":"Visual review","icon":"eye","tint":"cyan","category":"visual",
+           "config_schema":{"threshold":{"type":"number","min":0,"max":1,"default":0.8}},"insertable":false},
+          {"type":"pulse.cover_retry","label":"One retry","icon":"arrow.clockwise","tint":"orange","category":"visual",
+           "config_schema":{"max_attempts":{"type":"choice","options":[0,1],"default":1}},"insertable":false},
+          {"type":"pulse.inject","label":"Inject","icon":"arrow.down.to.line","tint":"green","category":"core","config_schema":{},"insertable":false}
+        ],
+        "profile":{"id":"pulse",
+          "spine":["pulse.triage","pulse.gates","pulse.synthesis","pulse.claim_audit","pulse.cover_art","pulse.inject"],
+          "insertable_categories":["transform","enrich","notify"],
+          "pairs":[{"types":["pulse.visual_review","pulse.cover_retry"],"after":"pulse.cover_art","before":"pulse.inject"}]}}
+        """
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) else { return nil }
+        return WorkflowCatalog.parse(object)
     }
 }
 
@@ -522,12 +612,6 @@ struct PulseWorkflowPalette: View {
         .onAppear { searchText = "" }
     }
 
-    private var paletteGroups: [String] {
-        PulseWorkflowNodeTemplate.all.reduce(into: [String]()) { result, template in
-            if !result.contains(template.group) { result.append(template.group) }
-        }
-    }
-
     @ViewBuilder private var searchField: some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
@@ -548,13 +632,13 @@ struct PulseWorkflowPalette: View {
 
     private var paletteList: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ForEach(paletteGroups, id: \.self) { group in
-                let templates = visibleTemplates.filter { $0.group == group }
-                if !templates.isEmpty {
+            ForEach(store.catalog?.paletteCategories ?? [], id: \.self) { category in
+                let entries = visibleEntries.filter { $0.category == category }
+                if !entries.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(group.uppercased()).font(.system(size: 9, weight: .bold))
+                        Text(category.uppercased()).font(.system(size: 9, weight: .bold))
                             .tracking(0.7).foregroundStyle(Theme.textSecondary.opacity(0.68))
-                        ForEach(templates) { template in paletteNode(template) }
+                        ForEach(entries) { entry in paletteNode(entry) }
                     }
                 }
             }
@@ -562,29 +646,30 @@ struct PulseWorkflowPalette: View {
         .padding(.bottom, 12)
     }
 
-    private var visibleTemplates: [PulseWorkflowNodeTemplate] {
+    private var visibleEntries: [WorkflowCatalogNode] {
+        let all = store.catalog?.paletteNodes ?? []
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return PulseWorkflowNodeTemplate.all }
-        return PulseWorkflowNodeTemplate.all.filter {
-            $0.label.localizedCaseInsensitiveContains(query) || $0.detail.localizedCaseInsensitiveContains(query)
+        guard !query.isEmpty else { return all }
+        return all.filter {
+            $0.label.localizedCaseInsensitiveContains(query) || $0.type.localizedCaseInsensitiveContains(query)
         }
     }
 
-    private func paletteNode(_ template: PulseWorkflowNodeTemplate) -> some View {
-        let installed = store.displayed?.definition.nodes.contains { $0.type == template.type } ?? false
+    private func paletteNode(_ entry: WorkflowCatalogNode) -> some View {
+        let installed = store.displayed?.definition.nodes.contains { $0.type == entry.type } ?? false
         return Group {
             if snapshot {
-                paletteNodeLabel(template, installed: installed)
+                paletteNodeLabel(entry, installed: installed)
             } else {
-                paletteNodeLabel(template, installed: installed)
+                paletteNodeLabel(entry, installed: installed)
                 .onTapGesture {
-                    if let node = store.displayed?.definition.nodes.first(where: { $0.type == template.type }) {
+                    if installed, let node = store.displayed?.definition.nodes.first(where: { $0.type == entry.type }) {
                         store.selectedNodeID = node.id
                     } else {
-                        Task { await store.placeNode(template.type, at: CGPoint(x: 360, y: 320)) }
+                        Task { await store.placeNode(entry.type, at: CGPoint(x: 360, y: 320)) }
                     }
                 }
-                .onDrag { NSItemProvider(object: template.type as NSString) }
+                .onDrag { NSItemProvider(object: entry.type as NSString) }
                 .help(installed ? "Drag to reposition" : "Drag to add")
                 .opacity(store.phase == .ready && !store.busy ? 1 : 0.5)
                 .allowsHitTesting(store.phase == .ready && !store.busy)
@@ -592,14 +677,14 @@ struct PulseWorkflowPalette: View {
         }
     }
 
-    private func paletteNodeLabel(_ template: PulseWorkflowNodeTemplate, installed: Bool) -> some View {
+    private func paletteNodeLabel(_ entry: WorkflowCatalogNode, installed: Bool) -> some View {
         HStack(spacing: 9) {
-            Image(systemName: template.icon).font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(graphTint(template.tint)).frame(width: 30, height: 30)
-                .background(graphTint(template.tint).opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 8))
+            Image(systemName: entry.icon).font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(graphTint(entry.tint)).frame(width: 30, height: 30)
+                .background(graphTint(entry.tint).opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 2) {
-                Text(template.label).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                Text(template.detail).font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Text(entry.label).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                Text(entry.type).font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 0)
             Image(systemName: installed ? "scope" : "plus")
@@ -693,7 +778,8 @@ struct PulseWorkflowEditor: View {
                         }
                         ForEach(workflow.definition.nodes) { node in
                             if let point = workflow.definition.positions[node.id] {
-                                WorkflowNodeCard(node: node, selected: store.selectedNodeID == node.id,
+                                WorkflowNodeCard(node: node, spec: store.catalog?.node(for: node.type),
+                                                 selected: store.selectedNodeID == node.id,
                                                  connecting: store.connectionSourceID == node.id,
                                                  onInput: store.isEditing ? { store.completeConnection(to: node.id) } : nil,
                                                  onOutput: store.isEditing ? { store.startConnection(from: node.id) } : nil)
@@ -711,9 +797,11 @@ struct PulseWorkflowEditor: View {
                     .onDrop(of: [UTType.plainText], isTargeted: nil) { providers, location in
                         guard let provider = providers.first else { return false }
                         provider.loadObject(ofClass: NSString.self) { object, _ in
-                            guard let type = object as? String,
-                                  PulseWorkflowNodeTemplate.template(for: type) != nil else { return }
-                            Task { @MainActor in await store.placeNode(type, at: location) }
+                            guard let type = object as? String else { return }
+                            Task { @MainActor in
+                                guard store.catalog?.node(for: type) != nil else { return }
+                                await store.placeNode(type, at: location)
+                            }
                         }
                         return true
                     }
@@ -745,7 +833,8 @@ struct PulseWorkflowEditor: View {
             }
             ForEach(workflow.definition.nodes) { node in
                 if let point = workflow.definition.positions[node.id] {
-                    WorkflowNodeCard(node: node, selected: store.selectedNodeID == node.id)
+                    WorkflowNodeCard(node: node, spec: store.catalog?.node(for: node.type),
+                                     selected: store.selectedNodeID == node.id)
                         .position(x: point.x, y: point.y)
                 }
             }
@@ -758,24 +847,24 @@ struct PulseWorkflowEditor: View {
 
     @ViewBuilder private var inspector: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let selected = store.displayed?.definition.nodes.first(where: { $0.id == store.selectedNodeID }),
-               let template = PulseWorkflowNodeTemplate.template(for: selected.type) {
+            if let selected = store.displayed?.definition.nodes.first(where: { $0.id == store.selectedNodeID }) {
+                let spec = store.catalog?.node(for: selected.type)
                 HStack(spacing: 10) {
-                    Image(systemName: template.icon).font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(graphTint(template.tint)).frame(width: 34, height: 34)
-                        .background(graphTint(template.tint).opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 9))
+                    Image(systemName: spec?.icon ?? "puzzlepiece").font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(graphTint(spec?.tint ?? "accent")).frame(width: 34, height: 34)
+                        .background(graphTint(spec?.tint ?? "accent").opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 9))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(selected.label).font(.system(size: 14, weight: .semibold))
-                        Text(template.detail).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                        Text(spec?.label ?? selected.type).font(.system(size: 14, weight: .semibold))
+                        Text(spec?.categoryLabel ?? "Node").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
                     }
                 }
                 .padding(16)
                 Divider().overlay(Theme.hairline)
                 Group {
                     if snapshot {
-                        inspectorContent(selected: selected, template: template)
+                        inspectorContent(selected: selected, spec: spec)
                     } else {
-                        ScrollView { inspectorContent(selected: selected, template: template) }
+                        ScrollView { inspectorContent(selected: selected, spec: spec) }
                     }
                 }
             } else {
@@ -791,11 +880,11 @@ struct PulseWorkflowEditor: View {
         .frame(width: 286).frame(maxHeight: .infinity, alignment: .topLeading).background(Theme.bg)
     }
 
-    private func inspectorContent(selected: PulseWorkflowNode, template: PulseWorkflowNodeTemplate) -> some View {
+    private func inspectorContent(selected: PulseWorkflowNode, spec: WorkflowCatalogNode?) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             inspectorSection("Parameters") {
                 if store.isEditing {
-                    controls(for: selected)
+                    controls(for: selected, spec: spec)
                 } else {
                     Text("Create a draft to configure this node.")
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
@@ -806,7 +895,7 @@ struct PulseWorkflowEditor: View {
                 Text(note).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if store.isEditing, !template.required {
+            if store.isEditing, store.catalog?.isRequired(selected.type) == false {
                 Divider().overlay(Theme.hairline)
                 Button(role: .destructive) { store.removeSelectedNode() } label: {
                     Label("Delete node", systemImage: "trash")
@@ -833,11 +922,12 @@ struct PulseWorkflowEditor: View {
             VStack(spacing: 6) {
                 ForEach(Array(edges.enumerated()), id: \.offset) { _, edge in
                     let peerID = edge.from == node.id ? edge.to : edge.from
-                    let peer = store.displayed?.definition.nodes.first { $0.id == peerID }
+                    let peer = store.displayed?.definition.node(withID: peerID)
                     HStack(spacing: 7) {
                         Image(systemName: edge.from == node.id ? "arrow.right" : "arrow.left")
                             .font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.textSecondary)
-                        Text(peer?.label ?? peerID).font(.system(size: 10.5, weight: .medium))
+                        Text(peer.map { store.catalog?.label(for: $0.type) ?? $0.type } ?? peerID)
+                            .font(.system(size: 10.5, weight: .medium))
                         Spacer()
                         if store.isEditing {
                             Button { store.removeEdge(edge) } label: { Image(systemName: "xmark") }
@@ -851,67 +941,107 @@ struct PulseWorkflowEditor: View {
         }
     }
 
-    @ViewBuilder private func controls(for node: PulseWorkflowNode) -> some View {
-        switch node.type {
-        case "pulse.cover_art":
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Style profile").font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                Picker("", selection: Binding(get: { node.config["style"] ?? "rotating" }, set: { value in store.setStyle(value) })) {
-                    Text("Rotating").tag("rotating")
-                    Text("Photographic").tag("photographic")
-                    Text("Illustrated").tag("illustrated")
-                    Text("Editorial").tag("editorial")
-                }.labelsHidden().pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+    @ViewBuilder private func controls(for node: PulseWorkflowNode, spec: WorkflowCatalogNode?) -> some View {
+        if let fields = spec?.fields, !fields.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(fields) { field in
+                    fieldControl(field, node: node)
+                }
             }
-        case "pulse.visual_review":
-            let threshold = Double(node.config["threshold"] ?? "0.8") ?? 0.8
+        } else {
+            Text("This node has no editable parameters.").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+        }
+    }
+
+    @ViewBuilder private func fieldControl(_ field: WorkflowSchemaField, node: PulseWorkflowNode) -> some View {
+        let current = node.config[field.key] ?? field.defaultValue
+        switch field.kind {
+        case .choice(let options):
+            VStack(alignment: .leading, spacing: 6) {
+                Text(field.label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                let picker = Picker("", selection: Binding(get: { current ?? options[0] }, set: { value in store.setConfigValue(field.key, value) })) {
+                    ForEach(options, id: \.self) { option in
+                        Text(option.display).tag(option)
+                    }
+                }
+                .labelsHidden()
+                if options.count <= 3 {
+                    picker.pickerStyle(.segmented).frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    picker.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        case .number(let low, let high):
+            let value = current?.doubleValue ?? low ?? high ?? 0
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Review threshold").font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    Text(field.label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
                     Spacer()
-                    Text(threshold.formatted(.number.precision(.fractionLength(1))))
-                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                }
-                if snapshot {
-                    GeometryReader { proxy in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Theme.surface)
-                            Capsule().fill(Theme.accent).frame(width: proxy.size.width * threshold)
-                            Circle().fill(Theme.textPrimary).frame(width: 12, height: 12)
-                                .offset(x: max(0, proxy.size.width * threshold - 6))
-                        }
+                    if let low, let high, low < high {
+                        let step = high - low <= 2 ? 0.1 : 1
+                        Text(value.formatted(.number.precision(.fractionLength(step < 1 ? 1 : 0))))
+                            .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                     }
-                    .frame(height: 12)
+                }
+                if let low, let high, low < high {
+                    let step = high - low <= 2 ? 0.1 : 1
+                    if snapshot {
+                        GeometryReader { proxy in
+                            let fraction = (value - low) / (high - low)
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Theme.surface)
+                                Capsule().fill(Theme.accent).frame(width: proxy.size.width * fraction)
+                                Circle().fill(Theme.textPrimary).frame(width: 12, height: 12)
+                                    .offset(x: max(0, proxy.size.width * fraction - 6))
+                            }
+                        }
+                        .frame(height: 12)
+                    } else {
+                        Slider(value: Binding(get: { min(max(value, low), high) }, set: { newValue in
+                            store.setConfigValue(field.key, step < 1 ? .double((newValue * 10).rounded() / 10) : .double(newValue.rounded()))
+                        }), in: low...high, step: step)
+                    }
+                } else if snapshot {
+                    Text(value.formatted(.number))
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                 } else {
-                    Slider(value: Binding(get: { threshold }, set: { value in store.setThreshold(value) }), in: 0...1, step: 0.1)
+                    TextField("", value: Binding(get: { value }, set: { newValue in
+                        var bounded = newValue
+                        if let low { bounded = max(low, bounded) }
+                        if let high { bounded = min(high, bounded) }
+                        store.setConfigValue(field.key, .double(bounded))
+                    }), format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
                 }
             }
-        case "pulse.cover_retry":
-            let attempts = Int(node.config["max_attempts"] ?? "1") ?? 1
-            Toggle("Allow one retry", isOn: Binding(get: { attempts == 1 }, set: { store.setAttempts($0 ? 1 : 0) }))
-                .toggleStyle(.switch).font(.system(size: 11))
-        default:
-            Text("This node has no editable parameters.").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+        case .bool:
+            Toggle(field.label, isOn: Binding(get: {
+                if case .bool(let flag) = current { return flag }
+                return false
+            }, set: { flag in store.setConfigValue(field.key, .bool(flag)) }))
+            .toggleStyle(.switch).font(.system(size: 11))
         }
     }
 }
 
 struct WorkflowNodeCard: View {
     let node: PulseWorkflowNode
+    var spec: WorkflowCatalogNode?
     var selected: Bool
     var connecting: Bool = false
     var onInput: (() -> Void)? = nil
     var onOutput: (() -> Void)? = nil
 
     var body: some View {
-        let template = PulseWorkflowNodeTemplate.template(for: node.type)
         HStack(spacing: 10) {
-            Image(systemName: node.icon).font(.system(size: 14, weight: .semibold)).foregroundStyle(graphTint(node.tint))
-                .frame(width: 34, height: 34).background(graphTint(node.tint).opacity(0.12))
+            Image(systemName: spec?.icon ?? "puzzlepiece").font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(graphTint(spec?.tint ?? "accent"))
+                .frame(width: 34, height: 34).background(graphTint(spec?.tint ?? "accent").opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 9))
             VStack(alignment: .leading, spacing: 2) {
-                Text(node.label).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-                Text(template?.group ?? "Node").font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary)
+                Text(spec?.label ?? node.type).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                Text(spec?.categoryLabel ?? "Node").font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary)
             }
             Spacer(minLength: 0)
         }

@@ -101,3 +101,15 @@ def test_vision_arbitration_noops_outside_vera_protocol(monkeypatch):
     an unroutable base proves no call is made (it would exceed the timeout otherwise)."""
     monkeypatch.setenv("VERA_IMAGE_BASE", "http://192.0.2.1:1")
     asyncio.run(asyncio.wait_for(pulse._vision(pause=True), timeout=0.5))
+
+
+def test_retry_seed_is_distinct_from_the_first_cover_seed():
+    _, first = pulse._image_request("prompt", "style", 0, "vera")
+    _, retry = pulse._image_request("prompt", "style", 1_000_000, "vera")
+    assert retry["seed"] != first["seed"]
+
+
+def test_disabled_vision_integration_never_falls_back_to_environment(monkeypatch):
+    from routers import integrations
+    monkeypatch.setattr(integrations, "integration", lambda _iid: None)
+    assert pulse.pulse_images._vision_config() == ("", "")

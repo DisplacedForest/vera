@@ -1,4 +1,5 @@
 import base64
+import json
 import logging
 import os
 import re
@@ -12,6 +13,13 @@ from .pulse_llm import OWUI_BASE, OWUI_KEY, _request_json
 log = logging.getLogger("vera.pulse")
 
 VERA_IMAGE_BASE = os.environ.get("VERA_IMAGE_BASE", "")          # optional image-gen service; cards skip cover art without it
+def _vision_config() -> tuple[str, str]:
+    try:
+        from . import integrations
+        config = integrations.integration("vision_review") or {}
+    except Exception:
+        config = {}
+    return config.get("url", "").rstrip("/"), config.get("model", "")
 
 
 # Image generation resolves through the integrations registry's 'image_gen' entry
@@ -110,6 +118,38 @@ async def _vision(pause: bool):
                          timeout=aiohttp.ClientTimeout(total=40))
     except Exception:
         pass
+
+
+async def review_cover(image_url: str, headline: str, summary: str, body: str) -> dict | None:
+    vision_base, vision_model = _vision_config()
+    if not vision_base or not vision_model or not image_url:
+        return None
+    base = vision_base if vision_base.endswith("/v1") else f"{vision_base}/v1"
+    prompt = (
+        "Review this briefing-card image against the supplied story. Return JSON only with "
+        "accept (boolean), score (number from zero to one), and reason (short string). Reject only if it is unrelated, contains "
+        "prominent text or logos, or fails to depict the main subject. Story: "
+        f"Headline: {headline}. Summary: {summary}. Body: {body[:600]}"
+    )
+    payload = {"model": vision_model, "temperature": 0,
+               "messages": [{"role": "user", "content": [
+                   {"type": "text", "text": prompt},
+                   {"type": "image_url", "image_url": {"url": image_url}},
+               ]}]}
+    try:
+        response = await _request_json("POST", f"{base}/chat/completions", timeout=120, json=payload)
+        content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        verdict = json.loads(match.group(0) if match else content)
+        if not isinstance(verdict.get("accept"), bool):
+            return None
+        score = verdict.get("score")
+        if not isinstance(score, (int, float)):
+            score = 1.0 if verdict["accept"] else 0.0
+        return {"accept": verdict["accept"], "score": max(0.0, min(1.0, float(score))),
+                "reason": str(verdict.get("reason") or "")[:300]}
+    except Exception:
+        return None
 
 
 async def _upload_image(img_bytes, filename, content_type="image/png"):
@@ -232,7 +272,7 @@ async def _gather_images(idx, entity_query, top_sources):
     return images
 
 
-async def make_cover(headline, summary, body, topic, inline_images, idx, errs):
+async def make_cover(headline, summary, body, topic, inline_images, idx, errs, style_profile="rotating"):
     # Cover art: Vera writes a vibe-matching prompt from the card's own synthesis (headline +
     # summary + story), not the triage working title; style rotates for a fresh feed.
     from . import pulse
@@ -250,7 +290,14 @@ async def make_cover(headline, summary, body, topic, inline_images, idx, errs):
                 temperature=0.8,
             )
         ).strip().strip('"')
-        image_url, tint = await pulse._gen_image(img_prompt, STYLE_PALETTE[idx % len(STYLE_PALETTE)], idx)
+        profiles = {
+            "rotating": STYLE_PALETTE,
+            "photographic": [STYLE_PALETTE[0]],
+            "illustrated": [STYLE_PALETTE[2]],
+            "editorial": [STYLE_PALETTE[3]],
+        }
+        palette = profiles.get(style_profile, STYLE_PALETTE)
+        image_url, tint = await pulse._gen_image(img_prompt, palette[idx % len(palette)], idx)
         cover_generated = image_url is not None
     except Exception as e:
         errs.append(f"cover {topic.get('title')}: {e}")

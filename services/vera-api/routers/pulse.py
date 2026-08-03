@@ -27,6 +27,7 @@ from . import pulse_images
 from . import pulse_gates
 from . import pulse_synthesis
 from . import pulse_audit
+from . import workflow_store
 from .websearch import search as web_search
 from .pulse_llm import (
     OWUI_BASE, OWUI_KEY, VERA_BASE, MODEL, TZ,
@@ -182,7 +183,7 @@ def _assemble_card(headline, topic, summary, body, image_url, tint, sources, inl
 
 
 async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", errors=None,
-                         defer_audit=False, outcome=None):
+                         defer_audit=False, outcome=None, style_profile="rotating"):
     """The per-topic deep-research pipeline: broad search -> thread extraction ->
     follow-up searches -> real imagery -> first-person synthesis -> summary -> cover art -> inject.
 
@@ -258,7 +259,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
 
     summary = await _summarize(body)
 
-    image_url, tint, cover_generated = await make_cover(headline, summary, body, topic, inline_images, idx, errs)
+    image_url, tint, cover_generated = await make_cover(headline, summary, body, topic, inline_images, idx, errs, style_profile)
     oc["cover_generated"] = cover_generated
 
     card = _assemble_card(headline, topic, summary, body, image_url, tint, sources, inline_images,
@@ -308,7 +309,11 @@ async def _build_run_context(req, out):
     return user_id, who, persona, all_interests, memories
 
 
-async def _run_novelty_loop(req, out, user_id, who, persona, all_interests, memories, target):
+def _workflow_node(workflow_definition, node_type):
+    return next((node for node in (workflow_definition or {}).get("nodes", []) if node.get("type") == node_type), {})
+
+
+async def _run_novelty_loop(req, out, user_id, who, persona, all_interests, memories, target, workflow_definition=None, workflow_run_id=None):
     # 2) the novelty loop: triage -> per-topic research (deep-research -> illustrate ->
     # synthesize -> cover art -> inject; the per-topic pipeline lives in research_topic() so
     # the heartbeat shares it). When the dedup gate kills proposals, re-triage — up to
@@ -325,6 +330,7 @@ async def _run_novelty_loop(req, out, user_id, who, persona, all_interests, memo
     shipped_per_interest = {}  # lowercased interest -> cards shipped this run
     pending_audit = []  # (card, full sources) — audited in one batch after the cover loop
 
+    style_profile = (_workflow_node(workflow_definition, "pulse.cover_art").get("config") or {}).get("style", "rotating")
     await _vision(pause=True)  # ask the image service to make room for cover-gen (restored below)
     try:
         for rnd in range(PULSE_TRIAGE_ROUNDS):
@@ -363,9 +369,12 @@ async def _run_novelty_loop(req, out, user_id, who, persona, all_interests, memo
                 before = len(out["errors"])
                 oc = {}
                 try:
-                    card = await research_topic(t, who=who, user_id=user_id, idx=attempt,
-                                                provenance="scheduled", errors=out["errors"],
-                                                defer_audit=True, outcome=oc)
+                    research_args = {"who": who, "user_id": user_id, "idx": attempt,
+                                     "provenance": "scheduled", "errors": out["errors"],
+                                     "defer_audit": True, "outcome": oc}
+                    if style_profile != "rotating":
+                        research_args["style_profile"] = style_profile
+                    card = await research_topic(t, **research_args)
                     if card:
                         pending_audit.append((card, card.pop("_corpus", [])))
                         if t.get("seed_node_id"):
@@ -401,6 +410,47 @@ async def _run_novelty_loop(req, out, user_id, who, persona, all_interests, memo
         await _audit_phase(pending_audit, out["errors"], items_by_card)
     finally:
         await _vision(pause=False)  # bring the vision model back up after the image batch
+    workflow_definition = workflow_definition or {"nodes": []}
+    review_node = _workflow_node(workflow_definition, "pulse.visual_review")
+    retry_node = _workflow_node(workflow_definition, "pulse.cover_retry")
+    if review_node:
+        threshold = (review_node.get("config") or {}).get("threshold", 0.8)
+        max_attempts = (retry_node.get("config") or {}).get("max_attempts", 1) if retry_node else 0
+        for item in out["items"]:
+            if item.get("status") != "injected" or not item.get("card_id"):
+                continue
+            card = store.get_card(item["card_id"])
+            if not card or not card.get("image_url"):
+                continue
+            node_run = workflow_store.start_node(workflow_run_id, review_node["id"]) if workflow_run_id else None
+            review = await pulse_images.review_cover(card["image_url"], card["title"], card["summary"], card["body"])
+            item["visual_review"] = review or {"accept": True, "reason": "vision unavailable"}
+            accepted = not review or (review["accept"] and review.get("score", 1) >= threshold)
+            if node_run:
+                workflow_store.finish_node(node_run, "ok", {"card_id": card["id"], "review": item["visual_review"], "threshold": threshold})
+            if workflow_run_id:
+                workflow_store.record_visual_run(workflow_run_id, card["id"], card["image_url"], item["visual_review"], 0,
+                                                 "accepted" if accepted else "retrying")
+            if not accepted and max_attempts:
+                retry_run = workflow_store.start_node(workflow_run_id, retry_node["id"]) if workflow_run_id else None
+                await _vision(pause=True)
+                try:
+                    image_url, tint, generated = await make_cover(card["title"], card["summary"], card["body"],
+                                                                  {"title": card["title"]}, [], 1_000_000 + attempt, out["errors"], style_profile)
+                finally:
+                    await _vision(pause=False)
+                if generated:
+                    card["image_url"] = image_url
+                    card["tint"] = tint
+                    store.insert_card(card)
+                    item["visual_retry"] = {"attempted": True, "published": True}
+                else:
+                    item["visual_retry"] = {"attempted": True, "published": False}
+                if retry_run:
+                    workflow_store.finish_node(retry_run, "ok" if generated else "warning", {"card_id": card["id"], "published": generated})
+                if workflow_run_id:
+                    workflow_store.record_visual_run(workflow_run_id, card["id"], image_url if generated else card["image_url"],
+                                                     item["visual_review"], 1, "retried" if generated else "retry_failed")
     return gates
 
 
@@ -420,7 +470,7 @@ def _finalize_run(out, gates, target):
     return out
 
 
-async def _do_run(req: PulseRequest):
+async def _do_run(req: PulseRequest, workflow_definition: dict | None = None, workflow_run_id: str | None = None):
     """The full synchronous Pulse pipeline (sweep -> triage -> per-topic research/inject). Returns the
     result dict. The HTTP endpoint runs this in the background so no caller holds a long request open."""
     out = {"ok": True, "topics": [], "injected": [], "skipped": [], "expired": 0, "errors": []}
@@ -434,9 +484,10 @@ async def _do_run(req: PulseRequest):
     if req.sweep_only:
         return out
 
+    workflow_definition = workflow_definition or {"nodes": []}
     user_id, who, persona, all_interests, memories = await _build_run_context(req, out)
     target = min(req.max_cards or PULSE_MAX_CARDS, PULSE_MAX_CARDS)
-    gates = await _run_novelty_loop(req, out, user_id, who, persona, all_interests, memories, target)
+    gates = await _run_novelty_loop(req, out, user_id, who, persona, all_interests, memories, target, workflow_definition, workflow_run_id)
     return _finalize_run(out, gates, target)
 
 
@@ -455,8 +506,10 @@ async def _runner(fn, req, run_id, kind):
     """Run `fn(req)` in the background, recording terminal status. Never raises."""
     global _inflight
     started = int(time.time())
+    tracked = kind == "run"
     try:
-        out = await fn(req)
+        workflow_definition = workflow_store.start_run("pulse", run_id)["definition"] if tracked else None
+        out = await fn(req, workflow_definition=workflow_definition, workflow_run_id=run_id) if tracked and fn is _do_run else await fn(req)
         if kind == "run_all":
             injected = [t for u in out.get("users", []) for t in (u.get("injected") or [])]
             topics, errors = [], [e for u in out.get("users", []) for e in (u.get("errors") or [])]
@@ -472,10 +525,15 @@ async def _runner(fn, req, run_id, kind):
                               "injected": injected, "errors": errors, "gates": gates,
                               "rounds": out.get("rounds", []) if kind != "run_all" else [],
                               "items": out.get("items", []) if kind != "run_all" else []})
+        if tracked:
+            workflow_store.record_node_runs(run_id, out)
+            workflow_store.finish_run(run_id, "ok", out)
     except Exception as e:
         store.set_run_status({"run_id": run_id, "state": "error", "kind": kind, "started_at": started,
                               "finished_at": int(time.time()), "topics": [], "injected": [],
                               "errors": [str(e)]})
+        if tracked:
+            workflow_store.finish_run(run_id, "error", error=str(e))
     finally:
         _inflight = False
 

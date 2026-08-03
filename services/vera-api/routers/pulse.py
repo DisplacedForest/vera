@@ -30,6 +30,7 @@ from . import pulse_audit
 from . import workflow_executor
 from . import workflow_store
 from . import pulse_nodes
+from . import workflow_nodes
 from .websearch import search as web_search
 from .pulse_llm import (
     OWUI_BASE, OWUI_KEY, VERA_BASE, MODEL, TZ,

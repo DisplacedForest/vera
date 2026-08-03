@@ -218,12 +218,11 @@ final class PulseWorkflowStore: ObservableObject {
 
     func addVisualLoop() {
         guard var draft, !draft.definition.hasVisualLoop,
-              let cover = draft.definition.nodes.firstIndex(where: { $0.type == "pulse.cover_art" }),
-              let publish = draft.definition.nodes.firstIndex(where: { $0.type == "pulse.inject" }) else { return }
+              let cover = draft.definition.nodes.firstIndex(where: { $0.type == "pulse.cover_art" }) else { return }
         let review = PulseWorkflowNode(id: "visual_review", type: "pulse.visual_review", config: ["threshold": "0.8"])
         let retry = PulseWorkflowNode(id: "cover_retry", type: "pulse.cover_retry", config: ["max_attempts": "1"])
         draft.definition.nodes.insert(review, at: cover + 1)
-        draft.definition.nodes.insert(retry, at: publish + 2)
+        draft.definition.nodes.insert(retry, at: cover + 2)
         draft.definition.edges = orderedEdges(for: draft.definition.nodes)
         draft.definition.positions = defaultPositions(for: draft.definition.nodes)
         self.draft = draft

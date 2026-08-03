@@ -1531,9 +1531,11 @@ enum SelfTest {
                                                           "version": ["broken": true]])
             let nullVersion = PulseWorkflowRun.classify(["id": "r4", "state": "ok", "started_at": 1754250000,
                                                         "version": NSNull()])
+            let absentVersion = PulseWorkflowRun.classify(["id": "r5", "state": "ok", "started_at": 1754250000])
             guard brokenVersion == (nil, true),
-                  nullVersion.unreadable == false,
-                  nullVersion.run?.version == nil else {
+                  nullVersion == (nil, true),
+                  absentVersion.unreadable == false,
+                  absentVersion.run?.version == nil else {
                 print("SELFTEST ERROR: workflow run version strictness"); exit(1)
             }
             let evidence = fixtureRun.cardEvidence

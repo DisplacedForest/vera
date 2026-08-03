@@ -148,7 +148,7 @@ struct PulseWorkflowRun: Hashable {
               let state = object["state"] as? String,
               let startedAt = workflowEpoch(object["started_at"]) else { return nil }
         var version: PulseWorkflowVersion?
-        if let versionRaw = object["version"], !(versionRaw is NSNull) {
+        if let versionRaw = object["version"] {
             guard let parsed = PulseWorkflowVersion.parse(versionRaw) else { return nil }
             version = parsed
         }

@@ -250,12 +250,13 @@ struct PulseWorkflowClient {
         return WorkflowCatalog.parse(object)
     }
 
-    func overview() async -> (version: PulseWorkflowVersion, latestRun: PulseWorkflowRun?)? {
+    func overview() async -> (version: PulseWorkflowVersion, latestRun: PulseWorkflowRun?, runUnreadable: Bool)? {
         guard let (data, status) = await fetch(path: "/agentic/workflows/pulse"),
               (200..<300).contains(status),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let version = PulseWorkflowVersion.parse(object["workflow"] as Any) else { return nil }
-        return (version, (object["latest_run"]).flatMap(PulseWorkflowRun.parse))
+        let run = PulseWorkflowRun.classify(object["latest_run"])
+        return (version, run.run, run.unreadable)
     }
 
     func createDraft() async -> PulseWorkflowVersion? {
@@ -282,6 +283,8 @@ final class PulseWorkflowStore: ObservableObject {
     @Published var active: PulseWorkflowVersion?
     @Published var draft: PulseWorkflowVersion?
     @Published var latestRun: PulseWorkflowRun?
+    @Published var runUnreadable = false
+    @Published var runStale = false
     @Published var selectedNodeID: String?
     @Published var connectionSourceID: String?
     @Published var busy = false
@@ -311,9 +314,13 @@ final class PulseWorkflowStore: ObservableObject {
         guard let overview = await client.overview() else { phase = .unavailable; return }
         active = overview.version
         latestRun = overview.latestRun
+        runUnreadable = overview.runUnreadable
+        runStale = false
         if draft == nil { selectedNodeID = overview.version.definition.nodes.first?.id }
         phase = .ready
     }
+
+    var runVersion: PulseWorkflowVersion? { latestRun?.version ?? active }
 
     func setMode(_ next: Mode) {
         guard mode != next else { return }
@@ -325,9 +332,15 @@ final class PulseWorkflowStore: ObservableObject {
     }
 
     func refreshRun() async {
-        guard let client, let overview = await client.overview() else { return }
+        guard let client else { return }
+        guard let overview = await client.overview() else {
+            runStale = true
+            return
+        }
         active = overview.version
         latestRun = overview.latestRun
+        runUnreadable = overview.runUnreadable
+        runStale = false
     }
 
     func beginDraft() async {
@@ -735,7 +748,11 @@ struct PulseWorkflowEditor: View {
                 CanvasStatusCard(icon: "exclamationmark.triangle", title: "Workflow unavailable", note: "Connect vera-api to edit Pulse.")
             case .ready:
                 if store.mode == .run {
-                    if store.latestRun == nil {
+                    if store.runUnreadable {
+                        WorkflowRunEmptyState(icon: "exclamationmark.triangle",
+                                              title: "Run record unreadable",
+                                              note: "The server returned a run this app couldn't read. Update vera-api or the app so the two match.")
+                    } else if store.latestRun == nil {
                         WorkflowRunEmptyState()
                     } else {
                         HStack(alignment: .top, spacing: 0) {
@@ -769,7 +786,7 @@ struct PulseWorkflowEditor: View {
                 Text("Build and configure the published pipeline").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
             }
             if store.mode == .run {
-                Text("Latest run")
+                Text(store.latestRun?.version.map { "Latest run · v\($0.number)" } ?? "Latest run")
                     .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 4).background(Theme.textSecondary.opacity(0.1))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -797,13 +814,17 @@ struct PulseWorkflowEditor: View {
             }
             Spacer()
             if store.mode == .run {
+                if store.runStale {
+                    Label("Couldn't refresh the run record", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.orange)
+                }
                 if let run = store.latestRun {
                     HStack(spacing: 7) {
                         Circle().fill(runStateColor(run.state)).frame(width: 7, height: 7)
                         Text("\(runStateLabel(run.state)) · started \(run.startedAt.formatted(date: .abbreviated, time: .shortened))")
                             .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
                     }
-                } else {
+                } else if !store.runStale {
                     Text("No recorded runs").font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
                 }
             } else if store.isEditing {
@@ -922,7 +943,7 @@ struct PulseWorkflowEditor: View {
     }
 
     @ViewBuilder private var runCanvas: some View {
-        if let workflow = store.active, let run = store.latestRun {
+        if let workflow = store.runVersion, let run = store.latestRun {
             if snapshot {
                 runGraph(workflow, run: run)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

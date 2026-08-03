@@ -124,6 +124,7 @@ struct PulseWorkflowRun: Hashable {
     var startedAt: Date
     var finishedAt: Date?
     var error: String?
+    var version: PulseWorkflowVersion?
     var nodes: [PulseWorkflowNodeRun]
     var visualRuns: [PulseWorkflowVisualRun]
 
@@ -151,7 +152,14 @@ struct PulseWorkflowRun: Hashable {
         return PulseWorkflowRun(id: id, state: state, startedAt: startedAt,
                                 finishedAt: workflowEpoch(object["finished_at"]),
                                 error: object["error"] as? String,
+                                version: object["version"].flatMap(PulseWorkflowVersion.parse),
                                 nodes: nodes, visualRuns: visual)
+    }
+
+    static func classify(_ raw: Any?) -> (run: PulseWorkflowRun?, unreadable: Bool) {
+        guard let raw, !(raw is NSNull) else { return (nil, false) }
+        guard let run = parse(raw) else { return (nil, true) }
+        return (run, false)
     }
 }
 
@@ -208,7 +216,7 @@ struct WorkflowRunInspector: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let selected = store.active?.definition.nodes.first(where: { $0.id == store.selectedNodeID }) {
+            if let selected = store.runVersion?.definition.nodes.first(where: { $0.id == store.selectedNodeID }) {
                 let spec = store.catalog?.node(for: selected.type)
                 HStack(spacing: 10) {
                     Image(systemName: spec?.icon ?? "puzzlepiece").font(.system(size: 14, weight: .semibold))
@@ -350,14 +358,18 @@ struct WorkflowRunInspector: View {
 }
 
 struct WorkflowRunEmptyState: View {
+    var icon = "clock.arrow.circlepath"
+    var title = "No recorded runs"
+    var note = "The next Pulse run will appear here, node by node."
+
     var body: some View {
         ZStack {
             DotGrid()
             VStack(spacing: 8) {
-                Image(systemName: "clock.arrow.circlepath").font(.system(size: 20)).foregroundStyle(Theme.textSecondary)
-                Text("No recorded runs").font(.system(size: 13, weight: .semibold))
-                Text("The next Pulse run will appear here, node by node.")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                Image(systemName: icon).font(.system(size: 20)).foregroundStyle(Theme.textSecondary)
+                Text(title).font(.system(size: 13, weight: .semibold))
+                Text(note).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center).frame(maxWidth: 380)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -372,6 +384,23 @@ extension PulseWorkflowStore {
         let json = """
         {"id":"run-fixture","workflow_id":"pulse","state":"ok","started_at":1754250000,"finished_at":1754250340,
          "output":{},"error":null,
+         "version":{"id":"fixture-pinned","version":2,"state":"archived","definition":{"id":"pulse",
+           "nodes":[{"id":"triage","type":"pulse.triage","config":{}},
+                    {"id":"gates","type":"pulse.gates","config":{}},
+                    {"id":"synthesis","type":"pulse.synthesis","config":{}},
+                    {"id":"claim_audit","type":"pulse.claim_audit","config":{}},
+                    {"id":"cover_art","type":"pulse.cover_art","config":{"style":"editorial"}},
+                    {"id":"visual_review","type":"pulse.visual_review","config":{"threshold":0.8}},
+                    {"id":"cover_retry","type":"pulse.cover_retry","config":{"max_attempts":1}},
+                    {"id":"inject","type":"pulse.inject","config":{}}],
+           "edges":[{"from":"triage","to":"gates"},{"from":"gates","to":"synthesis"},
+                    {"from":"synthesis","to":"claim_audit"},{"from":"claim_audit","to":"cover_art"},
+                    {"from":"cover_art","to":"visual_review"},{"from":"visual_review","to":"cover_retry"},
+                    {"from":"cover_retry","to":"inject"}],
+           "positions":{"triage":{"x":105,"y":310},"gates":{"x":290,"y":310},"synthesis":{"x":475,"y":310},
+                        "claim_audit":{"x":660,"y":310},"cover_art":{"x":845,"y":310},
+                        "visual_review":{"x":1030,"y":310},"cover_retry":{"x":1215,"y":310},
+                        "inject":{"x":1400,"y":310}}}},
          "nodes":[
            {"id":"triage","state":"ok","input":{"items":0},"output":{"items":9,"rounds":3},"started_at":1754250000,"finished_at":1754250060},
            {"id":"gates","state":"ok","input":{"items":9},"output":{"items":6},"started_at":1754250060,"finished_at":1754250061},

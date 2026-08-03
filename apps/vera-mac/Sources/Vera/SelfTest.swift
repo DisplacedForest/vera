@@ -1499,8 +1499,33 @@ enum SelfTest {
                   let synthesisRun = fixtureRun.nodeRun("synthesis"),
                   synthesisRun.state == "warning",
                   synthesisRun.error == "one card starved for sources",
-                  fixtureRun.nodeRun("gates")?.countsLine == "6 items" else {
+                  fixtureRun.nodeRun("gates")?.countsLine == "6 items",
+                  fixtureRun.version?.id == "fixture-pinned",
+                  fixtureRun.version?.number == 2,
+                  fixtureRun.version?.definition.nodes.count == 8,
+                  runFixtureStore.runVersion?.id == "fixture-pinned" else {
                 print("SELFTEST ERROR: workflow run parse"); exit(1)
+            }
+            let pinnedRunJSON = """
+            {"id":"r2","state":"ok","started_at":1754250000,
+             "version":{"id":"v-old","version":1,"state":"archived","definition":{"id":"pulse",
+               "nodes":[{"id":"triage","type":"pulse.triage","config":{}},
+                        {"id":"experiment","type":"flow.filter","config":{}},
+                        {"id":"inject","type":"pulse.inject","config":{}}],
+               "edges":[{"from":"triage","to":"experiment"},{"from":"experiment","to":"inject"}]}},
+             "nodes":[{"id":"experiment","state":"ok","output":{"items":2},"started_at":1754250001,"finished_at":1754250002}]}
+            """
+            guard let pinnedObject = try? JSONSerialization.jsonObject(with: Data(pinnedRunJSON.utf8)),
+                  let pinnedRun = PulseWorkflowRun.parse(pinnedObject),
+                  pinnedRun.version?.definition.node(withID: "experiment") != nil,
+                  pinnedRun.nodeRun("experiment")?.countsLine == "2 items" else {
+                print("SELFTEST ERROR: workflow run pinned version"); exit(1)
+            }
+            guard PulseWorkflowRun.classify(nil) == (nil, false),
+                  PulseWorkflowRun.classify(NSNull()) == (nil, false),
+                  PulseWorkflowRun.classify(["id": "broken"]) == (nil, true),
+                  PulseWorkflowRun.classify(pinnedObject).unreadable == false else {
+                print("SELFTEST ERROR: workflow run classification"); exit(1)
             }
             let evidence = fixtureRun.cardEvidence
             guard evidence.count == 3,
@@ -1515,6 +1540,7 @@ enum SelfTest {
                   PulseWorkflowRun.parse(NSNull()) == nil,
                   let bareRun = PulseWorkflowRun.parse(["id": "x", "state": "running", "started_at": 1754250000]),
                   bareRun.nodes.isEmpty, bareRun.cardEvidence.isEmpty, bareRun.finishedAt == nil,
+                  bareRun.version == nil,
                   PulseWorkflowNodeRun.parse(["id": "n"]) == nil,
                   let openNode = PulseWorkflowNodeRun.parse(["id": "n", "state": "running", "started_at": 1754250000]),
                   openNode.duration == nil, openNode.countsLine == nil,

@@ -180,6 +180,7 @@ def latest_run(workflow_id: str) -> dict | None:
         nodes = conn.execute("SELECT node_id, state, input, output, error, started_at, finished_at, created_at FROM workflow_node_runs WHERE workflow_run_id=? ORDER BY created_at", (row["id"],)).fetchall()
         visual = conn.execute("SELECT card_id, image_url, review, retry_count, state, created_at FROM workflow_visual_runs WHERE workflow_run_id=? ORDER BY created_at", (row["id"],)).fetchall()
     return {"id": row["id"], "workflow_id": row["workflow_id"], "workflow_version_id": row["workflow_version_id"],
+            "version": get_version(row["workflow_version_id"]),
             "state": row["state"], "started_at": row["started_at"], "finished_at": row["finished_at"],
             "output": json.loads(row["output"] or "{}"), "error": row["error"],
             "nodes": [{"id": node["node_id"], "state": node["state"], "input": json.loads(node["input"]) if node["input"] else None, "output": json.loads(node["output"] or "{}"), "error": node["error"], "started_at": node["started_at"], "finished_at": node["finished_at"], "created_at": node["created_at"]} for node in nodes],

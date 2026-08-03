@@ -1409,13 +1409,31 @@ enum SelfTest {
             guard !(editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "inject")) ?? true) else {
                 print("SELFTEST ERROR: visual workflow connection"); exit(1)
             }
-            editorStore.removeVisualLoop()
-            editorStore.addVisualLoop()
-            let visualEdges = editorStore.draft?.definition.edges ?? []
-            guard visualEdges.contains(PulseWorkflowEdge(from: "cover_art", to: "visual_review")),
-                  visualEdges.contains(PulseWorkflowEdge(from: "visual_review", to: "cover_retry")),
-                  visualEdges.contains(PulseWorkflowEdge(from: "cover_retry", to: "inject")) else {
-                print("SELFTEST ERROR: visual workflow insertion"); exit(1)
+            editorStore.selectedNodeID = "visual_review"
+            editorStore.removeSelectedNode()
+            guard editorStore.draft?.definition.hasVisualReview == false,
+                  editorStore.draft?.definition.hasCoverRetry == true,
+                  editorStore.validationMessage == "Add Visual review to complete the visual path." else {
+                print("SELFTEST ERROR: visual workflow removal"); exit(1)
+            }
+            editorStore.placeNodeInDraft("pulse.visual_review", at: CGPoint(x: 345, y: 275))
+            guard editorStore.draft?.definition.positions["visual_review"] == PulseWorkflowPoint(x: 345, y: 275),
+                  editorStore.validationMessage != nil else {
+                print("SELFTEST ERROR: visual workflow placement"); exit(1)
+            }
+            editorStore.startConnection(from: "cover_art")
+            editorStore.completeConnection(to: "visual_review")
+            editorStore.startConnection(from: "visual_review")
+            editorStore.completeConnection(to: "cover_retry")
+            guard editorStore.validationMessage == nil,
+                  editorStore.draft?.definition.edges == editorStore.draft?.definition.expectedEdges else {
+                print("SELFTEST ERROR: visual workflow completion"); exit(1)
+            }
+            let nodeCount = editorStore.draft?.definition.nodes.count
+            editorStore.placeNodeInDraft("pulse.triage", at: CGPoint(x: 180, y: 120))
+            guard editorStore.draft?.definition.nodes.count == nodeCount,
+                  editorStore.draft?.definition.positions["triage"] == PulseWorkflowPoint(x: 180, y: 120) else {
+                print("SELFTEST ERROR: installed workflow node placement"); exit(1)
             }
             print("  pulse workflow OK (editable node graph + typed controls)")
 

@@ -424,12 +424,12 @@ struct PulseWorkflowEditor: View {
             }
             librarySection("Image") {
                 libraryNode("Cover art", icon: "photo", enabled: false)
-                libraryNode("Visual review + retry", icon: "eye", enabled: true)
+                libraryNode("Visual review + retry", icon: "eye", enabled: !(store.displayed?.definition.hasVisualLoop ?? false))
             }
             librarySection("Output") {
                 libraryNode("Publish", icon: "arrow.down.to.line", enabled: false)
             }
-            if store.isEditing {
+            if store.isEditing, store.displayed?.definition.hasVisualLoop == true {
                 Divider().overlay(Theme.hairline)
                 Button { store.removeVisualLoop() } label: { Label("Remove visual review", systemImage: "minus.circle") }
                     .buttonStyle(.plain).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
@@ -505,7 +505,7 @@ struct PulseWorkflowEditor: View {
         }
         .background(DotGrid())
         .onDrop(of: [UTType.text], isTargeted: nil) { providers in
-            guard providers.first != nil else { return false }
+            guard providers.first != nil, !(store.displayed?.definition.hasVisualLoop ?? false) else { return false }
             if store.isEditing {
                 store.addVisualLoop()
             } else {

@@ -227,7 +227,12 @@ def card_store(monkeypatch, tmp_path):
 
 
 def _notify_cards(store):
-    return [c for c in store.list_cards() if c.get("kind") == "notify"]
+    return [c for c in store.list_cards(include_expired=True) if c.get("kind") == "notify"]
+
+
+def _seed_card(card_id, title, summary=""):
+    pulse_store.insert_card({"id": card_id, "day": "2026-01-01", "title": title, "summary": summary})
+    return pulse_store.get_card(card_id)
 
 
 def test_notify_emits_exactly_one_marked_card(card_store):
@@ -249,6 +254,53 @@ def test_notify_reruns_never_stack_duplicates(card_store):
     assert len(cards) == 1
     assert cards[0]["title"] == "Evening pass"
     assert "1 card reached this step" in cards[0]["summary"]
+
+
+def test_notify_rerun_replaces_even_a_bookmarked_card(card_store):
+    _invoke("flow.notify", {}, list(CARDS))
+    pulse_store.set_status(_notify_cards(card_store)[0]["id"], "bookmarked")
+    _invoke("flow.notify", {}, list(CARDS))
+    cards = _notify_cards(card_store)
+    assert len(cards) == 1
+    assert cards[0]["status"] == "new"
+
+
+def test_notify_scopes_cards_and_keys_per_user(card_store):
+    _invoke("flow.notify", {}, list(CARDS), ctx=_ctx(data={"user_id": "alice"}))
+    _invoke("flow.notify", {}, [CARDS[0]], ctx=_ctx(data={"user_id": "bob"}))
+    _invoke("flow.notify", {}, list(CARDS), ctx=_ctx(data={"user_id": "alice"}))
+    cards = _notify_cards(card_store)
+    assert len(cards) == 2
+    by_user = {c["user_id"]: c for c in cards}
+    assert by_user["alice"]["situation_key"] == "workflow-notify:generic:x:alice"
+    assert by_user["bob"]["situation_key"] == "workflow-notify:generic:x:bob"
+
+
+def test_filter_drop_deletes_the_persisted_card(card_store):
+    _seed_card("c1", "Frost warning")
+    _seed_card("c2", "Quiet day")
+    items = [{"id": "c1", "title": "Frost warning"}, {"id": "c2", "title": "Quiet day"}]
+    out, _ = _invoke("flow.filter", {"operator": "contains", "value": "frost", "action": "drop"},
+                     items)
+    assert [c["id"] for c in out] == ["c2"]
+    assert pulse_store.get_card("c1") is None
+    assert pulse_store.get_card("c2") is not None
+
+
+def test_llm_step_replace_summary_updates_the_persisted_card(card_store, fake_vera):
+    _seed_card("c1", "Frost warning", summary="old")
+    _invoke("flow.llm_step", {"prompt": "Summarize.", "output": "replace_summary"},
+            [{"id": "c1", "title": "Frost warning", "summary": "old"}])
+    assert pulse_store.get_card("c1")["summary"] == "NOTE"
+
+
+def test_llm_step_drop_on_empty_deletes_the_persisted_card(card_store, fake_vera):
+    fake_vera["reply"] = ""
+    _seed_card("c1", "Frost warning")
+    out, _ = _invoke("flow.llm_step", {"prompt": "Keep?", "output": "drop_on_empty"},
+                     [{"id": "c1", "title": "Frost warning"}])
+    assert out == []
+    assert pulse_store.get_card("c1") is None
 
 
 @pytest.fixture
@@ -336,6 +388,27 @@ def test_pulse_run_executes_every_inserted_flow_node(pulse_harness, fake_get):
     cards = _notify_cards(pulse_store)
     assert len(cards) == 1
     assert cards[0]["situation_key"] == "workflow-notify:pulse:notify"
+
+
+def test_barrier_node_before_synthesis_cannot_exceed_the_card_target(pulse_harness):
+    definition = workflow_store.baseline_definition()
+    definition["nodes"].insert(
+        next(i for i, n in enumerate(definition["nodes"]) if n["id"] == "synthesis"),
+        {"id": "llm", "type": "flow.llm_step", "config": {"prompt": "Annotate."}})
+    definition["edges"] = [e for e in definition["edges"]
+                           if e != {"from": "gates", "to": "synthesis"}]
+    definition["edges"].extend([{"from": "gates", "to": "llm"},
+                                {"from": "llm", "to": "synthesis"}])
+    workflow_store.start_run("pulse", "run-1")
+    out = run(pulse._do_run(pulse.PulseRequest(max_cards=1), workflow_definition=definition,
+                            workflow_run_id="run-1"))
+    assert out["injected"] == ["Frost watch"]
+    assert "Filler topic" in out["skipped"]
+    assert out["gates"]["target_cap"] == 1
+    record = workflow_store.latest_run("pulse")
+    rows = {row["id"]: row for row in record["nodes"]}
+    assert rows["llm"]["state"] == "ok"
+    assert rows["synthesis"]["output"]["cards"] == 1
 
 
 def test_unconfigured_http_fetch_degrades_to_warning_and_passes_through(pulse_harness):

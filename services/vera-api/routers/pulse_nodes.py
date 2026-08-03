@@ -90,6 +90,13 @@ async def _synthesis_run(node, items, ctx):
         meta = _meta_for(topic, d)
         topic.pop("_wf_meta", None)
         item, interest, record = meta["item"], meta["interest"], meta["record"]
+        if len(out["injected"]) >= d["target"]:
+            d["gates"]["target_cap"] = d["gates"].get("target_cap", 0) + 1
+            out["skipped"].append(topic.get("title"))
+            record["skipped"].append(topic.get("title"))
+            item.update({"status": "cap", "gate": "target_cap", "reason": "run card target reached"})
+            out["items"].append(item)
+            continue
         before = len(out["errors"])
         oc = {}
         try:

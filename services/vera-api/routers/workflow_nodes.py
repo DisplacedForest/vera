@@ -12,6 +12,23 @@ def _field_text(item, field):
     return "" if value is None else str(value)
 
 
+def _drop_persisted(items):
+    from . import pulse
+    for item in items:
+        card_id = item.get("id")
+        if card_id and pulse.store.get_card(card_id):
+            pulse.store.delete_card(card_id)
+
+
+def _persist_summary(item, summary):
+    from . import pulse
+    card_id = item.get("id")
+    if card_id:
+        card = pulse.store.get_card(card_id)
+        if card:
+            pulse.store.insert_card({**card, "summary": summary})
+
+
 async def _filter_run(node, items, ctx):
     config = node.get("config") or {}
     field = (config.get("field") or "title").strip()
@@ -33,8 +50,11 @@ async def _filter_run(node, items, ctx):
             return value.lower() not in text.lower()
         return value.lower() in text.lower()
 
-    kept = [item for item in items if matches(item) != (action == "drop")]
-    ctx.summaries[node["id"]] = {"kept": len(kept), "dropped": len(items) - len(kept)}
+    kept, dropped = [], []
+    for item in items:
+        (kept if matches(item) != (action == "drop") else dropped).append(item)
+    _drop_persisted(dropped)
+    ctx.summaries[node["id"]] = {"kept": len(kept), "dropped": len(dropped)}
     return kept
 
 
@@ -66,20 +86,29 @@ async def _llm_step_run(node, items, ctx):
     if mode == "set":
         reply = await reply_for({"cards": [_facts(item) for item in items]})
         if output == "drop_on_empty":
-            return list(items) if reply else []
+            if reply:
+                return list(items)
+            _drop_persisted(items)
+            return []
         if output == "replace_summary":
+            for item in items:
+                _persist_summary(item, reply)
             return [{**item, "summary": reply} for item in items]
         return [{**item, "annotation": reply} for item in items]
-    out = []
+    out, dropped = [], []
     for item in items:
         reply = await reply_for({"card": _facts(item)})
         if output == "drop_on_empty":
             if reply:
                 out.append(item)
+            else:
+                dropped.append(item)
         elif output == "replace_summary":
+            _persist_summary(item, reply)
             out.append({**item, "summary": reply})
         else:
             out.append({**item, "annotation": reply})
+    _drop_persisted(dropped)
     return out
 
 
@@ -106,17 +135,18 @@ async def _notify_run(node, items, ctx):
     config = node.get("config") or {}
     workflow_id = ctx.definition.get("id") or "workflow"
     headline = (config.get("headline") or "").strip() or f"{workflow_id.title()} workflow update"
-    key = f"workflow-notify:{workflow_id}:{node['id']}"
+    user_id = str(ctx.data.get("user_id") or "")
+    key = f"workflow-notify:{workflow_id}:{node['id']}" + (f":{user_id}" if user_id else "")
     titles = [t for t in (str(item.get("title") or "").strip() for item in items) if t]
     count = len(items)
     summary = f"{count} card{'' if count == 1 else 's'} reached this step"
     lines = "\n".join(f"- {t}" for t in titles[:NOTIFY_TITLE_LIMIT])
     body = f"{summary}." + (f"\n\n{lines}" if lines else "")
-    for card in pulse.store.list_cards():
-        if card.get("situation_key") == key and card.get("status") in ("new", "seen"):
+    for card in pulse.store.list_cards(include_expired=True):
+        if card.get("situation_key") == key:
             pulse.store.delete_card(card["id"])
     await pulse._inject(headline, body, summary=summary, kind="notify", severity="notice",
-                        provenance="workflow", situation_key=key)
+                        provenance="workflow", situation_key=key, user_id=user_id or None)
     ctx.summaries[node["id"]] = {"cards": count}
     return list(items)
 

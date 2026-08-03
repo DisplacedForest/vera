@@ -130,11 +130,11 @@ final class PulseRunStore: ObservableObject {
 struct AgenticView: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
+    @ObservedObject var pulseWorkflow: PulseWorkflowStore
     @StateObject private var sched = SchedulerStore()
     @StateObject private var activity = ActivityStore()
     @StateObject private var graphStore = GraphStore()
     @StateObject private var pulseRun = PulseRunStore()
-    @StateObject private var pulseWorkflow = PulseWorkflowStore()
     @State private var editing: SchedulerJob?
 
     var body: some View {
@@ -143,6 +143,7 @@ struct AgenticView: View {
             case .canvas:
                 AgenticCanvasView(graphStore: graphStore, sched: sched, activity: activity,
                                   pulseRun: pulseRun, pulseWorkflow: pulseWorkflow,
+                                  drilled: $store.agenticFlowID,
                                   onEditSchedule: { editing = $0 })
             case .activity:
                 AgenticActivityView(activity: activity)

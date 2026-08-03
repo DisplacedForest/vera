@@ -13,6 +13,7 @@ struct ContentView: View {
     @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
     @State private var search = ""
+    @StateObject private var pulseWorkflow = PulseWorkflowStore()
 
     /// The toolbar modality picker's view of `store.section`: any non-agentic surface reads
     /// as Chat; picking a mode routes to that mode's home surface.
@@ -24,7 +25,7 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             NavigationSplitView {
-                Sidebar(search: $search)
+                Sidebar(search: $search, pulseWorkflow: pulseWorkflow)
                     .navigationSplitViewColumnWidth(min: 210, ideal: 248, max: 320)
             } detail: {
                 HStack(spacing: 0) {
@@ -34,7 +35,7 @@ struct ContentView: View {
                         case .pulse: PulseView()
                         case .journal: JournalView()
                         case .memory: MemoryView()
-                        case .agentic: AgenticView()
+                        case .agentic: AgenticView(pulseWorkflow: pulseWorkflow)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -86,6 +87,7 @@ struct Placeholder: View {
 private struct Sidebar: View {
     @EnvironmentObject var store: ChatStore
     @Binding var search: String
+    @ObservedObject var pulseWorkflow: PulseWorkflowStore
 
     private var agenticTab: Bool { store.section == .agentic }
 
@@ -106,8 +108,8 @@ private struct Sidebar: View {
                 case .pulse: store.goToPulse()
                 case .journal: store.section = .journal
                 case .memory: store.section = .memory
-                case .canvas: store.section = .agentic; store.agenticPane = .canvas
-                case .activity: store.section = .agentic; store.agenticPane = .activity
+                case .canvas: store.section = .agentic; store.agenticPane = .canvas; store.agenticFlowID = nil
+                case .activity: store.section = .agentic; store.agenticPane = .activity; store.agenticFlowID = nil
                 case .convo(let id): store.select(id)
                 case nil: break
                 }
@@ -115,6 +117,35 @@ private struct Sidebar: View {
     }
 
     var body: some View {
+        Group {
+            if agenticTab, store.agenticFlowID == "pulse" {
+                PulseWorkflowPalette(store: pulseWorkflow, searchText: $search) {
+                    store.agenticFlowID = nil
+                }
+            } else {
+                navigationList
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack(spacing: 8) {
+                VeraMark(size: 18)
+                Text("Vera").font(.system(size: 14, weight: .semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 6)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) { UpdateBanner() }
+        .toolbar {
+            ToolbarItem {
+                Button(action: store.newConversation) {
+                    Label("New chat", systemImage: "square.and.pencil")
+                }
+                .help("New chat")
+            }
+        }
+    }
+
+    private var navigationList: some View {
         List(selection: selection) {
             if agenticTab {
                 Section {
@@ -146,23 +177,6 @@ private struct Sidebar: View {
         }
         .listStyle(.sidebar)
         .searchable(text: $search, placement: .sidebar, prompt: "Search")
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 8) {
-                VeraMark(size: 18)
-                Text("Vera").font(.system(size: 14, weight: .semibold))
-                Spacer()
-            }
-            .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 6)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) { UpdateBanner() }
-        .toolbar {
-            ToolbarItem {
-                Button(action: store.newConversation) {
-                    Label("New chat", systemImage: "square.and.pencil")
-                }
-                .help("New chat")
-            }
-        }
     }
 }
 

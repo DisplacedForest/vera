@@ -1,3 +1,5 @@
+import math
+
 from . import vein_engine
 
 
@@ -79,7 +81,7 @@ def catalog() -> list[dict]:
 
 
 def _validate_config(node: dict, spec: dict):
-    config = node.get("config") or {}
+    config = node.get("config", {})
     if not isinstance(config, dict):
         raise ValueError("node configuration must be an object")
     schema = spec["config_schema"]
@@ -88,12 +90,13 @@ def _validate_config(node: dict, spec: dict):
         field = schema.get(key)
         if not field:
             raise ValueError(f"{label} does not accept a {key} setting")
-        if field["type"] == "choice" and value not in field["options"]:
-            options = ", ".join(str(option) for option in field["options"])
-            raise ValueError(f"{label} {key} must be one of {options}")
+        if field["type"] == "choice":
+            if not any(type(value) is type(option) and value == option for option in field["options"]):
+                options = ", ".join(str(option) for option in field["options"])
+                raise ValueError(f"{label} {key} must be one of {options}")
         if field["type"] == "number":
             low, high = field.get("min"), field.get("max")
-            numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
+            numeric = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
             if not numeric or (low is not None and value < low) or (high is not None and value > high):
                 raise ValueError(f"{label} {key} must be a number between {low} and {high}")
 

@@ -193,6 +193,49 @@ def test_choice_config_rejects_unknown_option():
         workflow_registry.validate_definition("pulse", definition)
 
 
+def _definition_with_review_pair(retry_config=None, review_config=None):
+    definition = _pulse_definition()
+    review = {"id": "visual_review", "type": "pulse.visual_review", "label": "Visual review"}
+    if review_config is not None:
+        review["config"] = review_config
+    _insert_between(definition, "cover_art", "inject", review)
+    retry = {"id": "cover_retry", "type": "pulse.cover_retry", "label": "Retry"}
+    if retry_config is not None:
+        retry["config"] = retry_config
+    _insert_between(definition, "visual_review", "inject", retry)
+    return definition
+
+
+@pytest.mark.parametrize("attempts", [True, False])
+def test_boolean_retry_cap_is_rejected(attempts):
+    definition = _definition_with_review_pair(retry_config={"max_attempts": attempts})
+    with pytest.raises(ValueError, match="max_attempts"):
+        workflow_registry.validate_definition("pulse", definition)
+
+
+@pytest.mark.parametrize("config", [[], None, "config"])
+def test_non_object_config_is_rejected(config):
+    definition = _pulse_definition()
+    for node in definition["nodes"]:
+        if node["id"] == "cover_art":
+            node["config"] = config
+    with pytest.raises(ValueError, match="must be an object"):
+        workflow_registry.validate_definition("pulse", definition)
+
+
+@pytest.mark.parametrize("threshold", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_threshold_is_rejected(threshold):
+    definition = _definition_with_review_pair(review_config={"threshold": threshold})
+    with pytest.raises(ValueError, match="threshold"):
+        workflow_registry.validate_definition("pulse", definition)
+
+
+@pytest.mark.parametrize("threshold", [0, 1, 0.5])
+def test_boundary_thresholds_are_accepted(threshold):
+    definition = _definition_with_review_pair(review_config={"threshold": threshold})
+    workflow_registry.validate_definition("pulse", definition)
+
+
 def test_generic_profile_accepts_a_dag(stub_node):
     definition = {"id": "custom", "nodes": [
         {"id": "a", "type": stub_node, "label": "A"},

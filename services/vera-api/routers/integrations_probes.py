@@ -8,7 +8,7 @@ async def probe(iid: str, v: dict) -> dict:
     url = v.get("url", "").rstrip("/")
     try:
         async with aiohttp.ClientSession(timeout=_TIMEOUT) as s:
-            if iid == "coder":
+            if iid in {"coder", "vision_review"}:
                 async with s.get(f"{url}/models") as r:
                     body = await r.json(content_type=None)
                     ids = [m.get("id") for m in ((body or {}).get("data") or []) if isinstance(m, dict)]

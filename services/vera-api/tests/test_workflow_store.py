@@ -78,3 +78,30 @@ def test_run_records_the_version_selected_at_start():
     run = workflow_store.latest_run("pulse")
     assert [node["id"] for node in run["nodes"]] == [
         "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
+
+
+def test_draft_validates_visual_controls():
+    draft = workflow_store.create_draft("pulse")
+    definition = draft["definition"]
+    definition["nodes"].insert(-1, {"id": "visual_review", "type": "pulse.visual_review", "label": "Visual review", "config": {"threshold": 0.9}})
+    definition["nodes"].insert(-1, {"id": "cover_retry", "type": "pulse.cover_retry", "label": "Retry", "config": {"max_attempts": 1}})
+    definition["edges"] = [edge for edge in definition["edges"] if edge != {"from": "cover_art", "to": "inject"}]
+    definition["edges"].extend([{"from": "cover_art", "to": "visual_review"}, {"from": "visual_review", "to": "cover_retry"}, {"from": "cover_retry", "to": "inject"}])
+    assert workflow_store.save_draft(draft["id"], definition)["definition"]["nodes"][-3]["config"]["threshold"] == 0.9
+
+
+def test_visual_evidence_keeps_each_card_attempt():
+    workflow_store.start_run("pulse", "run-1")
+    workflow_store.record_visual_run("run-1", "card-1", "one", {"accept": False}, 0, "retrying")
+    workflow_store.record_visual_run("run-1", "card-1", "two", {"accept": False}, 1, "retried")
+    workflow_store.finish_run("run-1", "ok", {})
+    assert [item["retry_count"] for item in workflow_store.latest_run("pulse")["visual_runs"]] == [0, 1]
+
+
+def test_node_evidence_is_not_replaced_by_summary_rows():
+    workflow_store.start_run("pulse", "run-1")
+    node_run = workflow_store.start_node("run-1", "cover_art")
+    workflow_store.finish_node(node_run, "ok", {"card_id": "card-1"})
+    workflow_store.record_node_runs("run-1", {"items": [{"cover_generated": True}]})
+    run = workflow_store.latest_run("pulse")
+    assert next(node for node in run["nodes"] if node["id"] == "cover_art")["output"] == {"card_id": "card-1"}

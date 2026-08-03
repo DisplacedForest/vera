@@ -1,7 +1,6 @@
 import SwiftUI
 
 /// The Agentic canvas screen: organism map, drill-ins, and the node inspector.
-/// Read-only by design; every control the old job cards had lives in the inspector.
 struct AgenticCanvasView: View {
     @ObservedObject var graphStore: GraphStore
     @ObservedObject var sched: SchedulerStore

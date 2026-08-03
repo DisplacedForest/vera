@@ -127,7 +127,7 @@ async def review_cover(image_url: str, headline: str, summary: str, body: str) -
     base = vision_base if vision_base.endswith("/v1") else f"{vision_base}/v1"
     prompt = (
         "Review this briefing-card image against the supplied story. Return JSON only with "
-        "accept (boolean) and reason (short string). Reject only if it is unrelated, contains "
+        "accept (boolean), score (number from zero to one), and reason (short string). Reject only if it is unrelated, contains "
         "prominent text or logos, or fails to depict the main subject. Story: "
         f"Headline: {headline}. Summary: {summary}. Body: {body[:600]}"
     )
@@ -143,7 +143,11 @@ async def review_cover(image_url: str, headline: str, summary: str, body: str) -
         verdict = json.loads(match.group(0) if match else content)
         if not isinstance(verdict.get("accept"), bool):
             return None
-        return {"accept": verdict["accept"], "reason": str(verdict.get("reason") or "")[:300]}
+        score = verdict.get("score")
+        if not isinstance(score, (int, float)):
+            score = 1.0 if verdict["accept"] else 0.0
+        return {"accept": verdict["accept"], "score": max(0.0, min(1.0, float(score))),
+                "reason": str(verdict.get("reason") or "")[:300]}
     except Exception:
         return None
 
@@ -268,7 +272,7 @@ async def _gather_images(idx, entity_query, top_sources):
     return images
 
 
-async def make_cover(headline, summary, body, topic, inline_images, idx, errs):
+async def make_cover(headline, summary, body, topic, inline_images, idx, errs, style_profile="rotating"):
     # Cover art: Vera writes a vibe-matching prompt from the card's own synthesis (headline +
     # summary + story), not the triage working title; style rotates for a fresh feed.
     from . import pulse
@@ -286,7 +290,14 @@ async def make_cover(headline, summary, body, topic, inline_images, idx, errs):
                 temperature=0.8,
             )
         ).strip().strip('"')
-        image_url, tint = await pulse._gen_image(img_prompt, STYLE_PALETTE[idx % len(STYLE_PALETTE)], idx)
+        profiles = {
+            "rotating": STYLE_PALETTE,
+            "photographic": [STYLE_PALETTE[0]],
+            "illustrated": [STYLE_PALETTE[2]],
+            "editorial": [STYLE_PALETTE[3]],
+        }
+        palette = profiles.get(style_profile, STYLE_PALETTE)
+        image_url, tint = await pulse._gen_image(img_prompt, palette[idx % len(palette)], idx)
         cover_generated = image_url is not None
     except Exception as e:
         errs.append(f"cover {topic.get('title')}: {e}")

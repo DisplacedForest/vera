@@ -236,6 +236,15 @@ struct OrganismMap: View {
                         .opacity(dimmed(flow.id, neighbors: neighbors) ? 0.45 : 1)
                         .frame(width: rect.width, height: rect.height)
                         .position(x: rect.midX, y: rect.midY)
+                        .contextMenu {
+                            if !flow.stages.isEmpty {
+                                Button {
+                                    onDrill(flow.id)
+                                } label: {
+                                    Label(flow.id == "pulse" ? "Open pipeline" : "Open flow", systemImage: "point.3.connected.trianglepath.dotted")
+                                }
+                            }
+                        }
                         .onTapGesture(count: 2) { if !flow.stages.isEmpty { onDrill(flow.id) } }
                         .onTapGesture { onSelect(flow.id) }
                 }

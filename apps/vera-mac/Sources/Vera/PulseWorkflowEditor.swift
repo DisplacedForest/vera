@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PulseWorkflowNode: Identifiable, Hashable {
     var id: String
@@ -210,6 +211,11 @@ final class PulseWorkflowStore: ObservableObject {
         note = "Draft ready. Changes are not live until you promote it."
     }
 
+    func beginVisualLoopDraft() async {
+        await beginDraft()
+        addVisualLoop()
+    }
+
     func discardDraft() {
         draft = nil
         selectedNodeID = active?.definition.nodes.first?.id
@@ -353,9 +359,13 @@ struct PulseWorkflowEditor: View {
 
     private var toolbar: some View {
         HStack(spacing: 10) {
-            Text("Pulse workflow").font(.system(size: 20, weight: .bold))
-            if let workflow = store.displayed {
-                Text(store.isEditing ? "Draft v\(workflow.number)" : "Active v\(workflow.number)")
+            Image(systemName: "newspaper.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+            Text("Pulse").font(.system(size: 20, weight: .bold))
+            Text("Workflow").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
+            if store.displayed != nil {
+                Text(store.isEditing ? "Draft" : "Active")
                     .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 4).background(Theme.surface).clipShape(Capsule())
             }
@@ -372,23 +382,64 @@ struct PulseWorkflowEditor: View {
     }
 
     private var palette: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Nodes").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Node library").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            Text("Drag nodes onto the canvas").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary.opacity(0.8))
+            librarySection("Pulse") {
+                libraryNode("Research", icon: "globe", enabled: false)
+                libraryNode("Synthesis", icon: "sparkles", enabled: false)
+                libraryNode("Claim audit", icon: "checkmark.shield", enabled: false)
+            }
+            librarySection("Image") {
+                libraryNode("Cover art", icon: "photo", enabled: false)
+                libraryNode("Visual review", icon: "eye", enabled: true)
+                libraryNode("One retry", icon: "arrow.clockwise", enabled: true)
+            }
+            librarySection("Output") {
+                libraryNode("Publish", icon: "arrow.down.to.line", enabled: false)
+            }
             if store.isEditing {
-                Button { store.addVisualLoop() } label: { Label("Add visual review", systemImage: "eye") }
-                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
+                Divider().overlay(Theme.hairline)
                 Button { store.removeVisualLoop() } label: { Label("Remove visual review", systemImage: "minus.circle") }
-                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                Button { store.wireInSequence() } label: { Label("Wire sequence", systemImage: "point.3.connected.trianglepath.dotted") }
-                    .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary)
-            } else {
-                Label("Visual review is available in a draft", systemImage: "eye")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                Text("Create a draft to add or configure nodes.").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .buttonStyle(.plain).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                Button { store.wireInSequence() } label: { Label("Repair sequence", systemImage: "point.3.connected.trianglepath.dotted") }
+                    .buttonStyle(.plain).font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
         }
-        .padding(16).frame(width: 190, alignment: .topLeading)
+        .padding(16).frame(width: 212, alignment: .topLeading)
+    }
+
+    private func librarySection(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary.opacity(0.72))
+            content()
+        }
+    }
+
+    private func libraryNode(_ title: String, icon: String, enabled: Bool) -> some View {
+        Button {
+            guard enabled else { return }
+            if store.isEditing {
+                store.addVisualLoop()
+            } else {
+                Task { await store.beginVisualLoopDraft() }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 11, weight: .medium)).frame(width: 15)
+                Text(title).font(.system(size: 11.5, weight: .medium))
+                Spacer(minLength: 0)
+                if !enabled { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
+            }
+            .foregroundStyle(enabled ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 9).padding(.vertical, 8)
+            .background(Theme.surface.opacity(enabled ? 0.95 : 0.55))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .onDrag { NSItemProvider(object: enabled ? "visual-loop" as NSString : "" as NSString) }
     }
 
     private var canvas: some View {
@@ -417,6 +468,15 @@ struct PulseWorkflowEditor: View {
             }
         }
         .background(DotGrid())
+        .onDrop(of: [UTType.text], isTargeted: nil) { providers in
+            guard providers.first != nil else { return false }
+            if store.isEditing {
+                store.addVisualLoop()
+            } else {
+                Task { await store.beginVisualLoopDraft() }
+            }
+            return true
+        }
     }
 
     @ViewBuilder private var inspector: some View {
@@ -467,6 +527,8 @@ struct WorkflowNodeCard: View {
         .padding(13).frame(width: 126, height: 86, alignment: .topLeading)
         .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Theme.accent : Theme.hairline, lineWidth: selected ? 1.5 : 1))
+        .overlay(alignment: .leading) { PortDot().offset(x: -3.5) }
+        .overlay(alignment: .trailing) { PortDot().offset(x: 3.5) }
     }
 }
 
@@ -475,40 +537,85 @@ struct PulseWorkflowEditorShot: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Pulse workflow").font(.system(size: 20, weight: .bold))
-                Text("Active v2").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            HStack(spacing: 10) {
+                Image(systemName: "newspaper.fill").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.accent)
+                Text("Pulse").font(.system(size: 20, weight: .bold))
+                Text("Workflow").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                Text("Active").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 4).background(Theme.surface).clipShape(Capsule())
                 Spacer()
                 Button("Edit workflow") {}.buttonStyle(.borderedProminent)
-            }.padding(.horizontal, 28).padding(.vertical, 14)
+            }
+            .padding(.horizontal, 28).padding(.vertical, 14)
             Divider().overlay(Theme.hairline)
             HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Nodes").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                    Text("Create a draft to add or configure nodes.").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    Spacer()
-                }.padding(16).frame(width: 190, alignment: .topLeading)
+                editorLibrary
                 Divider().overlay(Theme.hairline)
-                ZStack {
-                    DotGrid()
-                    VStack(alignment: .leading, spacing: 18) {
-                        Text("Approved Pulse nodes").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                        HStack(spacing: 0) {
-                            ForEach(Array(workflow.definition.nodes.enumerated()), id: \.element.id) { index, node in
-                                if index > 0 { Image(systemName: "arrow.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary).frame(width: 34) }
-                                WorkflowNodeCard(node: node, selected: node.id == "visual_review")
-                            }
-                        }
-                    }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                }
+                editorGraph
                 Divider().overlay(Theme.hairline)
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 10) {
                     Text("Visual review").font(.system(size: 15, weight: .semibold))
                     Text("Create a draft to edit this node.").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                     Spacer()
-                }.padding(16).frame(width: 250, alignment: .topLeading)
+                }
+                .padding(16).frame(width: 250, alignment: .topLeading)
             }
-        }.background(Theme.bg)
+        }
+        .background(Theme.bg)
+    }
+
+    private var editorLibrary: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Node library").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            Text("Drag nodes onto the canvas").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary.opacity(0.8))
+            Text("PULSE").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary.opacity(0.72))
+            shotLibraryNode("Research", icon: "globe", installed: true)
+            shotLibraryNode("Synthesis", icon: "sparkles", installed: true)
+            shotLibraryNode("Claim audit", icon: "checkmark.shield", installed: true)
+            Text("IMAGE").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary.opacity(0.72))
+            shotLibraryNode("Cover art", icon: "photo", installed: true)
+            shotLibraryNode("Visual review", icon: "eye", installed: false)
+            shotLibraryNode("One retry", icon: "arrow.clockwise", installed: false)
+            Text("OUTPUT").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary.opacity(0.72))
+            shotLibraryNode("Publish", icon: "arrow.down.to.line", installed: true)
+            Spacer()
+        }
+        .padding(16).frame(width: 212, alignment: .topLeading)
+    }
+
+    private func shotLibraryNode(_ title: String, icon: String, installed: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon).font(.system(size: 11, weight: .medium)).frame(width: 15)
+            Text(title).font(.system(size: 11.5, weight: .medium))
+            Spacer(minLength: 0)
+            if installed { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
+        }
+        .foregroundStyle(installed ? Theme.textSecondary : Theme.textPrimary)
+        .padding(.horizontal, 9).padding(.vertical, 8)
+        .background(Theme.surface.opacity(installed ? 0.55 : 0.95))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
+    }
+
+    private var editorGraph: some View {
+        ZStack(alignment: .topLeading) {
+            DotGrid()
+            VStack(alignment: .leading, spacing: 42) {
+                HStack(spacing: 16) {
+                    ForEach(Array(workflow.definition.nodes.prefix(4).enumerated()), id: \.element.id) { index, node in
+                        if index > 0 { Image(systemName: "arrow.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary) }
+                        WorkflowNodeCard(node: node, selected: false)
+                    }
+                }
+                HStack(spacing: 16) {
+                    ForEach(Array(workflow.definition.nodes.dropFirst(4).enumerated()), id: \.element.id) { index, node in
+                        if index > 0 { Image(systemName: "arrow.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary) }
+                        WorkflowNodeCard(node: node, selected: node.id == "visual_review")
+                    }
+                }
+            }
+            .padding(46)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }

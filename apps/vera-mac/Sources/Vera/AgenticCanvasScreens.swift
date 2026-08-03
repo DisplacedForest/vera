@@ -154,7 +154,14 @@ struct AgenticCanvasView: View {
                             } else {
                                 OrganismMap(graph: graph, jobs: jobsByID, size: geo.size,
                                             selected: selected, pulses: pulses,
-                                            onSelect: { selected = $0 },
+                                            onSelect: { id in
+                                                if id == "pulse" {
+                                                    drilled = id
+                                                    selected = nil
+                                                } else {
+                                                    selected = id
+                                                }
+                                            },
                                             onDrill: { drilled = $0; selected = nil })
                             }
                         }

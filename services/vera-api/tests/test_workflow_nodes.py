@@ -327,7 +327,10 @@ def pulse_harness(monkeypatch, tmp_path):
 
     async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False,
                             outcome=None, **kwargs):
-        return {"id": f"id-{t['title']}", "title": t["title"], "_corpus": []}
+        card = {"id": f"id-{t['title']}", "day": "2026-01-01", "title": t["title"],
+                "kind": "research"}
+        pulse_store.insert_card(card)
+        return {**card, "_corpus": []}
 
     async def _vera(messages, temperature=0.4, think=None):
         return "NOTE"
@@ -388,6 +391,54 @@ def test_pulse_run_executes_every_inserted_flow_node(pulse_harness, fake_get):
     cards = _notify_cards(pulse_store)
     assert len(cards) == 1
     assert cards[0]["situation_key"] == "workflow-notify:pulse:notify"
+
+
+def _insert_into(definition, node, upstream, downstream):
+    definition["nodes"].insert(
+        next(i for i, n in enumerate(definition["nodes"]) if n["id"] == downstream), node)
+    definition["edges"] = [e for e in definition["edges"]
+                           if e != {"from": upstream, "to": downstream}]
+    definition["edges"].extend([{"from": upstream, "to": node["id"]},
+                                {"from": node["id"], "to": downstream}])
+    return definition
+
+
+def test_post_synthesis_filter_drop_updates_injected_and_backfills(pulse_harness):
+    definition = _insert_into(
+        workflow_store.baseline_definition(),
+        {"id": "filter", "type": "flow.filter",
+         "config": {"operator": "contains", "value": "frost", "action": "drop"}},
+        "synthesis", "claim_audit")
+    workflow_store.start_run("pulse", "run-1")
+    out = run(pulse._do_run(pulse.PulseRequest(max_cards=1), workflow_definition=definition,
+                            workflow_run_id="run-1"))
+    assert out["injected"] == ["Filler topic"]
+    assert pulse_store.get_card("id-Frost watch") is None
+    assert pulse_store.get_card("id-Filler topic") is not None
+    assert not any("under floor" in e for e in out["errors"])
+    dropped = next(i for i in out["items"] if i["title"] == "Frost watch")
+    assert dropped["status"] == "dropped"
+
+
+def test_post_synthesis_llm_drop_updates_injected_and_reports_the_floor(pulse_harness,
+                                                                        monkeypatch):
+    async def empty_vera(messages, temperature=0.4, think=None):
+        return ""
+
+    monkeypatch.setattr(pulse, "_vera", empty_vera)
+    definition = _insert_into(
+        workflow_store.baseline_definition(),
+        {"id": "llm", "type": "flow.llm_step",
+         "config": {"prompt": "Keep?", "output": "drop_on_empty"}},
+        "claim_audit", "cover_art")
+    workflow_store.start_run("pulse", "run-1")
+    out = run(pulse._do_run(pulse.PulseRequest(), workflow_definition=definition,
+                            workflow_run_id="run-1"))
+    assert out["injected"] == []
+    assert pulse_store.get_card("id-Frost watch") is None
+    assert pulse_store.get_card("id-Filler topic") is None
+    assert any("under floor" in e for e in out["errors"])
+    assert all(i["status"] == "dropped" for i in out["items"])
 
 
 def test_barrier_node_before_synthesis_cannot_exceed_the_card_target(pulse_harness):

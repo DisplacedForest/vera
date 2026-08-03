@@ -12,12 +12,24 @@ def _field_text(item, field):
     return "" if value is None else str(value)
 
 
-def _drop_persisted(items):
+def _drop_persisted(ctx, items):
     from . import pulse
     for item in items:
         card_id = item.get("id")
         if card_id and pulse.store.get_card(card_id):
             pulse.store.delete_card(card_id)
+            _discard_accounting(ctx, item)
+
+
+def _discard_accounting(ctx, item):
+    entry = (ctx.data.get("items_by_card") or {}).get(item.get("id"))
+    if entry is not None:
+        entry.update({"status": "dropped", "reason": "removed by an inserted node"})
+    out = ctx.data.get("out")
+    if isinstance(out, dict) and isinstance(out.get("injected"), list):
+        title = item.get("title")
+        if title in out["injected"]:
+            out["injected"].remove(title)
 
 
 def _persist_summary(item, summary):
@@ -53,7 +65,7 @@ async def _filter_run(node, items, ctx):
     kept, dropped = [], []
     for item in items:
         (kept if matches(item) != (action == "drop") else dropped).append(item)
-    _drop_persisted(dropped)
+    _drop_persisted(ctx, dropped)
     ctx.summaries[node["id"]] = {"kept": len(kept), "dropped": len(dropped)}
     return kept
 
@@ -88,7 +100,7 @@ async def _llm_step_run(node, items, ctx):
         if output == "drop_on_empty":
             if reply:
                 return list(items)
-            _drop_persisted(items)
+            _drop_persisted(ctx, items)
             return []
         if output == "replace_summary":
             for item in items:
@@ -108,7 +120,7 @@ async def _llm_step_run(node, items, ctx):
             out.append({**item, "summary": reply})
         else:
             out.append({**item, "annotation": reply})
-    _drop_persisted(dropped)
+    _drop_persisted(ctx, dropped)
     return out
 
 

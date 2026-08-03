@@ -82,6 +82,8 @@ def test_run_records_the_version_selected_at_start():
     pinned = workflow_store.get_version(run["workflow_version_id"])
     assert [node["id"] for node in pinned["definition"]["nodes"]] == [
         "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
+    assert run["version"]["id"] == run["workflow_version_id"]
+    assert run["version"]["definition"] == pinned["definition"]
 
 
 def test_draft_validates_visual_controls():

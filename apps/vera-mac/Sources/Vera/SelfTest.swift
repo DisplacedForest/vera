@@ -1487,6 +1487,89 @@ enum SelfTest {
             }
             print("  pulse workflow OK (served catalog + schema fields + profile validation)")
 
+            let runFixtureStore = PulseWorkflowStore.runFixture()
+            guard runFixtureStore.mode == .run,
+                  let fixtureRun = runFixtureStore.latestRun,
+                  fixtureRun.state == "ok",
+                  fixtureRun.nodes.count == 8,
+                  fixtureRun.nodeRun("missing") == nil,
+                  let triageRun = fixtureRun.nodeRun("triage"),
+                  triageRun.countsLine == "3 rounds",
+                  triageRun.duration == 60,
+                  let synthesisRun = fixtureRun.nodeRun("synthesis"),
+                  synthesisRun.state == "warning",
+                  synthesisRun.error == "one card starved for sources",
+                  fixtureRun.nodeRun("gates")?.countsLine == "6 items",
+                  fixtureRun.version?.id == "fixture-pinned",
+                  fixtureRun.version?.number == 2,
+                  fixtureRun.version?.definition.nodes.count == 8,
+                  runFixtureStore.runVersion?.id == "fixture-pinned" else {
+                print("SELFTEST ERROR: workflow run parse"); exit(1)
+            }
+            let pinnedRunJSON = """
+            {"id":"r2","state":"ok","started_at":1754250000,
+             "version":{"id":"v-old","version":1,"state":"archived","definition":{"id":"pulse",
+               "nodes":[{"id":"triage","type":"pulse.triage","config":{}},
+                        {"id":"experiment","type":"flow.filter","config":{}},
+                        {"id":"inject","type":"pulse.inject","config":{}}],
+               "edges":[{"from":"triage","to":"experiment"},{"from":"experiment","to":"inject"}]}},
+             "nodes":[{"id":"experiment","state":"ok","output":{"items":2},"started_at":1754250001,"finished_at":1754250002}]}
+            """
+            guard let pinnedObject = try? JSONSerialization.jsonObject(with: Data(pinnedRunJSON.utf8)),
+                  let pinnedRun = PulseWorkflowRun.parse(pinnedObject),
+                  pinnedRun.version?.definition.node(withID: "experiment") != nil,
+                  pinnedRun.nodeRun("experiment")?.countsLine == "2 items" else {
+                print("SELFTEST ERROR: workflow run pinned version"); exit(1)
+            }
+            guard PulseWorkflowRun.classify(nil) == (nil, false),
+                  PulseWorkflowRun.classify(NSNull()) == (nil, false),
+                  PulseWorkflowRun.classify(["id": "broken"]) == (nil, true),
+                  PulseWorkflowRun.classify(pinnedObject).unreadable == false else {
+                print("SELFTEST ERROR: workflow run classification"); exit(1)
+            }
+            let brokenVersion = PulseWorkflowRun.classify(["id": "r3", "state": "ok", "started_at": 1754250000,
+                                                          "version": ["broken": true]])
+            let nullVersion = PulseWorkflowRun.classify(["id": "r4", "state": "ok", "started_at": 1754250000,
+                                                        "version": NSNull()])
+            let absentVersion = PulseWorkflowRun.classify(["id": "r5", "state": "ok", "started_at": 1754250000])
+            guard brokenVersion == (nil, true),
+                  nullVersion == (nil, true),
+                  absentVersion.unreadable == false,
+                  absentVersion.run?.version == nil else {
+                print("SELFTEST ERROR: workflow run version strictness"); exit(1)
+            }
+            let evidence = fixtureRun.cardEvidence
+            guard evidence.count == 3,
+                  evidence[1].cardID == "card-2",
+                  evidence[1].retryCount == 1,
+                  evidence[1].state == "retried",
+                  evidence[1].verdictLine == "Retried \u{b7} score 0.55 \u{b7} retry 1",
+                  evidence[0].verdictLine == "Accepted \u{b7} score 0.94" else {
+                print("SELFTEST ERROR: workflow run evidence"); exit(1)
+            }
+            guard PulseWorkflowRun.parse(["id": "x", "state": "ok"]) == nil,
+                  PulseWorkflowRun.parse(NSNull()) == nil,
+                  let bareRun = PulseWorkflowRun.parse(["id": "x", "state": "running", "started_at": 1754250000]),
+                  bareRun.nodes.isEmpty, bareRun.cardEvidence.isEmpty, bareRun.finishedAt == nil,
+                  bareRun.version == nil,
+                  PulseWorkflowNodeRun.parse(["id": "n"]) == nil,
+                  let openNode = PulseWorkflowNodeRun.parse(["id": "n", "state": "running", "started_at": 1754250000]),
+                  openNode.duration == nil, openNode.countsLine == nil,
+                  let legacyNode = PulseWorkflowNodeRun.parse(["id": "n", "state": "warning",
+                                                              "output": ["review": ["accept": true], "rounds": 1]]),
+                  legacyNode.output.keys.sorted() == ["rounds"], legacyNode.countsLine == "1 rounds" else {
+                print("SELFTEST ERROR: workflow run strictness"); exit(1)
+            }
+            guard runDurationText(0.4) == "under 1s", runDurationText(75) == "75s", runDurationText(212) == "3m 32s" else {
+                print("SELFTEST ERROR: run duration format"); exit(1)
+            }
+            let emptyRunStore = PulseWorkflowStore.fixture()
+            emptyRunStore.mode = .run
+            guard emptyRunStore.latestRun == nil else {
+                print("SELFTEST ERROR: run empty state"); exit(1)
+            }
+            print("  workflow run mode OK (record parse + node mapping + evidence + degradation)")
+
             // Config file round-trip on a temp path: write → read preserves strings + unknown keys.
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("vera-selftest-\(UUID().uuidString)/config.json")

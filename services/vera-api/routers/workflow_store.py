@@ -122,6 +122,10 @@ def save_draft(version_id: str, definition: dict) -> dict:
     edges = definition.get("edges")
     if not isinstance(nodes, list) or not isinstance(edges, list) or not nodes:
         raise ValueError("nodes and edges are required")
+    if any(not isinstance(node, dict) for node in nodes):
+        raise ValueError("nodes must be objects")
+    if any(not isinstance(edge, dict) for edge in edges):
+        raise ValueError("edges must be objects")
     ids = [node.get("id") for node in nodes]
     if any(not isinstance(node_id, str) or not node_id for node_id in ids) or len(ids) != len(set(ids)):
         raise ValueError("nodes need unique ids")

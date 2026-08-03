@@ -2,8 +2,10 @@ import os
 import sys
 
 import pytest
+from fastapi import HTTPException
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from routers import agentic
 from routers import workflow_store
 
 
@@ -105,3 +107,12 @@ def test_node_evidence_is_not_replaced_by_summary_rows():
     workflow_store.record_node_runs("run-1", {"items": [{"cover_generated": True}]})
     run = workflow_store.latest_run("pulse")
     assert next(node for node in run["nodes"] if node["id"] == "cover_art")["output"] == {"card_id": "card-1"}
+
+
+def test_malformed_nodes_are_a_controlled_bad_request():
+    draft = workflow_store.create_draft("pulse")
+    malformed = {**draft["definition"], "nodes": [1]}
+    with pytest.raises(HTTPException) as exc:
+        import asyncio
+        asyncio.run(agentic.update_workflow_draft(draft["id"], agentic.WorkflowDefinitionUpdate(definition=malformed)))
+    assert exc.value.status_code == 400

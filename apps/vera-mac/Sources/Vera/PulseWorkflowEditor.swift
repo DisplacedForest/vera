@@ -824,7 +824,7 @@ struct PulseWorkflowEditor: View {
                         Text("\(runStateLabel(run.state)) · started \(run.startedAt.formatted(date: .abbreviated, time: .shortened))")
                             .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
                     }
-                } else if !store.runStale {
+                } else if !store.runStale, !store.runUnreadable {
                     Text("No recorded runs").font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
                 }
             } else if store.isEditing {

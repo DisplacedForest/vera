@@ -1382,6 +1382,24 @@ enum SelfTest {
             }
             print("  agentic graph OK (flows + stages + state, surfaces incl. nil stat)")
 
+            let workflowJSON = """
+            {"id":"pulse","nodes":[
+              {"id":"triage","type":"pulse.triage","config":{}},
+              {"id":"cover_art","type":"pulse.cover_art","config":{"style":"editorial"}},
+              {"id":"visual_review","type":"pulse.visual_review","config":{"threshold":0.8}},
+              {"id":"cover_retry","type":"pulse.cover_retry","config":{"max_attempts":1}},
+              {"id":"inject","type":"pulse.inject","config":{}}
+            ],"edges":[{"from":"triage","to":"cover_art"},{"from":"cover_art","to":"visual_review"},{"from":"visual_review","to":"cover_retry"},{"from":"cover_retry","to":"inject"}]}
+            """
+            guard let workflowObject = try? JSONSerialization.jsonObject(with: Data(workflowJSON.utf8)),
+                  let workflow = PulseWorkflowDefinition.parse(workflowObject),
+                  workflow.hasVisualLoop,
+                  workflow.nodes[2].label == "Visual review",
+                  (workflow.jsonObject()["nodes"] as? [[String: Any]])?[2]["config"] as? [String: Any] != nil else {
+                print("SELFTEST ERROR: pulse workflow parse"); exit(1)
+            }
+            print("  pulse workflow OK (editable node graph + typed controls)")
+
             // Config file round-trip on a temp path: write → read preserves strings + unknown keys.
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("vera-selftest-\(UUID().uuidString)/config.json")

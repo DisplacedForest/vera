@@ -201,6 +201,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view == "agentic-editor" {
+            content = AnyView(
+                PulseWorkflowEditorShot()
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "builder" {
             content = AnyView(
                 VeinBuilderView(model: BuilderModel.fixture())

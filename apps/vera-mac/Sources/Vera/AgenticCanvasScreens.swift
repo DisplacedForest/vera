@@ -6,6 +6,7 @@ struct AgenticCanvasView: View {
     @ObservedObject var sched: SchedulerStore
     @ObservedObject var activity: ActivityStore
     @ObservedObject var pulseRun: PulseRunStore
+    @ObservedObject var pulseWorkflow: PulseWorkflowStore
     var onEditSchedule: (SchedulerJob) -> Void
 
     @State private var selected: String?
@@ -168,6 +169,8 @@ struct AgenticCanvasView: View {
     private func drillView(_ flow: GraphFlow, graph: AgenticGraph, viewport: CGSize) -> some View {
         if flow.stageLayout == "fan" {
             HeartbeatDrill(flow: flow, graph: graph, viewport: viewport)
+        } else if flow.id == "pulse" {
+            PulseWorkflowEditor(store: pulseWorkflow)
         } else {
             PulseDrill(flow: flow, graph: graph, viewport: viewport, detail: pulseRun.detail)
         }

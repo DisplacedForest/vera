@@ -6,16 +6,10 @@ import uuid
 
 import data_root
 
+from . import workflow_registry
+
 
 DB_PATH = os.environ.get("WORKFLOW_DB_PATH", os.path.join(data_root.resolve(), "workflows.db"))
-SUPPORTED_NODE_TYPES = {
-    "pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit",
-    "pulse.cover_art", "pulse.visual_review", "pulse.cover_retry", "pulse.inject",
-}
-REQUIRED_NODE_TYPES = {
-    "pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit",
-    "pulse.cover_art", "pulse.inject",
-}
 
 
 def _conn():
@@ -118,51 +112,7 @@ def save_draft(version_id: str, definition: dict) -> dict:
         raise ValueError("draft not found")
     if definition.get("id") != current["workflow_id"]:
         raise ValueError("workflow id cannot change")
-    nodes = definition.get("nodes")
-    edges = definition.get("edges")
-    if not isinstance(nodes, list) or not isinstance(edges, list) or not nodes:
-        raise ValueError("nodes and edges are required")
-    if any(not isinstance(node, dict) for node in nodes):
-        raise ValueError("nodes must be objects")
-    if any(not isinstance(edge, dict) for edge in edges):
-        raise ValueError("edges must be objects")
-    ids = [node.get("id") for node in nodes]
-    if any(not isinstance(node_id, str) or not node_id for node_id in ids) or len(ids) != len(set(ids)):
-        raise ValueError("nodes need unique ids")
-    if any(node.get("type") not in SUPPORTED_NODE_TYPES for node in nodes):
-        raise ValueError("workflow uses an unsupported node type")
-    types = [node.get("type") for node in nodes]
-    if not REQUIRED_NODE_TYPES.issubset(types) or len(types) != len(set(types)):
-        raise ValueError("workflow must contain each required node exactly once")
-    has_review = "pulse.visual_review" in types
-    has_retry = "pulse.cover_retry" in types
-    if has_review != has_retry:
-        raise ValueError("visual review and retry must be added together")
-    if any(edge.get("from") not in ids or edge.get("to") not in ids for edge in edges):
-        raise ValueError("edges must connect declared nodes")
-    id_for = {node["type"]: node["id"] for node in nodes}
-    chain = ["pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit", "pulse.cover_art"]
-    if has_review:
-        chain.extend(["pulse.visual_review", "pulse.cover_retry"])
-    chain.append("pulse.inject")
-    expected_edges = [{"from": id_for[left], "to": id_for[right]} for left, right in zip(chain, chain[1:])]
-    if edges != expected_edges:
-        raise ValueError("workflow must preserve the approved Pulse execution order")
-    for node in nodes:
-        config = node.get("config") or {}
-        if not isinstance(config, dict):
-            raise ValueError("node configuration must be an object")
-        if node["type"] == "pulse.cover_art":
-            if set(config) - {"style"} or config.get("style", "rotating") not in {"rotating", "photographic", "illustrated", "editorial"}:
-                raise ValueError("cover art style must be rotating, photographic, illustrated, or editorial")
-        if node["type"] == "pulse.visual_review":
-            threshold = config.get("threshold", 0.8)
-            if set(config) - {"threshold"} or not isinstance(threshold, (int, float)) or not 0 <= threshold <= 1:
-                raise ValueError("visual review threshold must be between 0 and 1")
-        if node["type"] == "pulse.cover_retry":
-            attempts = config.get("max_attempts", 1)
-            if set(config) - {"max_attempts"} or attempts not in (0, 1):
-                raise ValueError("cover retry allows zero or one attempt")
+    workflow_registry.validate_definition(current["workflow_id"], definition)
     with _conn() as conn:
         conn.execute("UPDATE workflow_versions SET definition=? WHERE id=?", (json.dumps(definition), version_id))
     return get_version(version_id)

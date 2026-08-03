@@ -412,13 +412,17 @@ MONITOR_BLOCKS: set[str] = {"trip_band", "situation_cluster"}
 
 BLOCK_NOTES: dict[str, str] = {}
 
+NODE_SPECS: dict[str, dict] = {}
 
-def register(name: str, runner, monitor: bool = False, describe: str = "") -> None:
+
+def register(name: str, runner, monitor: bool = False, describe: str = "", node: dict | None = None) -> None:
     BLOCKS[name] = runner
     if monitor:
         MONITOR_BLOCKS.add(name)
     if describe:
         BLOCK_NOTES[name] = describe
+    if node:
+        NODE_SPECS[name] = node
 
 
 def load_block_modules() -> list[str]:

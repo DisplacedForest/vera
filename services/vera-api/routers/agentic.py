@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from . import action_store, heartbeat_store, scheduler_store
+from . import workflow_registry
 from . import workflow_store
 
 log = logging.getLogger("agentic")
@@ -331,6 +332,15 @@ async def workflow(workflow_id: str):
     except KeyError:
         raise HTTPException(404, "workflow not found")
     return {"workflow": active, "latest_run": workflow_store.latest_run(workflow_id)}
+
+
+@router.get("/agentic/workflows/{workflow_id}/catalog", tags=["agentic"])
+async def workflow_catalog(workflow_id: str):
+    try:
+        workflow_store.active(workflow_id)
+    except KeyError:
+        raise HTTPException(404, "workflow not found")
+    return {"nodes": workflow_registry.catalog(), "profile": workflow_registry.profile_for(workflow_id)}
 
 
 @router.post("/agentic/workflows/{workflow_id}/drafts", tags=["agentic"])

@@ -335,3 +335,23 @@ def test_run_all_executes_the_active_definition(pulse_harness, monkeypatch):
     out = run(pulse._do_run_all(pulse.RunAllRequest()))
     assert out["users"][0]["injected"] == ["A"]
     assert pulse_harness["research_kwargs"] == [{"style_profile": "photographic"}]
+
+
+def test_pull_source_graph_with_disconnected_node_is_rejected(stub_types):
+    async def source_pull(node, ctx):
+        return None
+
+    async def noop(node, items, ctx):
+        return items
+
+    stub_types("g.pull", pull=source_pull)
+    stub_types("g.noop", run=noop)
+    definition = {
+        "id": "generic",
+        "nodes": [{"id": "src", "type": "g.pull"}, {"id": "connected", "type": "g.noop"},
+                  {"id": "orphan", "type": "g.noop"}],
+        "edges": [{"from": "src", "to": "connected"}],
+    }
+    ctx = workflow_executor.RunContext(definition)
+    with pytest.raises(ValueError, match="single path"):
+        run(workflow_executor.execute(definition, ctx))

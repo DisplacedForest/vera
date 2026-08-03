@@ -113,9 +113,15 @@ async def execute(definition: dict, ctx: RunContext, recorder=None) -> list:
 
     source = states[ordered[0]["id"]] if ordered[0]["id"] in states else None
     if source is not None and source.impl.get("pull"):
-        if any(len(downstream[nid]) > 1 or len(upstream[nid]) > 1 for nid in downstream):
+        path = [ordered[0]["id"]]
+        while True:
+            if len(downstream[path[-1]]) > 1 or len(upstream[path[-1]]) > 1:
+                raise ValueError("a workflow with a pull source must be a single path")
+            if not downstream[path[-1]]:
+                break
+            path.append(downstream[path[-1]][0])
+        if len(path) != len(ordered):
             raise ValueError("a workflow with a pull source must be a single path")
-        path = [n["id"] for n in ordered]
 
         async def _flow(index: int, items: list):
             for pos in range(index, len(path)):

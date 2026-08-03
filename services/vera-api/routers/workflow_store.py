@@ -42,6 +42,10 @@ def _pulse_definition() -> dict:
     }
 
 
+def baseline_definition() -> dict:
+    return _pulse_definition()
+
+
 def init():
     with _conn() as conn:
         conn.execute("""CREATE TABLE IF NOT EXISTS workflow_versions (
@@ -53,14 +57,14 @@ def init():
             state TEXT NOT NULL, started_at INTEGER NOT NULL, finished_at INTEGER, output TEXT, error TEXT)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS workflow_node_runs (
             id TEXT PRIMARY KEY, workflow_run_id TEXT NOT NULL, node_id TEXT NOT NULL,
-            state TEXT NOT NULL, output TEXT, error TEXT, started_at INTEGER,
+            state TEXT NOT NULL, input TEXT, output TEXT, error TEXT, started_at INTEGER,
             finished_at INTEGER, created_at INTEGER NOT NULL)""")
         conn.execute("""CREATE TABLE IF NOT EXISTS workflow_visual_runs (
             id TEXT PRIMARY KEY, workflow_run_id TEXT NOT NULL, card_id TEXT NOT NULL,
             image_url TEXT, review TEXT, retry_count INTEGER NOT NULL, state TEXT NOT NULL,
             created_at INTEGER NOT NULL)""")
         columns = {row[1] for row in conn.execute("PRAGMA table_info(workflow_node_runs)")}
-        for name, kind in (("error", "TEXT"), ("started_at", "INTEGER"), ("finished_at", "INTEGER")):
+        for name, kind in (("error", "TEXT"), ("started_at", "INTEGER"), ("finished_at", "INTEGER"), ("input", "TEXT")):
             if name not in columns:
                 conn.execute(f"ALTER TABLE workflow_node_runs ADD COLUMN {name} {kind}")
         row = conn.execute("SELECT id FROM workflow_versions WHERE workflow_id='pulse' AND state='active'").fetchone()
@@ -144,19 +148,21 @@ def finish_run(run_id: str, state: str, output: dict | None = None, error: str |
                      (state, int(time.time()), json.dumps(output or {}), error, run_id))
 
 
-def start_node(run_id: str, node_id: str) -> str:
+def start_node(run_id: str, node_id: str, input: dict | None = None) -> str:
     ident = str(uuid.uuid4())
     now = int(time.time())
     with _conn() as conn:
-        conn.execute("INSERT INTO workflow_node_runs(id, workflow_run_id, node_id, state, started_at, created_at) VALUES(?,?,?,?,?,?)",
-                     (ident, run_id, node_id, "running", now, now))
+        conn.execute("INSERT INTO workflow_node_runs(id, workflow_run_id, node_id, state, input, started_at, created_at) VALUES(?,?,?,?,?,?,?)",
+                     (ident, run_id, node_id, "running", json.dumps(input) if input is not None else None, now, now))
     return ident
 
 
-def finish_node(node_run_id: str, state: str, output: dict | None = None, error: str | None = None):
+def finish_node(node_run_id: str, state: str, output: dict | None = None, error: str | None = None,
+                input: dict | None = None):
     with _conn() as conn:
-        conn.execute("UPDATE workflow_node_runs SET state=?, output=?, error=?, finished_at=? WHERE id=?",
-                     (state, json.dumps(output or {}), error, int(time.time()), node_run_id))
+        conn.execute("UPDATE workflow_node_runs SET state=?, output=?, error=?, finished_at=?, input=COALESCE(?, input) WHERE id=?",
+                     (state, json.dumps(output or {}), error, int(time.time()),
+                      json.dumps(input) if input is not None else None, node_run_id))
 
 
 def record_visual_run(run_id: str, card_id: str, image_url: str | None, review: dict | None, retry_count: int, state: str):
@@ -165,47 +171,16 @@ def record_visual_run(run_id: str, card_id: str, image_url: str | None, review: 
                      (str(uuid.uuid4()), run_id, card_id, image_url, json.dumps(review or {}), retry_count, state, int(time.time())))
 
 
-def record_node_runs(run_id: str, output: dict):
-    status = "ok" if not output.get("errors") else "warning"
-    gates = output.get("gates") or {}
-    outputs = {
-        "triage": {"rounds": len(output.get("rounds") or []), "proposed": len(output.get("topics") or [])},
-        "gates": {"gates": gates},
-        "synthesis": {"cards": len(output.get("injected") or [])},
-        "claim_audit": {"items": len(output.get("items") or [])},
-        "cover_art": {"generated": sum(1 for item in output.get("items") or [] if item.get("cover_generated"))},
-        "visual_review": {"reviewed": sum(1 for item in output.get("items") or [] if item.get("visual_review"))},
-        "cover_retry": {"attempted": sum(1 for item in output.get("items") or [] if item.get("visual_retry"))},
-        "inject": {"cards": len(output.get("injected") or [])},
-    }
-    with _conn() as conn:
-        row = conn.execute("""SELECT v.definition FROM workflow_runs r
-                              JOIN workflow_versions v ON v.id=r.workflow_version_id
-                              WHERE r.id=?""", (run_id,)).fetchone()
-    if not row:
-        raise ValueError("workflow run not found")
-    nodes = json.loads(row["definition"])["nodes"]
-    rows = [
-        ("triage", {"rounds": len(output.get("rounds") or []), "proposed": len(output.get("topics") or [])}),
-        *[(node["id"], outputs.get(node["id"], {})) for node in nodes if node["id"] != "triage"],
-    ]
-    now = int(time.time())
-    with _conn() as conn:
-        existing = {row[0] for row in conn.execute("SELECT DISTINCT node_id FROM workflow_node_runs WHERE workflow_run_id=?", (run_id,))}
-        conn.executemany("INSERT INTO workflow_node_runs(id, workflow_run_id, node_id, state, output, created_at) VALUES(?,?,?,?,?,?)",
-                         [(str(uuid.uuid4()), run_id, node_id, status, json.dumps(node_output), now) for node_id, node_output in rows if node_id not in existing])
-
-
 def latest_run(workflow_id: str) -> dict | None:
     init()
     with _conn() as conn:
         row = conn.execute("SELECT * FROM workflow_runs WHERE workflow_id=? ORDER BY started_at DESC LIMIT 1", (workflow_id,)).fetchone()
         if not row:
             return None
-        nodes = conn.execute("SELECT node_id, state, output, error, started_at, finished_at, created_at FROM workflow_node_runs WHERE workflow_run_id=? ORDER BY created_at", (row["id"],)).fetchall()
+        nodes = conn.execute("SELECT node_id, state, input, output, error, started_at, finished_at, created_at FROM workflow_node_runs WHERE workflow_run_id=? ORDER BY created_at", (row["id"],)).fetchall()
         visual = conn.execute("SELECT card_id, image_url, review, retry_count, state, created_at FROM workflow_visual_runs WHERE workflow_run_id=? ORDER BY created_at", (row["id"],)).fetchall()
     return {"id": row["id"], "workflow_id": row["workflow_id"], "workflow_version_id": row["workflow_version_id"],
             "state": row["state"], "started_at": row["started_at"], "finished_at": row["finished_at"],
             "output": json.loads(row["output"] or "{}"), "error": row["error"],
-            "nodes": [{"id": node["node_id"], "state": node["state"], "output": json.loads(node["output"] or "{}"), "error": node["error"], "started_at": node["started_at"], "finished_at": node["finished_at"], "created_at": node["created_at"]} for node in nodes],
+            "nodes": [{"id": node["node_id"], "state": node["state"], "input": json.loads(node["input"]) if node["input"] else None, "output": json.loads(node["output"] or "{}"), "error": node["error"], "started_at": node["started_at"], "finished_at": node["finished_at"], "created_at": node["created_at"]} for node in nodes],
             "visual_runs": [{"card_id": item["card_id"], "image_url": item["image_url"], "review": json.loads(item["review"] or "{}"), "retry_count": item["retry_count"], "state": item["state"], "created_at": item["created_at"]} for item in visual]}

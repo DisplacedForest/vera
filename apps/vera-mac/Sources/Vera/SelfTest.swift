@@ -1409,6 +1409,14 @@ enum SelfTest {
             guard !(editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "inject")) ?? true) else {
                 print("SELFTEST ERROR: visual workflow connection"); exit(1)
             }
+            editorStore.removeVisualLoop()
+            editorStore.addVisualLoop()
+            let visualEdges = editorStore.draft?.definition.edges ?? []
+            guard visualEdges.contains(PulseWorkflowEdge(from: "cover_art", to: "visual_review")),
+                  visualEdges.contains(PulseWorkflowEdge(from: "visual_review", to: "cover_retry")),
+                  visualEdges.contains(PulseWorkflowEdge(from: "cover_retry", to: "inject")) else {
+                print("SELFTEST ERROR: visual workflow insertion"); exit(1)
+            }
             print("  pulse workflow OK (editable node graph + typed controls)")
 
             // Config file round-trip on a temp path: write → read preserves strings + unknown keys.

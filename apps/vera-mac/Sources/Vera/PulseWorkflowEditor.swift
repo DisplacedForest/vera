@@ -232,6 +232,11 @@ final class PulseWorkflowStore: ObservableObject {
         draft.definition.nodes.insert(review, at: cover + 1)
         draft.definition.nodes.insert(retry, at: cover + 2)
         draft.definition.edges.removeAll { $0.from == "cover_art" && $0.to == "inject" }
+        draft.definition.edges.append(contentsOf: [
+            PulseWorkflowEdge(from: "cover_art", to: review.id),
+            PulseWorkflowEdge(from: review.id, to: retry.id),
+            PulseWorkflowEdge(from: retry.id, to: "inject")
+        ])
         draft.definition.positions = defaultPositions(for: draft.definition.nodes)
         self.draft = draft
         selectedNodeID = review.id
@@ -448,32 +453,35 @@ struct PulseWorkflowEditor: View {
     }
 
     @ViewBuilder private func libraryNode(_ title: String, icon: String, enabled: Bool) -> some View {
-        let button = Button {
-            guard enabled else { return }
+        if enabled {
+            Button {
             if store.isEditing {
                 store.addVisualLoop()
             } else {
                 Task { await store.beginVisualLoopDraft() }
             }
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: icon).font(.system(size: 11, weight: .medium)).frame(width: 15)
-                Text(title).font(.system(size: 11.5, weight: .medium))
-                Spacer(minLength: 0)
-                if !enabled { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
+            } label: {
+                libraryNodeLabel(title, icon: icon, installed: false)
             }
-            .foregroundStyle(enabled ? Theme.textPrimary : Theme.textSecondary)
+            .buttonStyle(.plain)
+            .onDrag { NSItemProvider(object: "visual-loop" as NSString) }
+        } else {
+            libraryNodeLabel(title, icon: icon, installed: true)
+        }
+    }
+
+    private func libraryNodeLabel(_ title: String, icon: String, installed: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon).font(.system(size: 11, weight: .medium)).frame(width: 15)
+            Text(title).font(.system(size: 11.5, weight: .medium))
+            Spacer(minLength: 0)
+            if installed { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
+        }
+            .foregroundStyle(installed ? Theme.textSecondary : Theme.textPrimary)
             .padding(.horizontal, 9).padding(.vertical, 8)
-            .background(Theme.surface.opacity(enabled ? 0.95 : 0.55))
+            .background(Theme.surface.opacity(installed ? 0.55 : 0.95))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        if enabled {
-            button.onDrag { NSItemProvider(object: "visual-loop" as NSString) }
-        } else {
-            button
-        }
     }
 
     private var canvas: some View {
@@ -624,7 +632,7 @@ struct PulseWorkflowEditorShot: View {
             shotLibraryNode("Claim audit", icon: "checkmark.shield", installed: true)
             Text("IMAGE").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary.opacity(0.72))
             shotLibraryNode("Cover art", icon: "photo", installed: true)
-            shotLibraryNode("Visual review + retry", icon: "eye", installed: false)
+            shotLibraryNode("Visual review + retry", icon: "eye", installed: true)
             Text("OUTPUT").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textSecondary.opacity(0.72))
             shotLibraryNode("Publish", icon: "arrow.down.to.line", installed: true)
             Spacer()

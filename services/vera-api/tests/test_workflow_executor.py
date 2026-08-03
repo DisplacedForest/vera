@@ -214,7 +214,7 @@ def test_run_started_before_promotion_completes_on_its_pinned_version(pulse_harn
 
 
 def test_node_implementation_modules_reference_no_owui():
-    for name in ("pulse_nodes.py", "workflow_executor.py"):
+    for name in ("pulse_nodes.py", "workflow_executor.py", "workflow_nodes.py"):
         path = os.path.join(os.path.dirname(__file__), "..", "routers", name)
         source = open(path).read()
         assert "OWUI_BASE" not in source

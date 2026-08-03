@@ -37,6 +37,33 @@ BLOCK_META = {
     "present": {"label": "Present", "icon": "chart.bar", "category": "notify"},
 }
 
+GENERAL_SPECS = {
+    "flow.filter": {"label": "Filter", "icon": "line.3.horizontal.decrease", "tint": "orange",
+                    "category": "transform",
+                    "config_schema": {"field": {"type": "text", "default": "title"},
+                                      "operator": {"type": "choice", "default": "contains",
+                                                   "options": ["contains", "not_contains", "equals",
+                                                               "not_equals", "present", "missing"]},
+                                      "value": {"type": "text", "default": ""},
+                                      "action": {"type": "choice", "default": "keep", "options": ["keep", "drop"]}},
+                    "insertable": True},
+    "flow.llm_step": {"label": "LLM step", "icon": "wand.and.stars", "tint": "purple", "category": "transform",
+                      "config_schema": {"prompt": {"type": "text", "default": ""},
+                                        "mode": {"type": "choice", "default": "per_card",
+                                                 "options": ["per_card", "set"]},
+                                        "output": {"type": "choice", "default": "annotate",
+                                                   "options": ["annotate", "replace_summary", "drop_on_empty"]}},
+                      "insertable": True},
+    "flow.http_fetch": {"label": "HTTP fetch", "icon": "arrow.down.circle", "tint": "cyan", "category": "enrich",
+                        "config_schema": {"url": {"type": "text", "default": ""},
+                                          "extract": {"type": "text", "default": ""},
+                                          "context_key": {"type": "text", "default": "fetched"}},
+                        "insertable": True},
+    "flow.notify": {"label": "Notify", "icon": "bell.badge", "tint": "green", "category": "notify",
+                    "config_schema": {"headline": {"type": "text", "default": ""}},
+                    "insertable": True},
+}
+
 PULSE_PROFILE = {
     "id": "pulse",
     "spine": ["pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit",
@@ -69,6 +96,8 @@ def _block_spec(name: str) -> dict:
 def spec_for(node_type) -> dict | None:
     if node_type in PULSE_SPECS:
         return PULSE_SPECS[node_type]
+    if node_type in GENERAL_SPECS:
+        return GENERAL_SPECS[node_type]
     if isinstance(node_type, str) and node_type in vein_engine.BLOCKS:
         return _block_spec(node_type)
     return None
@@ -76,6 +105,7 @@ def spec_for(node_type) -> dict | None:
 
 def catalog() -> list[dict]:
     entries = [{"type": node_type, **spec} for node_type, spec in PULSE_SPECS.items()]
+    entries.extend({"type": node_type, **spec} for node_type, spec in GENERAL_SPECS.items())
     entries.extend({"type": name, **_block_spec(name)} for name in sorted(vein_engine.BLOCKS))
     return entries
 
@@ -94,6 +124,9 @@ def _validate_config(node: dict, spec: dict):
             if not any(type(value) is type(option) and value == option for option in field["options"]):
                 options = ", ".join(str(option) for option in field["options"])
                 raise ValueError(f"{label} {key} must be one of {options}")
+        if field["type"] == "text":
+            if not isinstance(value, str):
+                raise ValueError(f"{label} {key} must be text")
         if field["type"] == "number":
             low, high = field.get("min"), field.get("max")
             numeric = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)

@@ -1383,9 +1383,9 @@ enum SelfTest {
             print("  agentic graph OK (flows + stages + state, surfaces incl. nil stat)")
 
             guard let editorCatalog = WorkflowCatalog.fixture(),
-                  editorCatalog.nodes.count == 8,
-                  editorCatalog.paletteNodes.count == 8,
-                  editorCatalog.paletteCategories == ["core", "visual"],
+                  editorCatalog.nodes.count == 9,
+                  editorCatalog.paletteNodes.count == 9,
+                  editorCatalog.paletteCategories == ["core", "visual", "transform"],
                   editorCatalog.profile.canonicalOrder == ["pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit",
                                                           "pulse.cover_art", "pulse.visual_review", "pulse.cover_retry", "pulse.inject"],
                   editorCatalog.label(for: "pulse.inject") == "Inject" else {
@@ -1422,6 +1422,34 @@ enum SelfTest {
                   WorkflowProfile.parse(["id": "generic"])?.spine == [] else {
                 print("SELFTEST ERROR: workflow schema field bounds"); exit(1)
             }
+            guard let promptField = WorkflowSchemaField.parse(key: "prompt", raw: ["type": "text"]),
+                  promptField.kind == .text, promptField.defaultValue == nil,
+                  let fieldField = WorkflowSchemaField.parse(key: "field", raw: ["type": "text", "default": "title"]),
+                  fieldField.kind == .text, fieldField.defaultValue == .string("title") else {
+                print("SELFTEST ERROR: workflow text field parse"); exit(1)
+            }
+            guard let filterNode = WorkflowCatalogNode.parse([
+                      "type": "flow.filter", "label": "Filter", "category": "transform", "insertable": true,
+                      "config_schema": ["field": ["type": "text", "default": "title"],
+                                        "value": ["type": "text", "default": ""],
+                                        "operator": ["type": "choice", "options": ["contains", "equals"], "default": "contains"],
+                                        "future": ["type": "hologram"]]]),
+                  filterNode.fields.map(\.key) == ["field", "operator", "value"],
+                  filterNode.defaultConfig["field"] == .string("title"),
+                  filterNode.defaultConfig["value"] == .string("") else {
+                print("SELFTEST ERROR: workflow text default seeding"); exit(1)
+            }
+            let textWorkflowJSON = """
+            {"id":"pulse","nodes":[{"id":"filter","type":"flow.filter","config":{"field":"title","value":"frost"}}],"edges":[]}
+            """
+            guard let textObject = try? JSONSerialization.jsonObject(with: Data(textWorkflowJSON.utf8)),
+                  let textWorkflow = PulseWorkflowDefinition.parse(textObject),
+                  textWorkflow.nodes[0].config["value"] == .string("frost"),
+                  let textTrip = (textWorkflow.jsonObject()["nodes"] as? [[String: Any]])?.first,
+                  (textTrip["config"] as? [String: Any])?["value"] as? String == "frost" else {
+                print("SELFTEST ERROR: workflow text config round trip"); exit(1)
+            }
+            print("  workflow text config fields OK (parse + default seeding + round trip)")
             let workflowJSON = """
             {"id":"pulse","nodes":[
               {"id":"cover_art","type":"pulse.cover_art","config":{"style":"editorial"}},

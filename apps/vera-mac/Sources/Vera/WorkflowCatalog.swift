@@ -49,6 +49,7 @@ struct WorkflowSchemaField: Hashable, Identifiable {
         case choice([WorkflowConfigValue])
         case number(min: Double?, max: Double?)
         case bool
+        case text
     }
 
     let key: String
@@ -74,6 +75,8 @@ struct WorkflowSchemaField: Hashable, Identifiable {
             return WorkflowSchemaField(key: key, kind: .number(min: low, max: high), defaultValue: fallback)
         case "bool":
             return WorkflowSchemaField(key: key, kind: .bool, defaultValue: fallback)
+        case "text":
+            return WorkflowSchemaField(key: key, kind: .text, defaultValue: fallback)
         default:
             return nil
         }
@@ -125,7 +128,7 @@ struct WorkflowCatalogNode: Hashable, Identifiable {
             guard let raw = schema[key] as? [String: Any], let fieldType = raw["type"] as? String else { return nil }
             if let field = WorkflowSchemaField.parse(key: key, raw: raw) {
                 fields.append(field)
-            } else if ["choice", "number", "bool"].contains(fieldType) {
+            } else if ["choice", "number", "bool", "text"].contains(fieldType) {
                 return nil
             }
         }

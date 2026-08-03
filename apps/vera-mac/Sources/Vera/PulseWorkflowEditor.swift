@@ -558,7 +558,7 @@ final class PulseWorkflowStore: ObservableObject {
     static func fixture(editing: Bool = false) -> PulseWorkflowStore {
         let store = PulseWorkflowStore()
         store.catalog = WorkflowCatalog.fixture()
-        let nodes = [
+        var nodes = [
             PulseWorkflowNode(id: "triage", type: "pulse.triage", config: [:]),
             PulseWorkflowNode(id: "gates", type: "pulse.gates", config: [:]),
             PulseWorkflowNode(id: "synthesis", type: "pulse.synthesis", config: [:]),
@@ -568,6 +568,12 @@ final class PulseWorkflowStore: ObservableObject {
             PulseWorkflowNode(id: "cover_retry", type: "pulse.cover_retry", config: ["max_attempts": .int(1)]),
             PulseWorkflowNode(id: "inject", type: "pulse.inject", config: [:])
         ]
+        if editing {
+            nodes.insert(PulseWorkflowNode(id: "filter", type: "flow.filter",
+                                           config: ["field": .string("title"), "operator": .string("contains"),
+                                                    "value": .string("frost"), "action": .string("drop")]),
+                         at: 3)
+        }
         let definition = PulseWorkflowDefinition(id: "pulse", nodes: nodes,
                                                  edges: Array(zip(nodes, nodes.dropFirst())).map { PulseWorkflowEdge(from: $0.id, to: $1.id) },
                                                  positions: Dictionary(uniqueKeysWithValues: nodes.enumerated().map {
@@ -575,7 +581,7 @@ final class PulseWorkflowStore: ObservableObject {
                                                  }))
         store.active = PulseWorkflowVersion(id: "fixture", number: 2, state: "active", definition: definition)
         if editing { store.draft = store.active }
-        store.selectedNodeID = "visual_review"
+        store.selectedNodeID = editing ? "filter" : "visual_review"
         store.phase = .ready
         return store
     }
@@ -595,7 +601,12 @@ extension WorkflowCatalog {
            "config_schema":{"threshold":{"type":"number","min":0,"max":1,"default":0.8}},"insertable":false},
           {"type":"pulse.cover_retry","label":"One retry","icon":"arrow.clockwise","tint":"orange","category":"visual",
            "config_schema":{"max_attempts":{"type":"choice","options":[0,1],"default":1}},"insertable":false},
-          {"type":"pulse.inject","label":"Inject","icon":"arrow.down.to.line","tint":"green","category":"core","config_schema":{},"insertable":false}
+          {"type":"pulse.inject","label":"Inject","icon":"arrow.down.to.line","tint":"green","category":"core","config_schema":{},"insertable":false},
+          {"type":"flow.filter","label":"Filter","icon":"line.3.horizontal.decrease","tint":"orange","category":"transform",
+           "config_schema":{"field":{"type":"text","default":"title"},
+                            "operator":{"type":"choice","default":"contains","options":["contains","not_contains","equals","not_equals","present","missing"]},
+                            "value":{"type":"text","default":""},
+                            "action":{"type":"choice","default":"keep","options":["keep","drop"]}},"insertable":true}
         ],
         "profile":{"id":"pulse",
           "spine":["pulse.triage","pulse.gates","pulse.synthesis","pulse.claim_audit","pulse.cover_art","pulse.inject"],
@@ -1099,16 +1110,21 @@ struct PulseWorkflowEditor: View {
         case .choice(let options):
             VStack(alignment: .leading, spacing: 6) {
                 Text(field.label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                let picker = Picker("", selection: Binding(get: { current ?? options[0] }, set: { value in store.setConfigValue(field.key, value) })) {
-                    ForEach(options, id: \.self) { option in
-                        Text(option.display).tag(option)
-                    }
-                }
-                .labelsHidden()
-                if options.count <= 3 {
-                    picker.pickerStyle(.segmented).frame(maxWidth: .infinity, alignment: .leading)
+                if snapshot {
+                    Text((current ?? options.first)?.display ?? "Not set")
+                        .font(.system(size: 11, weight: .semibold))
                 } else {
-                    picker.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                    let picker = Picker("", selection: Binding(get: { current ?? options[0] }, set: { value in store.setConfigValue(field.key, value) })) {
+                        ForEach(options, id: \.self) { option in
+                            Text(option.display).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    if options.count <= 3 {
+                        picker.pickerStyle(.segmented).frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        picker.pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         case .number(let low, let high):
@@ -1156,11 +1172,41 @@ struct PulseWorkflowEditor: View {
                 }
             }
         case .bool:
-            Toggle(field.label, isOn: Binding(get: {
-                if case .bool(let flag) = current { return flag }
+            let flag: Bool = {
+                if case .bool(let value) = current { return value }
                 return false
-            }, set: { flag in store.setConfigValue(field.key, .bool(flag)) }))
-            .toggleStyle(.switch).font(.system(size: 11))
+            }()
+            if snapshot {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(field.label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    Text(flag ? "On" : "Off").font(.system(size: 11, weight: .semibold))
+                }
+            } else {
+                Toggle(field.label, isOn: Binding(get: { flag },
+                                                  set: { value in store.setConfigValue(field.key, .bool(value)) }))
+                .toggleStyle(.switch).font(.system(size: 11))
+            }
+        case .text:
+            let value: String = {
+                if case .string(let text) = current { return text }
+                return ""
+            }()
+            VStack(alignment: .leading, spacing: 6) {
+                Text(field.label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                if snapshot {
+                    Text(value.isEmpty ? "Not set" : value)
+                        .font(.system(size: 11))
+                        .foregroundStyle(value.isEmpty ? Theme.textSecondary : Theme.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    TextField("", text: Binding(get: { value }, set: { newValue in
+                        store.setConfigValue(field.key, .string(newValue))
+                    }), axis: .vertical)
+                    .lineLimit(1...6)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                }
+            }
         }
     }
 }

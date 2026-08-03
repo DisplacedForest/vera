@@ -277,7 +277,7 @@ final class PulseWorkflowStore: ObservableObject {
         guard let draft,
               let sourceNode = draft.definition.nodes.first(where: { $0.id == source }),
               let targetNode = draft.definition.nodes.first(where: { $0.id == nodeID }),
-              approvedConnection(from: sourceNode.type, to: targetNode.type) else {
+              approvedConnection(from: sourceNode.type, to: targetNode.type, in: draft.definition) else {
             note = "That connection is not valid for Pulse."
             return
         }
@@ -320,7 +320,8 @@ final class PulseWorkflowStore: ObservableObject {
         Array(zip(nodes, nodes.dropFirst())).map { PulseWorkflowEdge(from: $0.id, to: $1.id) }
     }
 
-    private func approvedConnection(from: String, to: String) -> Bool {
+    private func approvedConnection(from: String, to: String, in definition: PulseWorkflowDefinition) -> Bool {
+        if definition.hasVisualLoop, from == "pulse.cover_art", to == "pulse.inject" { return false }
         let pairs = [
             ("pulse.triage", "pulse.gates"),
             ("pulse.gates", "pulse.synthesis"),
@@ -492,8 +493,8 @@ struct PulseWorkflowEditor: View {
                         if let point = workflow.definition.positions[node.id] {
                             WorkflowNodeCard(node: node, selected: store.selectedNodeID == node.id,
                                              connecting: store.connectionSourceID == node.id,
-                                             onInput: { store.completeConnection(to: node.id) },
-                                             onOutput: { store.startConnection(from: node.id) })
+                                             onInput: store.isEditing ? { store.completeConnection(to: node.id) } : nil,
+                                             onOutput: store.isEditing ? { store.startConnection(from: node.id) } : nil)
                                 .position(x: point.x, y: point.y)
                                 .onTapGesture { store.selectedNodeID = node.id }
                                 .gesture(store.isEditing ? DragGesture().onEnded { value in store.moveNode(node.id, by: value.translation) } : nil)

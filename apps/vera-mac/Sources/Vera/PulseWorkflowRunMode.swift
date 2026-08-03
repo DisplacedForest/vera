@@ -1,0 +1,420 @@
+import SwiftUI
+
+private func workflowEpoch(_ raw: Any?) -> Date? {
+    guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+    return Date(timeIntervalSince1970: number.doubleValue)
+}
+
+func runStateColor(_ state: String) -> Color {
+    switch state {
+    case "ok", "accepted", "retried": return FlowStatus.ok.dotColor
+    case "warning", "retrying": return FlowStatus.warn.dotColor
+    case "error", "failed", "retry_failed": return FlowStatus.fail.dotColor
+    case "running": return Theme.accent
+    default: return Theme.textSecondary
+    }
+}
+
+func runStateLabel(_ state: String) -> String {
+    switch state {
+    case "ok": return "Completed"
+    case "warning": return "Completed with a warning"
+    case "error", "failed": return "Failed"
+    case "running": return "Running"
+    default: return state.prefix(1).uppercased() + state.dropFirst()
+    }
+}
+
+func runDurationText(_ interval: TimeInterval) -> String {
+    let seconds = Int(interval.rounded())
+    if seconds < 1 { return "under 1s" }
+    if seconds < 90 { return "\(seconds)s" }
+    return "\(seconds / 60)m \(seconds % 60)s"
+}
+
+struct PulseWorkflowNodeRun: Hashable {
+    var nodeID: String
+    var state: String
+    var input: [String: WorkflowConfigValue]
+    var output: [String: WorkflowConfigValue]
+    var error: String?
+    var startedAt: Date?
+    var finishedAt: Date?
+
+    var duration: TimeInterval? {
+        guard let startedAt, let finishedAt else { return nil }
+        return finishedAt.timeIntervalSince(startedAt)
+    }
+
+    var countsLine: String? {
+        let counts = output.compactMap { key, value -> (String, Int)? in
+            guard case .int(let count) = value else { return nil }
+            return (key, count)
+        }
+        .sorted { left, right in
+            if (left.0 == "items") != (right.0 == "items") { return right.0 == "items" }
+            return left.0 < right.0
+        }
+        guard let lead = counts.first else { return nil }
+        return "\(lead.1) \(lead.0.replacingOccurrences(of: "_", with: " "))"
+    }
+
+    static func parse(_ raw: Any) -> PulseWorkflowNodeRun? {
+        guard let object = raw as? [String: Any],
+              let id = object["id"] as? String,
+              let state = object["state"] as? String else { return nil }
+        func summary(_ value: Any?) -> [String: WorkflowConfigValue] {
+            (value as? [String: Any] ?? [:])
+                .filter { $0.value is NSNumber || $0.value is String }
+                .mapValues(WorkflowConfigValue.parse)
+        }
+        return PulseWorkflowNodeRun(nodeID: id, state: state,
+                                    input: summary(object["input"]),
+                                    output: summary(object["output"]),
+                                    error: object["error"] as? String,
+                                    startedAt: workflowEpoch(object["started_at"]),
+                                    finishedAt: workflowEpoch(object["finished_at"]))
+    }
+}
+
+struct PulseWorkflowVisualRun: Hashable {
+    var cardID: String
+    var imageURL: String?
+    var accept: Bool?
+    var score: Double?
+    var reason: String?
+    var retryCount: Int
+    var state: String
+
+    var verdictLine: String {
+        var parts = [runVerdictLabel]
+        if let score { parts.append("score \(score.formatted(.number.precision(.fractionLength(2))))") }
+        if retryCount > 0 { parts.append("retry \(retryCount)") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var runVerdictLabel: String {
+        switch state {
+        case "accepted": return "Accepted"
+        case "retrying": return "Failed review"
+        case "retried": return "Retried"
+        case "retry_failed": return "Retry failed"
+        default: return state.prefix(1).uppercased() + state.dropFirst()
+        }
+    }
+
+    static func parse(_ raw: Any) -> PulseWorkflowVisualRun? {
+        guard let object = raw as? [String: Any],
+              let cardID = object["card_id"] as? String,
+              let state = object["state"] as? String else { return nil }
+        let review = object["review"] as? [String: Any] ?? [:]
+        return PulseWorkflowVisualRun(cardID: cardID,
+                                      imageURL: object["image_url"] as? String,
+                                      accept: review["accept"] as? Bool,
+                                      score: (review["score"] as? NSNumber)?.doubleValue,
+                                      reason: review["reason"] as? String,
+                                      retryCount: object["retry_count"] as? Int ?? 0,
+                                      state: state)
+    }
+}
+
+struct PulseWorkflowRun: Hashable {
+    var id: String
+    var state: String
+    var startedAt: Date
+    var finishedAt: Date?
+    var error: String?
+    var nodes: [PulseWorkflowNodeRun]
+    var visualRuns: [PulseWorkflowVisualRun]
+
+    func nodeRun(_ nodeID: String) -> PulseWorkflowNodeRun? {
+        nodes.last { $0.nodeID == nodeID }
+    }
+
+    var cardEvidence: [PulseWorkflowVisualRun] {
+        var latest: [String: PulseWorkflowVisualRun] = [:]
+        var order: [String] = []
+        for record in visualRuns {
+            if latest[record.cardID] == nil { order.append(record.cardID) }
+            latest[record.cardID] = record
+        }
+        return order.compactMap { latest[$0] }
+    }
+
+    static func parse(_ raw: Any) -> PulseWorkflowRun? {
+        guard let object = raw as? [String: Any],
+              let id = object["id"] as? String,
+              let state = object["state"] as? String,
+              let startedAt = workflowEpoch(object["started_at"]) else { return nil }
+        let nodes = (object["nodes"] as? [Any] ?? []).compactMap(PulseWorkflowNodeRun.parse)
+        let visual = (object["visual_runs"] as? [Any] ?? []).compactMap(PulseWorkflowVisualRun.parse)
+        return PulseWorkflowRun(id: id, state: state, startedAt: startedAt,
+                                finishedAt: workflowEpoch(object["finished_at"]),
+                                error: object["error"] as? String,
+                                nodes: nodes, visualRuns: visual)
+    }
+}
+
+struct WorkflowRunNodeCard: View {
+    let node: PulseWorkflowNode
+    var spec: WorkflowCatalogNode?
+    var run: PulseWorkflowNodeRun?
+    var selected: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: spec?.icon ?? "puzzlepiece").font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(graphTint(spec?.tint ?? "accent"))
+                .frame(width: 34, height: 34).background(graphTint(spec?.tint ?? "accent").opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(spec?.label ?? node.type).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                    if run != nil {
+                        Circle().fill(runStateColor(run?.state ?? "")).frame(width: 6, height: 6)
+                    }
+                }
+                Text(detailLine).font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 11).frame(width: 164, height: 66)
+        .background(selected ? Theme.surface.opacity(1) : Theme.surface.opacity(0.9))
+        .clipShape(RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(strokeColor, lineWidth: selected ? 1.5 : 1))
+        .shadow(color: Theme.bg.opacity(0.35), radius: selected ? 8 : 3, y: 2)
+        .overlay(alignment: .leading) { PortDot().offset(x: -4) }
+        .overlay(alignment: .trailing) { PortDot().offset(x: 4) }
+    }
+
+    private var detailLine: String {
+        guard let run else { return "No record this run" }
+        var parts: [String] = []
+        if let counts = run.countsLine { parts.append(counts) }
+        if let duration = run.duration { parts.append(runDurationText(duration)) }
+        return parts.isEmpty ? runStateLabel(run.state) : parts.joined(separator: " · ")
+    }
+
+    private var strokeColor: Color {
+        if selected { return Theme.accent }
+        guard let run else { return Theme.hairline }
+        return runStateColor(run.state).opacity(0.55)
+    }
+}
+
+struct WorkflowRunInspector: View {
+    @ObservedObject var store: PulseWorkflowStore
+    var snapshot = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let selected = store.active?.definition.nodes.first(where: { $0.id == store.selectedNodeID }) {
+                let spec = store.catalog?.node(for: selected.type)
+                HStack(spacing: 10) {
+                    Image(systemName: spec?.icon ?? "puzzlepiece").font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(graphTint(spec?.tint ?? "accent")).frame(width: 34, height: 34)
+                        .background(graphTint(spec?.tint ?? "accent").opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 9))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(spec?.label ?? selected.type).font(.system(size: 14, weight: .semibold))
+                        Text(spec?.categoryLabel ?? "Node").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .padding(16)
+                Divider().overlay(Theme.hairline)
+                if snapshot {
+                    content(selected, spec: spec)
+                } else {
+                    ScrollView { content(selected, spec: spec) }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 7) {
+                    Image(systemName: "cursorarrow.click.2").font(.system(size: 18)).foregroundStyle(Theme.textSecondary)
+                    Text("Select a node").font(.system(size: 13, weight: .semibold))
+                    Text("What it did in the latest run will appear here.").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                }
+                .padding(16)
+                Spacer()
+            }
+        }
+        .frame(width: 286).frame(maxHeight: .infinity, alignment: .topLeading).background(Theme.bg)
+    }
+
+    private func content(_ selected: PulseWorkflowNode, spec: WorkflowCatalogNode?) -> some View {
+        let run = store.latestRun?.nodeRun(selected.id)
+        return VStack(alignment: .leading, spacing: 16) {
+            section("Run") {
+                if let run {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 7) {
+                            Circle().fill(runStateColor(run.state)).frame(width: 7, height: 7)
+                            Text(runStateLabel(run.state)).font(.system(size: 11.5, weight: .medium))
+                        }
+                        if let started = run.startedAt {
+                            row("Started", started.formatted(date: .abbreviated, time: .shortened))
+                        }
+                        if let duration = run.duration {
+                            row("Duration", runDurationText(duration))
+                        }
+                        if let error = run.error, !error.isEmpty {
+                            Text(error).font(.system(size: 10.5)).foregroundStyle(FlowStatus.fail.dotColor)
+                                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                        }
+                    }
+                } else {
+                    Text("This node has no record in the latest run.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let run {
+                section("Input") { summaryRows(run.input, empty: "No input recorded.") }
+                section("Output") { summaryRows(run.output, empty: "No output recorded.") }
+            }
+            if spec?.category == "visual", let evidence = store.latestRun?.cardEvidence, !evidence.isEmpty {
+                section("Review evidence") {
+                    VStack(spacing: 8) {
+                        ForEach(evidence, id: \.cardID) { record in evidenceRow(record) }
+                    }
+                }
+            }
+        }
+        .padding(16)
+    }
+
+    @ViewBuilder private func summaryRows(_ values: [String: WorkflowConfigValue], empty: String) -> some View {
+        if values.isEmpty {
+            Text(empty).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+        } else {
+            VStack(spacing: 4) {
+                ForEach(values.keys.sorted(), id: \.self) { key in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(key.replacingOccurrences(of: "_", with: " "))
+                            .font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                        Spacer(minLength: 8)
+                        Text(values[key]?.display ?? "")
+                            .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                    }
+                }
+            }
+        }
+    }
+
+    private func evidenceRow(_ record: PulseWorkflowVisualRun) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            evidenceThumb(record)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Circle().fill(runStateColor(record.state)).frame(width: 6, height: 6)
+                    Text(record.verdictLine).font(.system(size: 10.5, weight: .medium)).lineLimit(1)
+                }
+                if let reason = record.reason, !reason.isEmpty {
+                    Text(reason).font(.system(size: 10)).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder private func evidenceThumb(_ record: PulseWorkflowVisualRun) -> some View {
+        let placeholder = RoundedRectangle(cornerRadius: 7).fill(Theme.surface)
+            .overlay(Image(systemName: "photo").font(.system(size: 12)).foregroundStyle(Theme.textSecondary))
+        if !snapshot, let url = record.imageURL.flatMap(URL.init(string:)) {
+            AsyncImage(url: url) { image in
+                image.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: { placeholder }
+            .frame(width: 42, height: 42).clipShape(RoundedRectangle(cornerRadius: 7))
+        } else {
+            placeholder.frame(width: 42, height: 42)
+        }
+    }
+
+    private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(title.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.7)
+                .foregroundStyle(Theme.textSecondary.opacity(0.72))
+            content()
+        }
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(label).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+            Spacer(minLength: 8)
+            Text(value).font(.system(size: 10.5, weight: .semibold))
+        }
+    }
+}
+
+struct WorkflowRunEmptyState: View {
+    var body: some View {
+        ZStack {
+            DotGrid()
+            VStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath").font(.system(size: 20)).foregroundStyle(Theme.textSecondary)
+                Text("No recorded runs").font(.system(size: 13, weight: .semibold))
+                Text("The next Pulse run will appear here, node by node.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+    }
+}
+
+extension PulseWorkflowStore {
+    static func runFixture() -> PulseWorkflowStore {
+        let store = fixture()
+        store.mode = .run
+        let json = """
+        {"id":"run-fixture","workflow_id":"pulse","state":"ok","started_at":1754250000,"finished_at":1754250340,
+         "output":{},"error":null,
+         "nodes":[
+           {"id":"triage","state":"ok","input":{"items":0},"output":{"items":9,"rounds":3},"started_at":1754250000,"finished_at":1754250060},
+           {"id":"gates","state":"ok","input":{"items":9},"output":{"items":6},"started_at":1754250060,"finished_at":1754250061},
+           {"id":"synthesis","state":"warning","input":{"items":6},"output":{"items":5},"error":"one card starved for sources","started_at":1754250061,"finished_at":1754250190},
+           {"id":"claim_audit","state":"ok","input":{"items":5},"output":{"items":5,"revised":1},"started_at":1754250190,"finished_at":1754250228},
+           {"id":"cover_art","state":"ok","input":{"items":5},"output":{"items":5,"generated":4},"started_at":1754250228,"finished_at":1754250300},
+           {"id":"visual_review","state":"ok","input":{"items":5},"output":{"items":5,"reviewed":4},"started_at":1754250300,"finished_at":1754250321},
+           {"id":"cover_retry","state":"ok","input":{"items":5},"output":{"items":5,"attempted":1},"started_at":1754250321,"finished_at":1754250332},
+           {"id":"inject","state":"ok","input":{"items":5},"output":{"items":5,"cards":5},"started_at":1754250332,"finished_at":1754250340}
+         ],
+         "visual_runs":[
+           {"card_id":"card-1","image_url":null,"review":{"accept":true,"score":0.94},"retry_count":0,"state":"accepted"},
+           {"card_id":"card-2","image_url":null,"review":{"accept":false,"score":0.55,"reason":"headline text is cropped at the frame edge"},"retry_count":0,"state":"retrying"},
+           {"card_id":"card-2","image_url":null,"review":{"accept":false,"score":0.55,"reason":"headline text is cropped at the frame edge"},"retry_count":1,"state":"retried"},
+           {"card_id":"card-3","image_url":null,"review":{"accept":true,"score":0.88},"retry_count":0,"state":"accepted"}
+         ]}
+        """
+        if let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) {
+            store.latestRun = PulseWorkflowRun.parse(object)
+        }
+        store.selectedNodeID = "visual_review"
+        return store
+    }
+}
+
+struct PulseWorkflowRunShot: View {
+    @StateObject private var store = PulseWorkflowStore.runFixture()
+    @State private var searchText = ""
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    VeraMark(size: 18)
+                    Text("Vera").font(.system(size: 14, weight: .semibold))
+                    Spacer()
+                }
+                .padding(.horizontal, 14).frame(height: 42)
+                PulseWorkflowPalette(store: store, searchText: $searchText, snapshot: true)
+            }
+            .frame(width: 248).background(Theme.sidebar)
+            Divider().overlay(Theme.hairline)
+            PulseWorkflowEditor(store: store, snapshot: true)
+        }
+    }
+}

@@ -90,6 +90,8 @@ The Agentic tab opens on a living canvas: every flow Vera runs on her own: brief
 
 Opening Pulse turns the existing app sidebar into a searchable node library and dedicates the main workspace to the connected workflow and selected-node inspector. The library, each node's configuration fields, and the graph rules all come from the server's catalog (`GET /agentic/workflows/pulse/catalog`), so a node type registered server-side appears in the palette with editable, schema-rendered settings without an app update. Nodes can be added, wired, configured, and arranged in a draft; the server's validation verdict decides when a draft can be saved or promoted, and the published flow stays unchanged until that draft is explicitly promoted.
 
+The same canvas also replays results: a Run toggle overlays the latest recorded Pulse run on the graph, tinting each node by how it finished and captioning it with its output count and duration. Selecting a node in run mode swaps the inspector to what that node actually recorded (input, output, timing, state, and any error) and the visual review nodes show their per-card evidence, cover image, verdict, and retry. Run mode is read-only over recorded runs; with no run recorded yet it says so instead of inventing one.
+
 Everything Vera does on her own is also auditable in one place: an Activity feed (`GET /agentic/activity`) merges heartbeat outcomes, scheduled job runs, and autonomous actions into a single newest-first list, rendered as the Activity pane of the Agentic tab. Autonomy is wanted, and it is always visible.
 
 <div align="center"><img src="docs/assets/agentic.png" alt="The Agentic canvas: every autonomous flow, live" width="850"></div>

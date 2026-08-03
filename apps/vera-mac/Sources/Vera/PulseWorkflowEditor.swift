@@ -250,9 +250,12 @@ struct PulseWorkflowClient {
         return WorkflowCatalog.parse(object)
     }
 
-    func active() async -> PulseWorkflowVersion? {
-        if case .success(let version) = await request(path: "/agentic/workflows/pulse") { return version }
-        return nil
+    func overview() async -> (version: PulseWorkflowVersion, latestRun: PulseWorkflowRun?)? {
+        guard let (data, status) = await fetch(path: "/agentic/workflows/pulse"),
+              (200..<300).contains(status),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let version = PulseWorkflowVersion.parse(object["workflow"] as Any) else { return nil }
+        return (version, (object["latest_run"]).flatMap(PulseWorkflowRun.parse))
     }
 
     func createDraft() async -> PulseWorkflowVersion? {
@@ -272,10 +275,13 @@ struct PulseWorkflowClient {
 @MainActor
 final class PulseWorkflowStore: ObservableObject {
     enum Phase { case loading, unavailable, ready }
+    enum Mode { case edit, run }
     @Published var phase: Phase = .loading
+    @Published var mode: Mode = .edit
     @Published var catalog: WorkflowCatalog?
     @Published var active: PulseWorkflowVersion?
     @Published var draft: PulseWorkflowVersion?
+    @Published var latestRun: PulseWorkflowRun?
     @Published var selectedNodeID: String?
     @Published var connectionSourceID: String?
     @Published var busy = false
@@ -302,10 +308,26 @@ final class PulseWorkflowStore: ObservableObject {
         guard let client else { phase = .unavailable; return }
         guard let served = await client.catalog() else { phase = .unavailable; return }
         catalog = served
-        guard let workflow = await client.active() else { phase = .unavailable; return }
-        active = workflow
-        if draft == nil { selectedNodeID = workflow.definition.nodes.first?.id }
+        guard let overview = await client.overview() else { phase = .unavailable; return }
+        active = overview.version
+        latestRun = overview.latestRun
+        if draft == nil { selectedNodeID = overview.version.definition.nodes.first?.id }
         phase = .ready
+    }
+
+    func setMode(_ next: Mode) {
+        guard mode != next else { return }
+        mode = next
+        connectionSourceID = nil
+        if next == .run {
+            Task { await refreshRun() }
+        }
+    }
+
+    func refreshRun() async {
+        guard let client, let overview = await client.overview() else { return }
+        active = overview.version
+        latestRun = overview.latestRun
     }
 
     func beginDraft() async {
@@ -326,6 +348,7 @@ final class PulseWorkflowStore: ObservableObject {
     }
 
     func placeNode(_ type: String, at point: CGPoint) async {
+        guard mode == .edit else { return }
         if !isEditing { await beginDraft() }
         placeNodeInDraft(type, at: point)
     }
@@ -602,7 +625,8 @@ struct PulseWorkflowPalette: View {
                     paletteList.padding(.horizontal, 10)
                 }
             }
-            Text(store.isEditing ? "Drop to add or reposition a node." : "Dropping a node creates a draft first.")
+            Text(store.mode == .run ? "Run mode is read only. Switch to Edit to change the workflow."
+                 : store.isEditing ? "Drop to add or reposition a node." : "Dropping a node creates a draft first.")
                 .font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(12)
@@ -710,12 +734,25 @@ struct PulseWorkflowEditor: View {
             case .unavailable:
                 CanvasStatusCard(icon: "exclamationmark.triangle", title: "Workflow unavailable", note: "Connect vera-api to edit Pulse.")
             case .ready:
-                HStack(alignment: .top, spacing: 0) {
-                    canvas
-                    Divider().overlay(Theme.hairline)
-                    inspector
+                if store.mode == .run {
+                    if store.latestRun == nil {
+                        WorkflowRunEmptyState()
+                    } else {
+                        HStack(alignment: .top, spacing: 0) {
+                            runCanvas
+                            Divider().overlay(Theme.hairline)
+                            WorkflowRunInspector(store: store, snapshot: snapshot)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                } else {
+                    HStack(alignment: .top, spacing: 0) {
+                        canvas
+                        Divider().overlay(Theme.hairline)
+                        inspector
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(Theme.bg)
@@ -731,14 +768,45 @@ struct PulseWorkflowEditor: View {
                 Text("Pulse workflow").font(.system(size: 17, weight: .semibold))
                 Text("Build and configure the published pipeline").font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
             }
-            if store.displayed != nil {
+            if store.mode == .run {
+                Text("Latest run")
+                    .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 8).padding(.vertical, 4).background(Theme.textSecondary.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else if store.displayed != nil {
                 Text(store.isEditing ? "Draft" : "Active")
                     .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(store.isEditing ? Theme.accent : Theme.textSecondary)
                     .padding(.horizontal, 8).padding(.vertical, 4).background((store.isEditing ? Theme.accent : Theme.textSecondary).opacity(0.1))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
+            if store.phase == .ready {
+                if snapshot {
+                    HStack(spacing: 2) {
+                        modeChip("Edit", active: store.mode == .edit)
+                        modeChip("Run", active: store.mode == .run)
+                    }
+                    .padding(2).background(Theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                } else {
+                    Picker("", selection: Binding(get: { store.mode }, set: { store.setMode($0) })) {
+                        Text("Edit").tag(PulseWorkflowStore.Mode.edit)
+                        Text("Run").tag(PulseWorkflowStore.Mode.run)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                }
+            }
             Spacer()
-            if store.isEditing {
+            if store.mode == .run {
+                if let run = store.latestRun {
+                    HStack(spacing: 7) {
+                        Circle().fill(runStateColor(run.state)).frame(width: 7, height: 7)
+                        Text("\(runStateLabel(run.state)) · started \(run.startedAt.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    }
+                } else {
+                    Text("No recorded runs").font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                }
+            } else if store.isEditing {
                 if let message = store.validationMessage {
                     Label(message, systemImage: "circle.dashed")
                         .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.orange).lineLimit(1)
@@ -755,6 +823,14 @@ struct PulseWorkflowEditor: View {
             }
         }
         .padding(.horizontal, 20).padding(.vertical, 11)
+    }
+
+    private func modeChip(_ label: String, active: Bool) -> some View {
+        Text(label).font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 10).padding(.vertical, 3)
+            .background(active ? Theme.bg : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     @ViewBuilder private var canvas: some View {
@@ -842,6 +918,49 @@ struct PulseWorkflowEditor: View {
                 .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 10).padding(.vertical, 7).background(Theme.bg.opacity(0.88))
                 .clipShape(RoundedRectangle(cornerRadius: 8)).padding(14)
+        }
+    }
+
+    @ViewBuilder private var runCanvas: some View {
+        if let workflow = store.active, let run = store.latestRun {
+            if snapshot {
+                runGraph(workflow, run: run)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Theme.bg)
+            } else {
+                GeometryReader { viewport in
+                    ScrollView([.horizontal, .vertical]) {
+                        let width = max(viewport.size.width, (workflow.definition.positions.values.map(\.x).max() ?? 0) + 180)
+                        let height = max(viewport.size.height, (workflow.definition.positions.values.map(\.y).max() ?? 0) + 130)
+                        runGraph(workflow, run: run)
+                            .frame(width: width, height: height)
+                    }
+                    .background(Theme.bg)
+                }
+            }
+        }
+    }
+
+    private func runGraph(_ workflow: PulseWorkflowVersion, run: PulseWorkflowRun) -> some View {
+        ZStack(alignment: .topLeading) {
+            DotGrid()
+            Canvas { context, _ in
+                for edge in workflow.definition.edges {
+                    guard let from = workflow.definition.positions[edge.from],
+                          let to = workflow.definition.positions[edge.to] else { continue }
+                    context.stroke(edgePath(CGPoint(x: from.x + 82, y: from.y), CGPoint(x: to.x - 82, y: to.y)),
+                                   with: .color(Theme.textSecondary.opacity(0.52)), lineWidth: 1.5)
+                }
+            }
+            ForEach(workflow.definition.nodes) { node in
+                if let point = workflow.definition.positions[node.id] {
+                    WorkflowRunNodeCard(node: node, spec: store.catalog?.node(for: node.type),
+                                        run: run.nodeRun(node.id),
+                                        selected: store.selectedNodeID == node.id)
+                        .position(x: point.x, y: point.y)
+                        .onTapGesture { store.selectedNodeID = node.id }
+                }
+            }
         }
     }
 

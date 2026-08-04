@@ -273,20 +273,38 @@ struct NativeChatToolDescriptor: Identifiable, Equatable, Sendable {
 }
 
 enum NativeChatToolCatalog {
-    static let tools: [NativeChatToolDescriptor] = [
-        NativeChatToolDescriptor(
-            id: "external-tools",
-            name: "Connected service tools",
-            summary: "Lets the model act through connected services when a native tool runtime is available.",
-            available: false,
-            setup: "Native chat cannot invoke connected service tools in this version."),
-        NativeChatToolDescriptor(
-            id: "apple-reminders",
-            name: "Apple Reminders",
-            summary: "Reads and updates reminder lists after you grant access.",
-            available: true,
-            setup: "Enable this tool to grant Reminders access for explicit chat requests."),
-    ]
+    static var tools: [NativeChatToolDescriptor] {
+        tools(veraAPIConfigured: OWUIConfig.resolvedVeraAPIBase() != nil)
+    }
+
+    static func tools(veraAPIConfigured: Bool) -> [NativeChatToolDescriptor] {
+        [
+            NativeChatToolDescriptor(
+                id: "external-tools",
+                name: "Connected service tools",
+                summary: "Lets the model act through connected services when a native tool runtime is available.",
+                available: false,
+                setup: "Native chat cannot invoke connected service tools in this version."),
+            NativeChatToolDescriptor(
+                id: "apple-reminders",
+                name: "Apple Reminders",
+                summary: "Reads and updates reminder lists after you grant access.",
+                available: true,
+                setup: "Enable this tool to grant Reminders access for explicit chat requests."),
+            NativeChatToolDescriptor(
+                id: "web-search",
+                name: "Web search",
+                summary: "Searches the web through your vera-api and answers from the results.",
+                available: veraAPIConfigured,
+                setup: "Set the vera-api base URL in the Connection tab to enable web search."),
+            NativeChatToolDescriptor(
+                id: "deep-research",
+                name: "Deep research",
+                summary: "Runs a multi-step research pass through your vera-api and cites its sources.",
+                available: veraAPIConfigured,
+                setup: "Set the vera-api base URL in the Connection tab to enable deep research."),
+        ]
+    }
 
     static func exposed(enabledIDs: Set<String>) -> [NativeChatToolDescriptor] {
         tools.filter { $0.available && enabledIDs.contains($0.id) }

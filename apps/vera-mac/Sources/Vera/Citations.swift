@@ -23,21 +23,33 @@ func extractRefs(_ text: String) -> (String, [Int]) {
     return (clean.trimmingCharacters(in: .whitespacesAndNewlines), Array(Set(nums)).sorted())
 }
 
+func sourceIsLinked(_ url: String) -> Bool {
+    url.hasPrefix("http://") || url.hasPrefix("https://")
+}
+
 /// A tappable per-paragraph source pill (favicon + host) that opens the cited page.
 struct CitationChip: View {
     let source: PulseSource
     var body: some View {
+        if sourceIsLinked(source.url) {
+            label(sourceHost(source.url), favicon: true)
+                .contentShape(Capsule())
+                .onTapGesture { openExternal(source.url) }
+                .pointerCursor()
+        } else {
+            label(source.title.isEmpty ? source.url : source.title, favicon: false)
+        }
+    }
+
+    private func label(_ text: String, favicon: Bool) -> some View {
         HStack(spacing: 5) {
-            Favicon(urlString: source.url)
-            Text(sourceHost(source.url)).font(.system(size: 11, weight: .medium))
+            if favicon { Favicon(urlString: source.url) }
+            Text(text).font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Theme.textSecondary).lineLimit(1)
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(Theme.surface).clipShape(Capsule())
         .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
-        .contentShape(Capsule())
-        .onTapGesture { openExternal(source.url) }
-        .pointerCursor()
     }
 }
 
@@ -70,7 +82,9 @@ struct SourcesRow: View {
         VStack(alignment: .leading, spacing: 0) {
             Rectangle().fill(Theme.hairline).frame(height: 1)
             HStack(spacing: 8) {
-                HStack(spacing: -6) { ForEach(sources.prefix(5)) { Favicon(urlString: $0.url) } }
+                HStack(spacing: -6) {
+                    ForEach(sources.filter { sourceIsLinked($0.url) }.prefix(5)) { Favicon(urlString: $0.url) }
+                }
                 Text("Sources").font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary)
                 Text("\(sources.count)").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 6).padding(.vertical, 1).background(Theme.surface).clipShape(Capsule())
@@ -85,25 +99,39 @@ struct SourcesRow: View {
             if expanded {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(sources) { s in
+                        let linked = sourceIsLinked(s.url)
                         HStack(alignment: .top, spacing: 8) {
                             Text("\(s.n)").font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(Theme.textSecondary).frame(width: 18, alignment: .trailing)
-                            Favicon(urlString: s.url)
+                            if linked { Favicon(urlString: s.url) }
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(s.title.isEmpty ? sourceHost(s.url) : s.title)
+                                Text(s.title.isEmpty ? (linked ? sourceHost(s.url) : s.url) : s.title)
                                     .font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
                                     .lineLimit(2).multilineTextAlignment(.leading)
-                                Text(sourceHost(s.url)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                if linked {
+                                    Text(sourceHost(s.url)).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                }
                             }
                             Spacer()
                         }
                         .contentShape(Rectangle())
-                        .onTapGesture { openExternal(s.url) }
-                        .pointerCursor()
+                        .modifier(SourceRowTap(url: linked ? s.url : nil))
                     }
                 }
                 .padding(.bottom, 12)
             }
+        }
+    }
+}
+
+struct SourceRowTap: ViewModifier {
+    let url: String?
+
+    func body(content: Content) -> some View {
+        if let url {
+            content.onTapGesture { openExternal(url) }.pointerCursor()
+        } else {
+            content
         }
     }
 }

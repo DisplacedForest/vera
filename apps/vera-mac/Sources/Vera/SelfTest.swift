@@ -251,6 +251,60 @@ final class SelfTestMemoryService: NativeMemoryServing, @unchecked Sendable {
     }
 }
 
+struct SelfTestWebRequest: Sendable {
+    let path: String
+    let query: String?
+    let maxResults: Int?
+    let timeout: TimeInterval
+}
+
+final class SelfTestWebClient: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [SelfTestWebRequest] = []
+    private var responses: [String: (Data, Int)] = [:]
+    private var failure: Error?
+
+    var requests: [SelfTestWebRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+
+    func respond(_ path: String, status: Int, json: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        responses[path] = (Data(json.utf8), status)
+    }
+
+    func fail(with error: Error?) {
+        lock.lock()
+        defer { lock.unlock() }
+        failure = error
+    }
+
+    private func handle(_ url: URL, _ body: Data, _ timeout: TimeInterval) throws -> (Data, Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        let object = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+        recorded.append(SelfTestWebRequest(
+            path: url.lastPathComponent,
+            query: object["query"] as? String,
+            maxResults: object["max_results"] as? Int,
+            timeout: timeout))
+        if let failure { throw failure }
+        guard let response = responses[url.lastPathComponent] else {
+            throw URLError(.unsupportedURL)
+        }
+        return response
+    }
+
+    var client: NativeWebToolClient {
+        NativeWebToolClient { [self] url, body, timeout in
+            try handle(url, body, timeout)
+        }
+    }
+}
+
 @MainActor
 enum SelfTest {
     static func run() async {
@@ -258,6 +312,7 @@ enum SelfTest {
         runNativeSettings()
         runNativeContext()
         await runNativeTools()
+        await runNativeWebTools()
         await runNativeMemory()
         await runNativeStore()
         runNativeMedia()
@@ -394,7 +449,17 @@ enum SelfTest {
         guard refs == [1, 2], citationClean == "Revenue grew sharply." else {
             print("SELFTEST ERROR: native context citation contract round trip"); exit(1)
         }
-        print("  native context OK (order, determinism, policy precedence, gating, bounds, contracts)")
+        guard !first.sections.contains(where: { $0.name == "format:citations" }) else {
+            print("SELFTEST ERROR: citations contract emitted without a research tool"); exit(1)
+        }
+        var cited = input
+        cited.contracts = NativePresentationContract.chatDefaults.union([.citations])
+        let citedContext = NativeContextAssembler.assemble(cited)
+        guard citedContext.sections.map(\.name).last == "format:citations",
+              citedContext.prompt.contains("bracketed numbers like [1]") else {
+            print("SELFTEST ERROR: citations contract injection"); exit(1)
+        }
+        print("  native context OK (order, determinism, policy precedence, gating, bounds, contracts, citations)")
     }
 
     @MainActor static func dumpContext() {
@@ -403,13 +468,20 @@ enum SelfTest {
         let model = configStore.nativeResolved?.model ?? settings.activeProfile?.selectedModel ?? ""
         let capabilities = settings.resolveCapabilities(model: model).profile
         let registry = NativeToolRegistry(
-            definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared))
+            definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared)
+                + NativeWebTools.definitions(base: { OWUIConfig.resolvedVeraAPIBase() }))
         let enabledToolIDs = capabilities.supportsTools ? settings.enabledToolIDs : []
+        let activeTools = registry.active(enabledIDs: enabledToolIDs)
+        var contracts = NativePresentationContract.chatDefaults
+        if activeTools.contains(where: { NativeWebTools.researchCapableIDs.contains($0.id) }) {
+            contracts.insert(.citations)
+        }
         let context = NativeContextAssembler.assemble(NativeContextInput(
             persona: settings.systemPrompt, timestamp: Date(), timeZone: .current,
             ownerName: configStore.ownerName,
             capabilities: capabilities,
-            tools: registry.active(enabledIDs: enabledToolIDs)))
+            tools: activeTools,
+            contracts: contracts))
         print("Assembled native context for model \(model.isEmpty ? "(none configured)" : model)")
         for (index, section) in context.sections.enumerated() {
             let marker = section.truncated ? ", truncated" : ""
@@ -689,6 +761,227 @@ enum SelfTest {
             print("  native tools OK (registry, standard request, fragmented calls, continuation, validation, limits, confirmation, timeout, reminders, text-only)")
         } catch {
             print("SELFTEST ERROR: native tools \(error)"); exit(1)
+        }
+    }
+
+    private static func runNativeWebTools() async {
+        do {
+            let client = SelfTestWebClient()
+            let base = URL(string: "https://api.example")
+            let tools = NativeWebTools.definitions(base: { base }, client: client.client)
+            guard tools.map(\.name) == ["web_search", "deep_research"],
+                  tools.map(\.id) == ["web-search", "deep-research"],
+                  tools[0].timeout == NativeWebTools.searchTimeout,
+                  tools[1].timeout == NativeWebTools.researchTimeout else {
+                print("SELFTEST ERROR: web tool definitions"); exit(1)
+            }
+            for tool in tools {
+                guard case .object(let schema) = tool.parameters,
+                      case .array(let required)? = schema["required"],
+                      required.contains(.string("query")),
+                      schema["additionalProperties"] == .bool(false) else {
+                    print("SELFTEST ERROR: web tool schema shape"); exit(1)
+                }
+            }
+            let unconfigured = NativeToolRegistry(
+                definitions: NativeWebTools.definitions(base: { nil }, client: client.client))
+            guard unconfigured.active(enabledIDs: ["web-search", "deep-research"]).isEmpty,
+                  NativeToolRegistry(definitions: tools)
+                      .active(enabledIDs: ["web-search", "deep-research"]).count == 2 else {
+                print("SELFTEST ERROR: web tool availability gating"); exit(1)
+            }
+            let catalogOff = NativeChatToolCatalog.tools(veraAPIConfigured: false)
+            let catalogOn = NativeChatToolCatalog.tools(veraAPIConfigured: true)
+            guard catalogOff.first(where: { $0.id == "web-search" })?.available == false,
+                  catalogOff.first(where: { $0.id == "deep-research" })?.available == false,
+                  catalogOn.first(where: { $0.id == "web-search" })?.available == true,
+                  catalogOn.first(where: { $0.id == "deep-research" })?.available == true else {
+                print("SELFTEST ERROR: web tool catalog gating"); exit(1)
+            }
+
+            client.respond("search", status: 200, json: """
+            {"query":"rain","results":[{"title":"Rain totals","url":"https://weather.example/rain","content":"Two inches fell.","rendered":true,"published":null}]}
+            """)
+            let registry = NativeToolRegistry(definitions: tools)
+            let searchTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "search-1", name: "web_search",
+                                       arguments: "{\"query\":\"rain\",\"max_results\":25}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "Two inches fell.", toolCalls: [], finishReason: "stop")],
+            ])
+            var searchFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(transport: searchTransport, registry: registry)
+                .stream(messages: [NativeChatMessage(role: "user", content: "Rain?")],
+                        model: "local-model", enabledToolIDs: ["web-search", "deep-research"]) {
+                searchFinal = snapshot
+            }
+            guard searchFinal?.activities.first?.state == .succeeded,
+                  searchFinal?.activities.first?.result?.contains("Rain totals") == true,
+                  searchFinal?.content == "Two inches fell.",
+                  client.requests.last?.path == "search",
+                  client.requests.last?.query == "rain",
+                  client.requests.last?.maxResults == 10 else {
+                print("SELFTEST ERROR: web search success path"); exit(1)
+            }
+            for hostile in ["1e100", "2.5", "-0.75", "1e-300"] {
+                let overflowTransport = ScriptedNativeToolTransport(rounds: [
+                    [NativeChatStreamSnapshot(content: "", toolCalls: [
+                        NativeChatToolCall(id: "search-overflow", name: "web_search",
+                                           arguments: "{\"query\":\"rain\",\"max_results\":\(hostile)}"),
+                    ], finishReason: "tool_calls")],
+                    [NativeChatStreamSnapshot(content: "Still standing.", toolCalls: [], finishReason: "stop")],
+                ])
+                var overflowFinal: NativeToolTurnSnapshot?
+                for try await snapshot in NativeToolLoop(transport: overflowTransport, registry: registry)
+                    .stream(messages: [NativeChatMessage(role: "user", content: "Rain?")],
+                            model: "local-model", enabledToolIDs: ["web-search"]) {
+                    overflowFinal = snapshot
+                }
+                guard overflowFinal?.activities.first?.state == .succeeded,
+                      client.requests.last?.maxResults == nil,
+                      overflowFinal?.content == "Still standing." else {
+                    print("SELFTEST ERROR: web search hostile max_results \(hostile)"); exit(1)
+                }
+            }
+
+            client.respond("search", status: 503, json: """
+            {"detail":"SearXNG is not enabled. Enable it in the plugin store or set SEARXNG_BASE"}
+            """)
+            let unavailableTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "search-2", name: "web_search", arguments: "{\"query\":\"rain\"}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "I cannot search right now.", toolCalls: [], finishReason: "stop")],
+            ])
+            var unavailableFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(transport: unavailableTransport, registry: registry)
+                .stream(messages: [NativeChatMessage(role: "user", content: "Rain?")],
+                        model: "local-model", enabledToolIDs: ["web-search"]) {
+                unavailableFinal = snapshot
+            }
+            guard unavailableFinal?.activities.first?.state == .failed,
+                  unavailableFinal?.activities.first?.result?.contains("SearXNG is not enabled") == true,
+                  unavailableFinal?.content == "I cannot search right now." else {
+                print("SELFTEST ERROR: web search 503 mapping"); exit(1)
+            }
+
+            client.fail(with: URLError(.cannotConnectToHost))
+            let brokenTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "search-3", name: "web_search", arguments: "{\"query\":\"rain\"}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "The network is down.", toolCalls: [], finishReason: "stop")],
+            ])
+            var brokenFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(transport: brokenTransport, registry: registry)
+                .stream(messages: [NativeChatMessage(role: "user", content: "Rain?")],
+                        model: "local-model", enabledToolIDs: ["web-search"]) {
+                brokenFinal = snapshot
+            }
+            client.fail(with: nil)
+            guard brokenFinal?.activities.first?.state == .failed,
+                  brokenFinal?.activities.first?.result?.contains("vera-api request failed") == true else {
+                print("SELFTEST ERROR: web search network failure mapping"); exit(1)
+            }
+
+            client.respond("research", status: 200, json: """
+            {"ok":true,"query":"river","subquestions":["gauge"],"report":"The river rose overnight. [1]","sources":[{"n":1,"title":"Gauge report","url":"https://a.example/one"},{"n":2,"title":"Notes (local knowledge)","url":"local"}],"errors":[],"seconds":1.5}
+            """)
+            let researchTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "research-1", name: "deep_research", arguments: "{\"query\":\"river\"}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "The river rose overnight. [1]", toolCalls: [], finishReason: "stop")],
+            ])
+            var researchFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(transport: researchTransport, registry: registry)
+                .stream(messages: [NativeChatMessage(role: "user", content: "River?")],
+                        model: "local-model", enabledToolIDs: ["deep-research"]) {
+                researchFinal = snapshot
+            }
+            let lifted = NativeResearchSources.lift(researchFinal?.activities ?? [])
+            guard researchFinal?.activities.first?.state == .succeeded,
+                  researchFinal?.activities.first?.result?.contains("subquestions") == false,
+                  lifted.map(\.n) == [1, 2],
+                  lifted.first?.url == "https://a.example/one",
+                  lifted.last?.url == "local" else {
+                print("SELFTEST ERROR: research result and source lift"); exit(1)
+            }
+
+            let patient = NativeToolDefinition(
+                id: "patient", name: "patient_tool", title: "Patient tool",
+                description: "Finishes past the loop default.",
+                parameters: .object([
+                    "type": .string("object"), "properties": .object([:]),
+                    "required": .array([]), "additionalProperties": .bool(false),
+                ]),
+                confirmation: .none,
+                timeout: .seconds(2),
+                isAvailable: { true },
+                execute: { _ in
+                    try await Task.sleep(for: .milliseconds(120))
+                    return .object(["ok": .bool(true)])
+                })
+            let patientTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "patient-1", name: "patient_tool", arguments: "{}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "Done waiting.", toolCalls: [], finishReason: "stop")],
+            ])
+            var patientFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: patientTransport,
+                registry: NativeToolRegistry(definitions: [patient]),
+                executionTimeout: .milliseconds(25)
+            ).stream(messages: [NativeChatMessage(role: "user", content: "Wait")],
+                     model: "local-model", enabledToolIDs: ["patient"]) {
+                patientFinal = snapshot
+            }
+            guard patientFinal?.activities.first?.state == .succeeded else {
+                print("SELFTEST ERROR: per-tool timeout override not honored"); exit(1)
+            }
+
+            let impatient = NativeToolDefinition(
+                id: "impatient", name: "impatient_tool", title: "Impatient tool",
+                description: "Times out on its own deadline.",
+                parameters: .object([
+                    "type": .string("object"), "properties": .object([:]),
+                    "required": .array([]), "additionalProperties": .bool(false),
+                ]),
+                confirmation: .none,
+                timeout: .milliseconds(25),
+                isAvailable: { true },
+                execute: { _ in
+                    await withUnsafeContinuation { (_: UnsafeContinuation<NativeJSONValue, Never>) in }
+                })
+            let impatientTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "impatient-1", name: "impatient_tool", arguments: "{}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "It expired cleanly.", toolCalls: [], finishReason: "stop")],
+            ])
+            var impatientFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: impatientTransport,
+                registry: NativeToolRegistry(definitions: [impatient])
+            ).stream(messages: [NativeChatMessage(role: "user", content: "Stall")],
+                     model: "local-model", enabledToolIDs: ["impatient"]) {
+                impatientFinal = snapshot
+            }
+            guard impatientFinal?.activities.first?.state == .failed,
+                  impatientFinal?.activities.first?.result?.contains("timed out") == true,
+                  impatientFinal?.content == "It expired cleanly." else {
+                print("SELFTEST ERROR: per-tool timeout expiry mapping"); exit(1)
+            }
+
+            guard NativeWebTools.errorDetail(data: Data("not json".utf8), status: 500)
+                == "The vera-api request failed with HTTP 500" else {
+                print("SELFTEST ERROR: web tool error detail fallback"); exit(1)
+            }
+            print("  native web tools OK (schemas, gating, search, 503, network failure, research lift, per-tool timeout)")
+        } catch {
+            print("SELFTEST ERROR: native web tools \(error)"); exit(1)
         }
     }
 
@@ -1651,6 +1944,53 @@ enum SelfTest {
                   try toolRepository.messages(conversationID: toolConversation.id).last?.toolActivities.first?.id == "store-call" else {
                 print("SELFTEST ERROR: native store tool activity progression or persistence"); exit(1)
             }
+            let webClient = SelfTestWebClient()
+            webClient.respond("research", status: 200, json: """
+            {"ok":true,"query":"river","subquestions":[],"report":"The river rose overnight. [1]","sources":[{"n":1,"title":"Gauge report","url":"https://a.example/one"},{"n":2,"title":"Notes (local knowledge)","url":"local"}],"errors":[],"seconds":1.5}
+            """)
+            let researchTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "research-call", name: "deep_research",
+                                       arguments: "{\"query\":\"river\"}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "The river rose overnight. [1]", toolCalls: [], finishReason: "stop")],
+            ])
+            let researchURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("vera-research-\(UUID().uuidString)/vera.sqlite")
+            let researchRepository = try LocalChatRepository(url: researchURL)
+            let researchStore = ChatStore(
+                config: nil,
+                client: nil,
+                socket: nil,
+                nativeConfig: config,
+                nativeTransport: researchTransport,
+                repository: researchRepository,
+                hasLegacyOWUI: false,
+                nativeEnabledToolIDs: ["deep-research"],
+                nativeToolRegistry: NativeToolRegistry(
+                    definitions: NativeWebTools.definitions(
+                        base: { URL(string: "https://api.example") }, client: webClient.client)))
+            await researchStore.connect()
+            researchStore.sendText("What happened to the river?")
+            await waitForGeneration(researchStore)
+            guard let researchConversation = researchStore.selected,
+                  let researchReply = researchConversation.messages.last,
+                  researchReply.toolActivities.first?.state == .succeeded,
+                  researchReply.sources.map(\.n) == [1, 2],
+                  researchReply.sources.first?.url == "https://a.example/one" else {
+                print("SELFTEST ERROR: research sources not lifted onto the reply"); exit(1)
+            }
+            let relaunched = try LocalChatRepository(url: researchURL)
+            guard let reopened = try relaunched.messages(
+                    conversationID: researchConversation.id).last,
+                  reopened.sources == researchReply.sources else {
+                print("SELFTEST ERROR: research sources relaunch round trip"); exit(1)
+            }
+            try? FileManager.default.removeItem(at: researchURL.deletingLastPathComponent())
+            let citedRequest = researchTransport.histories.first?.first?.content ?? ""
+            guard citedRequest.contains("bracketed numbers like [1]") else {
+                print("SELFTEST ERROR: citations contract missing from research request"); exit(1)
+            }
             transport.interrupt = true
             store.sendText("Fail")
             await waitForGeneration(store)
@@ -1713,7 +2053,7 @@ enum SelfTest {
                   unavailable.chatConfigurationError == "database unavailable" else {
                 print("SELFTEST ERROR: native chat proceeded without persistence"); exit(1)
             }
-            print("  native store OK (progressive turns and tools, interrupted exclusion, serialized sends, required persistence)")
+            print("  native store OK (progressive turns and tools, research sources, interrupted exclusion, serialized sends, required persistence)")
         } catch {
             print("SELFTEST ERROR: native store \(error)"); exit(1)
         }

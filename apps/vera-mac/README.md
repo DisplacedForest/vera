@@ -26,11 +26,17 @@ conversation: text, citations, and provenance persist locally and reopen offline
 remote card images stay uncached and use the normal failure placeholders if their source
 goes away.
 
+Native tools live in Settings, Tools and are disabled by default. Apple Reminders runs
+locally after macOS permission. Web search and deep research call the configured vera-api
+(`vera_api_base`); with no vera-api URL set they are unavailable and their rows show the
+unconfigured hint. Deep research runs on its own 300-second deadline, and its report renders
+with citation chips and a numbered sources row that persist with the conversation.
+
 `NativeContextAssembler` builds each request's system context deterministically, in a fixed
 order: app policy, the editable persona, session facts (date, time, owner name), recalled
 memory, a world-model seam, and capability context (per-tool usage contracts plus the ask,
-artifact, and chart format contracts, injected only when the model and configuration support
-them). Every section has a character cap, identical inputs assemble byte-identical context,
+artifact, chart, and citation format contracts, injected only when the model and
+configuration support them; citations join only when a research-capable tool is active). Every section has a character cap, identical inputs assemble byte-identical context,
 and `--dump-context` shows exactly what a request would contain.
 
 ## Package & install

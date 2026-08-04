@@ -1075,7 +1075,7 @@ enum SelfTest {
               !json.contains("file://") else {
             print("SELFTEST ERROR: pulse snapshot leaked tokens or non-web URLs"); exit(1)
         }
-        guard let decoded = PulseCardSnapshot.decode(json) else {
+        guard let decoded = PulseCardSnapshot.decode(json), decoded == snapshot else {
             print("SELFTEST ERROR: pulse snapshot round-trip decode"); exit(1)
         }
         let restored = decoded.card()

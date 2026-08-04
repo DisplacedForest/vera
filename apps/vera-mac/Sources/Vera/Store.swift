@@ -772,6 +772,7 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    var memoryGroomOutcomeDisplaySeconds: Double = 900
     @discardableResult
     func runMemoryGroom(
         dryRun: Bool = false, now: Date = Date(), calendar: Calendar = .current
@@ -779,43 +780,57 @@ final class ChatStore: ObservableObject {
         guard nativeMemorySettings.enabled,
               let memoryRepository = repository as? any NativeMemoryRepository else { return nil }
         do {
-            let expired = NativeMemoryGroom.expired(
-                records: try memoryRepository.allMemories(), now: now, calendar: calendar)
+            let records = try memoryRepository.allMemories()
+            let expired = NativeMemoryGroom.expired(records: records, now: now, calendar: calendar)
             if dryRun {
                 let outcome = NativeMemoryGroomOutcome(
-                    removedCount: expired.count, invalidatedProposalCount: 0,
+                    removedIDs: expired.map(\.id), invalidatedProposalCount: 0,
                     dryRun: true, error: nil, finishedAt: now)
                 memoryGroomOutcome = outcome
+                scheduleMemoryGroomOutcomeClear(outcome)
                 return outcome
             }
-            guard !expired.isEmpty else {
+            let liveIDs = Set(records.filter { $0.status != .deleted }.map(\.id))
+                .subtracting(expired.map(\.id))
+            let dangling = NativeMemoryGroom.danglingProposals(
+                pending: try memoryRepository.pendingProposals(), liveRecordIDs: liveIDs)
+            guard !expired.isEmpty || !dangling.isEmpty else {
                 memoryGroomOutcome = nil
                 return nil
             }
-            var removedIDs = Set<String>()
+            var removedIDs: [String] = []
             for record in expired {
                 try memoryRepository.deleteMemory(record.id, note: "Removed by the expiry groom")
-                removedIDs.insert(record.id)
+                removedIDs.append(record.id)
             }
-            let dangling = NativeMemoryGroom.danglingProposals(
-                pending: try memoryRepository.pendingProposals(), removedIDs: removedIDs)
             for proposal in dangling {
                 try memoryRepository.decideProposal(
                     proposal.id, status: .dismissed,
-                    note: "Invalidated by the expiry groom: the target memory expired")
+                    note: "Invalidated by the expiry groom: the target memory is gone",
+                    memoryID: NativeMemoryGroom.missingTarget(of: proposal, liveRecordIDs: liveIDs))
             }
             let outcome = NativeMemoryGroomOutcome(
-                removedCount: removedIDs.count, invalidatedProposalCount: dangling.count,
+                removedIDs: removedIDs, invalidatedProposalCount: dangling.count,
                 dryRun: false, error: nil, finishedAt: now)
             memoryGroomOutcome = outcome
+            scheduleMemoryGroomOutcomeClear(outcome)
             reloadNativeMemory()
             return outcome
         } catch {
             let outcome = NativeMemoryGroomOutcome(
-                removedCount: 0, invalidatedProposalCount: 0, dryRun: dryRun,
+                removedIDs: [], invalidatedProposalCount: 0, dryRun: dryRun,
                 error: error.localizedDescription, finishedAt: now)
             memoryGroomOutcome = outcome
             return outcome
+        }
+    }
+
+    private func scheduleMemoryGroomOutcomeClear(_ outcome: NativeMemoryGroomOutcome) {
+        let delay = UInt64(max(0, memoryGroomOutcomeDisplaySeconds) * 1_000_000_000)
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard let self, self.memoryGroomOutcome == outcome else { return }
+            self.memoryGroomOutcome = nil
         }
     }
 

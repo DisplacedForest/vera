@@ -25,7 +25,9 @@ protocol NativeMemoryRepository: Sendable {
     func pendingProposals() throws -> [NativeMemoryProposal]
     func saveMemory(_ memory: NativeMemoryRecord, decision: NativeMemoryDecision, note: String) throws
     func saveProposal(_ proposal: NativeMemoryProposal) throws
-    func decideProposal(_ id: String, status: NativeMemoryProposalStatus, note: String) throws
+    func decideProposal(
+        _ id: String, status: NativeMemoryProposalStatus, note: String, memoryID: String?
+    ) throws
     func deleteMemory(_ id: String, note: String) throws
     func memoryChanges(limit: Int) throws -> [NativeMemoryChange]
 }
@@ -34,7 +36,8 @@ extension NativeMemoryRepository {
     func decideProposal(_ id: String, status: NativeMemoryProposalStatus) throws {
         try decideProposal(
             id, status: status,
-            note: status == .accepted ? "Approved memory proposal" : "Dismissed memory proposal")
+            note: status == .accepted ? "Approved memory proposal" : "Dismissed memory proposal",
+            memoryID: nil)
     }
 
     func deleteMemory(_ id: String) throws {
@@ -493,7 +496,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         }
     }
 
-    func decideProposal(_ id: String, status: NativeMemoryProposalStatus, note: String) throws {
+    func decideProposal(
+        _ id: String, status: NativeMemoryProposalStatus, note: String, memoryID: String?
+    ) throws {
         try database.write { db in
             guard let row = try Row.fetchOne(
                 db, sql: "SELECT proposal_json FROM native_memory_proposals WHERE id = ?", arguments: [id]),
@@ -504,7 +509,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 arguments: [status.rawValue, try Self.encode(proposal), id])
             try Self.writeChange(
                 NativeMemoryChange(
-                    id: UUID().uuidString, memoryID: proposal.targetIDs.first, proposalID: id,
+                    id: UUID().uuidString, memoryID: memoryID ?? proposal.targetIDs.first, proposalID: id,
                     decision: status == .accepted ? .accepted : .dismissed,
                     note: note, createdAt: Date()), db: db)
         }

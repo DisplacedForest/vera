@@ -19,7 +19,7 @@ enum NativeWebTools {
     static let searchToolID = "web-search"
     static let researchToolID = "deep-research"
     static let researchToolName = "deep_research"
-    static let searchTimeout = Duration.seconds(90)
+    static let searchTimeout = Duration.seconds(180)
     static let researchTimeout = Duration.seconds(300)
     static let researchCapableIDs: Set<String> = [searchToolID, researchToolID]
 
@@ -50,7 +50,7 @@ enum NativeWebTools {
                     if let requested = arguments.searchInt("max_results") {
                         body["max_results"] = min(max(requested, 1), 10)
                     }
-                    return try await post(path: "search", body: body, requestTimeout: 85, base: base, client: client)
+                    return try await post(path: "search", body: body, requestTimeout: 175, base: base, client: client)
                 }),
             NativeToolDefinition(
                 id: researchToolID,
@@ -152,6 +152,6 @@ private extension Dictionary where Key == String, Value == NativeJSONValue {
 
     func searchInt(_ key: String) -> Int? {
         guard case .number(let value)? = self[key], value.isFinite else { return nil }
-        return Int(exactly: value.rounded())
+        return Int(exactly: value)
     }
 }

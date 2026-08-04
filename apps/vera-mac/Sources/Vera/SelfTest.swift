@@ -824,23 +824,25 @@ enum SelfTest {
                   client.requests.last?.maxResults == 10 else {
                 print("SELFTEST ERROR: web search success path"); exit(1)
             }
-            let overflowTransport = ScriptedNativeToolTransport(rounds: [
-                [NativeChatStreamSnapshot(content: "", toolCalls: [
-                    NativeChatToolCall(id: "search-overflow", name: "web_search",
-                                       arguments: "{\"query\":\"rain\",\"max_results\":1e100}"),
-                ], finishReason: "tool_calls")],
-                [NativeChatStreamSnapshot(content: "Still standing.", toolCalls: [], finishReason: "stop")],
-            ])
-            var overflowFinal: NativeToolTurnSnapshot?
-            for try await snapshot in NativeToolLoop(transport: overflowTransport, registry: registry)
-                .stream(messages: [NativeChatMessage(role: "user", content: "Rain?")],
-                        model: "local-model", enabledToolIDs: ["web-search"]) {
-                overflowFinal = snapshot
-            }
-            guard overflowFinal?.activities.first?.state == .succeeded,
-                  client.requests.last?.maxResults == nil,
-                  overflowFinal?.content == "Still standing." else {
-                print("SELFTEST ERROR: web search overflow argument handling"); exit(1)
+            for hostile in ["1e100", "2.5", "-0.75", "1e-300"] {
+                let overflowTransport = ScriptedNativeToolTransport(rounds: [
+                    [NativeChatStreamSnapshot(content: "", toolCalls: [
+                        NativeChatToolCall(id: "search-overflow", name: "web_search",
+                                           arguments: "{\"query\":\"rain\",\"max_results\":\(hostile)}"),
+                    ], finishReason: "tool_calls")],
+                    [NativeChatStreamSnapshot(content: "Still standing.", toolCalls: [], finishReason: "stop")],
+                ])
+                var overflowFinal: NativeToolTurnSnapshot?
+                for try await snapshot in NativeToolLoop(transport: overflowTransport, registry: registry)
+                    .stream(messages: [NativeChatMessage(role: "user", content: "Rain?")],
+                            model: "local-model", enabledToolIDs: ["web-search"]) {
+                    overflowFinal = snapshot
+                }
+                guard overflowFinal?.activities.first?.state == .succeeded,
+                      client.requests.last?.maxResults == nil,
+                      overflowFinal?.content == "Still standing." else {
+                    print("SELFTEST ERROR: web search hostile max_results \(hostile)"); exit(1)
+                }
             }
 
             client.respond("search", status: 503, json: """

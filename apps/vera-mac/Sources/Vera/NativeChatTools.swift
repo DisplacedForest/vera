@@ -591,7 +591,7 @@ struct NativeToolLoop: Sendable {
                                 let value = try await Self.execute(
                                     definition, arguments: arguments,
                                     timeout: definition.timeout ?? executionTimeout)
-                                result = try Self.json(value)
+                                result = try Self.serializedResult(value)
                                 state = .succeeded
                             } catch {
                                 result = Self.errorJSON(error.localizedDescription)
@@ -662,7 +662,7 @@ struct NativeToolLoop: Sendable {
         }
     }
 
-    private static func json(_ value: NativeJSONValue) throws -> String {
+    static func serializedResult(_ value: NativeJSONValue) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: value.any, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
     }

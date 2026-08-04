@@ -2184,11 +2184,43 @@ enum SelfTest {
             }
             let capped = try await journal.execute(journal.validatedArguments("{\"months\":\"3\"}"))
             guard case .object(let cappedFields) = capped,
-                  case .string(let cappedText)? = cappedFields["text"],
-                  cappedText.count == NativeCapabilityTools.responseByteCap,
+                  cappedFields["text"] != nil,
                   cappedFields["truncated"] == .bool(true),
+                  try NativeToolLoop.serializedResult(capped).utf8.count
+                      <= NativeCapabilityTools.responseByteCap,
                   client.calls.last?.url == "https://api.example/journal?months=3" else {
                 print("SELFTEST ERROR: capability response size cap"); exit(1)
+            }
+
+            let escapable = String(repeating: "\"\n", count: 16_000)
+            guard escapable.utf8.count < NativeCapabilityTools.responseByteCap else {
+                print("SELFTEST ERROR: escapable fixture is not under the raw cap"); exit(1)
+            }
+            client.respond("/journal", status: 200, body: escapable)
+            let escaped = try await journal.execute(journal.validatedArguments("{\"months\":\"1\"}"))
+            let escapedPayload = try NativeToolLoop.serializedResult(escaped)
+            guard case .object(let escapedFields) = escaped,
+                  case .string(let escapedText)? = escapedFields["text"],
+                  escapedFields["truncated"] == .bool(true),
+                  escapedPayload.utf8.count <= NativeCapabilityTools.responseByteCap,
+                  escapedText.count < escapable.count, !escapedText.isEmpty else {
+                print("SELFTEST ERROR: serialized cap on escapable content"); exit(1)
+            }
+
+            let nearCap = "{\"items\":\"" + String(repeating: "a", count: 32_000) + "\"}"
+            guard nearCap.utf8.count < NativeCapabilityTools.responseByteCap else {
+                print("SELFTEST ERROR: near-cap fixture is not under the raw cap"); exit(1)
+            }
+            client.respond("/actions/registry", status: 200, body: nearCap)
+            guard let registryTool = byName["actions_registry"] else {
+                print("SELFTEST ERROR: bundled actions registry missing"); exit(1)
+            }
+            let nearCapValue = try await registryTool.execute(registryTool.validatedArguments("{}"))
+            guard case .object(let nearCapFields) = nearCapValue,
+                  nearCapFields["items"] != nil, nearCapFields["text"] == nil,
+                  try NativeToolLoop.serializedResult(nearCapValue).utf8.count
+                      <= NativeCapabilityTools.responseByteCap else {
+                print("SELFTEST ERROR: near-cap JSON object result"); exit(1)
             }
 
             client.respond("/authoring/heartbeat", status: 503, body: "{\"detail\":\"the service is down\"}")

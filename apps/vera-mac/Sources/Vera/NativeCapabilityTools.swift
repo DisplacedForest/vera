@@ -277,12 +277,44 @@ enum NativeCapabilityTools {
         if data.count <= responseByteCap,
            let object = try? JSONSerialization.jsonObject(with: data),
            let parsed = try? NativeJSONValue(any: object) {
-            if case .object = parsed { return parsed }
-            return .object(["result": parsed])
+            let candidate: NativeJSONValue
+            if case .object = parsed {
+                candidate = parsed
+            } else {
+                candidate = .object(["result": parsed])
+            }
+            if serializedSize(candidate) <= responseByteCap { return candidate }
         }
         let (text, truncated) = boundedText(data)
-        return .object(["text": .string(text), "truncated": .bool(truncated)])
+        return fitted(text, truncated: truncated)
     }
+
+    static func serializedSize(_ value: NativeJSONValue) -> Int {
+        guard let serialized = try? NativeToolLoop.serializedResult(value) else { return Int.max }
+        return serialized.utf8.count
+    }
+
+    private static func wrapped(_ text: String, truncated: Bool) -> NativeJSONValue {
+        .object(["text": .string(text), "truncated": .bool(truncated)])
+    }
+
+    private static func fitted(_ text: String, truncated: Bool) -> NativeJSONValue {
+        var body = text
+        var shortened = truncated
+        guard serializedSize(wrapped(body, truncated: shortened)) > responseByteCap else {
+            return wrapped(body, truncated: shortened)
+        }
+        shortened = true
+        while !body.isEmpty {
+            let size = serializedSize(wrapped(body, truncated: true))
+            guard size > responseByteCap else { break }
+            let overflow = size - responseByteCap
+            body.removeLast(max(1, min(body.count, overflow / maximumEscapedCharacterBytes + 1)))
+        }
+        return wrapped(body, truncated: shortened)
+    }
+
+    private static let maximumEscapedCharacterBytes = 6
 
     static func boundedText(_ data: Data) -> (String, Bool) {
         guard data.count > responseByteCap else {

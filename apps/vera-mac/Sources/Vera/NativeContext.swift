@@ -76,6 +76,8 @@ enum NativePresentationContract: String, CaseIterable, Sendable {
 
 struct NativeContextInput: Sendable {
     var persona: String
+    var userScope: String
+    var conversationInstructions: String
     var timestamp: Date
     var timeZone: TimeZone
     var ownerName: String?
@@ -86,12 +88,15 @@ struct NativeContextInput: Sendable {
     var contracts: Set<NativePresentationContract>
 
     init(
-        persona: String, timestamp: Date, timeZone: TimeZone, ownerName: String? = nil,
+        persona: String, userScope: String = "", conversationInstructions: String = "",
+        timestamp: Date, timeZone: TimeZone, ownerName: String? = nil,
         memories: [NativeMemoryRanked] = [], worldModel: String = "",
         capabilities: ModelCapabilityProfile = .textOnly, tools: [NativeToolDefinition] = [],
         contracts: Set<NativePresentationContract> = NativePresentationContract.chatDefaults
     ) {
         self.persona = persona
+        self.userScope = userScope
+        self.conversationInstructions = conversationInstructions
         self.timestamp = timestamp
         self.timeZone = timeZone
         self.ownerName = ownerName
@@ -128,6 +133,8 @@ enum NativeContextAssembler {
     enum Caps {
         static let policy = 2_400
         static let persona = 6_000
+        static let user = 4_000
+        static let conversation = 2_400
         static let session = 400
         static let memory = 4_800
         static let world = 4_800
@@ -136,7 +143,8 @@ enum NativeContextAssembler {
     }
 
     static var totalBudget: Int {
-        Caps.policy + Caps.persona + Caps.session + Caps.memory + Caps.world + Caps.tools
+        Caps.policy + Caps.persona + Caps.user + Caps.conversation + Caps.session
+            + Caps.memory + Caps.world + Caps.tools
             + NativePresentationContract.allCases.count * Caps.contract
     }
 
@@ -150,6 +158,8 @@ enum NativeContextAssembler {
         }
         add("policy", policy, cap: Caps.policy)
         add("persona", input.persona, cap: Caps.persona)
+        add("user", userSection(input.userScope), cap: Caps.user)
+        add("conversation", conversationSection(input.conversationInstructions), cap: Caps.conversation)
         add("session", session(for: input), cap: Caps.session)
         if let memory = NativeMemoryPromptAssembler.section(selected: input.memories) {
             add("memory", memory, cap: Caps.memory)
@@ -162,6 +172,18 @@ enum NativeContextAssembler {
             add("format:\(contract.rawValue)", contract.contract.text, cap: Caps.contract)
         }
         return NativeAssembledContext(sections: sections)
+    }
+
+    private static func userSection(_ content: String) -> String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return "USER CONTEXT\n\(trimmed)"
+    }
+
+    private static func conversationSection(_ content: String) -> String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return "CONVERSATION INSTRUCTIONS\n\(trimmed)"
     }
 
     private static func session(for input: NativeContextInput) -> String {

@@ -45,7 +45,8 @@ extension NativeMemoryRepository {
     }
 }
 
-final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchecked Sendable {
+final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativePromptLibraryRepository,
+    @unchecked Sendable {
     let database: DatabaseQueue
 
     static var defaultURL: URL {
@@ -187,6 +188,35 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 table.add(column: "sources_json", .text)
             }
         }
+        migrator.registerMigration("promptLibraryV9") { db in
+            try db.execute(sql: """
+                CREATE TABLE prompt_profiles (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    scope TEXT NOT NULL CHECK (scope IN ('persona', 'user')),
+                    content TEXT NOT NULL,
+                    created_at DOUBLE NOT NULL,
+                    updated_at DOUBLE NOT NULL
+                );
+                CREATE TABLE reusable_prompts (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at DOUBLE NOT NULL,
+                    updated_at DOUBLE NOT NULL
+                );
+                CREATE TABLE prompt_revisions (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at DOUBLE NOT NULL
+                );
+                CREATE INDEX prompt_revisions_entity ON prompt_revisions(entity_id, created_at);
+                """)
+            try db.alter(table: "conversations") { table in
+                table.add(column: "instructions", .text)
+            }
+        }
         try migrator.migrate(database)
     }
 
@@ -223,7 +253,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
     func listConversations() throws -> [Conversation] {
         try database.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id
+                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions
                 FROM conversations
                 ORDER BY pinned DESC, updated_at DESC
                 """).map(Self.decodeConversation)
@@ -233,7 +263,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
     func conversation(originType: String, originID: String) throws -> Conversation? {
         try database.read { db in
             try Row.fetchOne(db, sql: """
-                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id
+                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions
                 FROM conversations
                 WHERE origin_type = ? AND origin_id = ?
                 """, arguments: [originType, originID]).map(Self.decodeConversation)
@@ -245,8 +275,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         try database.write { db in
             try db.execute(sql: """
                 INSERT INTO conversations
-                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, arguments: [
                     conversation.id,
                     conversation.title,
@@ -256,6 +286,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     conversation.memoryExcluded,
                     conversation.originType,
                     conversation.originID,
+                    conversation.instructions,
                 ])
             try db.execute(sql: """
                 INSERT INTO messages
@@ -322,13 +353,14 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         try database.write { db in
             try db.execute(sql: """
                 INSERT INTO conversations
-                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     updated_at = excluded.updated_at,
                     pinned = excluded.pinned,
-                    memory_excluded = excluded.memory_excluded
+                    memory_excluded = excluded.memory_excluded,
+                    instructions = excluded.instructions
                 """, arguments: [
                     conversation.id,
                     conversation.title,
@@ -338,6 +370,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     conversation.memoryExcluded,
                     conversation.originType,
                     conversation.originID,
+                    conversation.instructions,
                 ])
         }
     }
@@ -542,6 +575,142 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         }
     }
 
+    func promptProfiles() throws -> [PromptProfile] {
+        try database.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT id, name, scope, content, created_at, updated_at
+                FROM prompt_profiles
+                ORDER BY created_at ASC, id ASC
+                """).compactMap(Self.decodeProfile)
+        }
+    }
+
+    func promptProfile(_ id: String) throws -> PromptProfile? {
+        try database.read { db in
+            try Row.fetchOne(db, sql: """
+                SELECT id, name, scope, content, created_at, updated_at
+                FROM prompt_profiles
+                WHERE id = ?
+                """, arguments: [id]).flatMap(Self.decodeProfile)
+        }
+    }
+
+    func savePromptProfile(_ profile: PromptProfile) throws {
+        try NativePromptValidation.validate(name: profile.name, content: profile.content)
+        try database.write { db in
+            try db.execute(sql: """
+                INSERT INTO prompt_profiles (id, name, scope, content, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    scope = excluded.scope,
+                    content = excluded.content,
+                    updated_at = excluded.updated_at
+                """, arguments: [
+                    profile.id, profile.name, profile.scope.rawValue, profile.content,
+                    profile.createdAt.timeIntervalSince1970,
+                    profile.updatedAt.timeIntervalSince1970,
+                ])
+            try Self.snapshotRevision(entityID: profile.id, content: profile.content, db: db)
+        }
+    }
+
+    func deletePromptProfile(_ id: String) throws {
+        try database.write { db in
+            try db.execute(sql: "DELETE FROM prompt_profiles WHERE id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM prompt_revisions WHERE entity_id = ?", arguments: [id])
+        }
+    }
+
+    func reusablePrompts() throws -> [ReusablePrompt] {
+        try database.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT id, name, content, created_at, updated_at
+                FROM reusable_prompts
+                ORDER BY name COLLATE NOCASE ASC, id ASC
+                """).map { row in
+                ReusablePrompt(
+                    id: row["id"], name: row["name"], content: row["content"],
+                    createdAt: Date(timeIntervalSince1970: row["created_at"]),
+                    updatedAt: Date(timeIntervalSince1970: row["updated_at"]))
+            }
+        }
+    }
+
+    func saveReusablePrompt(_ prompt: ReusablePrompt) throws {
+        try NativePromptValidation.validate(name: prompt.name, content: prompt.content)
+        try database.write { db in
+            try db.execute(sql: """
+                INSERT INTO reusable_prompts (id, name, content, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    content = excluded.content,
+                    updated_at = excluded.updated_at
+                """, arguments: [
+                    prompt.id, prompt.name, prompt.content,
+                    prompt.createdAt.timeIntervalSince1970,
+                    prompt.updatedAt.timeIntervalSince1970,
+                ])
+            try Self.snapshotRevision(entityID: prompt.id, content: prompt.content, db: db)
+        }
+    }
+
+    func deleteReusablePrompt(_ id: String) throws {
+        try database.write { db in
+            try db.execute(sql: "DELETE FROM reusable_prompts WHERE id = ?", arguments: [id])
+            try db.execute(sql: "DELETE FROM prompt_revisions WHERE entity_id = ?", arguments: [id])
+        }
+    }
+
+    func promptRevisions(entityID: String) throws -> [PromptRevision] {
+        try database.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT id, entity_id, content, created_at
+                FROM prompt_revisions
+                WHERE entity_id = ?
+                ORDER BY created_at DESC, id DESC
+                """, arguments: [entityID]).map { row in
+                PromptRevision(
+                    id: row["id"], entityID: row["entity_id"], content: row["content"],
+                    createdAt: Date(timeIntervalSince1970: row["created_at"]))
+            }
+        }
+    }
+
+    private static let promptRevisionKeep = 50
+
+    private static func snapshotRevision(entityID: String, content: String, db: Database) throws {
+        let latest = try String.fetchOne(db, sql: """
+            SELECT content FROM prompt_revisions
+            WHERE entity_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """, arguments: [entityID])
+        guard latest != content else { return }
+        try db.execute(sql: """
+            INSERT INTO prompt_revisions (id, entity_id, content, created_at)
+            VALUES (?, ?, ?, ?)
+            """, arguments: [UUID().uuidString, entityID, content, Date().timeIntervalSince1970])
+        try db.execute(sql: """
+            DELETE FROM prompt_revisions
+            WHERE entity_id = ? AND id NOT IN (
+                SELECT id FROM prompt_revisions
+                WHERE entity_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+            )
+            """, arguments: [entityID, entityID, promptRevisionKeep])
+    }
+
+    private static func decodeProfile(_ row: Row) -> PromptProfile? {
+        guard let scope = PromptScope(rawValue: row["scope"]) else { return nil }
+        return PromptProfile(
+            id: row["id"], name: row["name"], scope: scope, content: row["content"],
+            createdAt: Date(timeIntervalSince1970: row["created_at"]),
+            updatedAt: Date(timeIntervalSince1970: row["updated_at"]))
+    }
+
     private static func writeMemory(_ memory: NativeMemoryRecord, db: Database) throws {
         try db.execute(sql: """
             INSERT INTO native_memories
@@ -655,7 +824,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
             pinned: row["pinned"],
             memoryExcluded: row["memory_excluded"],
             originType: row["origin_type"],
-            originID: row["origin_id"])
+            originID: row["origin_id"],
+            instructions: row["instructions"])
     }
 
     private static func decode<T: Decodable>(_ raw: String?, as type: T.Type) -> T? {

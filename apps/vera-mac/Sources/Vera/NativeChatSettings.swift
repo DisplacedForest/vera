@@ -61,12 +61,20 @@ enum NativeChatConfigurationResolver {
 }
 
 struct NativeChatSettings: Codable, Equatable, Sendable {
-    static let defaultSystemPrompt = "You are Vera, a thoughtful personal assistant. Be clear, practical, and honest about what you can do."
+    static let defaultSystemPrompt = """
+    You are Vera, a personal assistant running locally on your user's own hardware, working only with this machine and the services it is connected to.
+    Tell the truth, including about yourself and your limits. When you are unsure, say so plainly instead of guessing.
+    Be warm and direct. Write naturally and concisely, like a thoughtful person; skip filler and hedging.
+    Push back respectfully when you disagree or a request looks like a mistake.
+    What one household member shares with you stays private from the others unless they ask you to pass it on.
+    If something is unavailable or outside what this request provides, say so instead of improvising.
+    """
 
     var version: Int
     var profiles: [NativeEndpointProfile]
     var activeProfileID: String?
     var systemPrompt: String
+    var activePersonaID: String?
     var enabledToolIDs: Set<String>
     var onboardingState: NativeOnboardingState
     var onboardingStep: Int
@@ -80,6 +88,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
             profiles: [],
             activeProfileID: nil,
             systemPrompt: defaultSystemPrompt,
+            activePersonaID: nil,
             enabledToolIDs: [],
             onboardingState: .notStarted,
             onboardingStep: 0,
@@ -134,13 +143,14 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case version, profiles, activeProfileID, systemPrompt, enabledToolIDs
+        case version, profiles, activeProfileID, systemPrompt, activePersonaID, enabledToolIDs
         case onboardingState, onboardingStep, memory, capabilityOverrides, visionBridge
     }
 
     init(
         version: Int, profiles: [NativeEndpointProfile], activeProfileID: String?,
-        systemPrompt: String, enabledToolIDs: Set<String>, onboardingState: NativeOnboardingState,
+        systemPrompt: String, activePersonaID: String? = nil,
+        enabledToolIDs: Set<String>, onboardingState: NativeOnboardingState,
         onboardingStep: Int, memory: NativeMemorySettings,
         capabilityOverrides: [String: ModelCapabilityProfile] = [:],
         visionBridge: VisionBridgeSettings = .fresh
@@ -149,6 +159,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         self.profiles = profiles
         self.activeProfileID = activeProfileID
         self.systemPrompt = systemPrompt
+        self.activePersonaID = activePersonaID
         self.enabledToolIDs = enabledToolIDs
         self.onboardingState = onboardingState
         self.onboardingStep = onboardingStep
@@ -163,6 +174,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         profiles = try values.decodeIfPresent([NativeEndpointProfile].self, forKey: .profiles) ?? []
         activeProfileID = try values.decodeIfPresent(String.self, forKey: .activeProfileID)
         systemPrompt = try values.decodeIfPresent(String.self, forKey: .systemPrompt) ?? Self.defaultSystemPrompt
+        activePersonaID = try values.decodeIfPresent(String.self, forKey: .activePersonaID)
         enabledToolIDs = try values.decodeIfPresent(Set<String>.self, forKey: .enabledToolIDs) ?? []
         onboardingState = try values.decodeIfPresent(NativeOnboardingState.self, forKey: .onboardingState) ?? .notStarted
         onboardingStep = try values.decodeIfPresent(Int.self, forKey: .onboardingStep) ?? 0

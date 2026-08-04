@@ -66,7 +66,7 @@ private struct ModelTab: View {
 private struct PersonaTab: View {
     var body: some View {
         Form {
-            Section("System prompt") { NativePersonaEditor() }
+            Section("Prompt library") { PromptLibraryView() }
             SaveSection()
         }
         .formStyle(.grouped)
@@ -348,25 +348,6 @@ struct NativeVisionBridgeEditor: View {
                 Label("No bridge configured. When the model cannot take an attachment, Vera asks whether to send the message without it.",
                       systemImage: "circle.dashed")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-            }
-        }
-    }
-}
-
-struct NativePersonaEditor: View {
-    @EnvironmentObject var config: ConfigStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("This prompt is added to each new model request. It does not rewrite earlier messages.")
-                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-            TextEditor(text: config.systemPromptBinding())
-                .font(.system(size: 13)).frame(minHeight: 150)
-                .padding(6).background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
-            HStack {
-                Text("Saved locally on this Mac.").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Button("Reset to Vera’s default") { config.resetSystemPrompt() }
             }
         }
     }
@@ -810,6 +791,7 @@ private struct SaveSection: View {
         store.adoptNative(
             resolved,
             systemPrompt: config.nativeSettings.systemPrompt,
+            activePersonaID: config.nativeSettings.activePersonaID,
             ownerName: config.ownerName,
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,

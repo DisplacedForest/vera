@@ -37,7 +37,7 @@ struct OnboardingSheet: View {
                     switch step {
                     case 0: NativeEndpointEditor()
                     case 1: NativeModelEditor()
-                    case 2: NativePersonaEditor()
+                    case 2: PromptLibraryView()
                     case 3: NativeMemoryOnboardingEditor()
                     default: NativeToolEditor()
                     }
@@ -121,6 +121,7 @@ struct OnboardingSheet: View {
         store.adoptNative(
             resolved,
             systemPrompt: config.nativeSettings.systemPrompt,
+            activePersonaID: config.nativeSettings.activePersonaID,
             ownerName: config.ownerName,
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,

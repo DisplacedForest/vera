@@ -47,4 +47,5 @@ struct Conversation: Identifiable, Hashable {
     var memoryExcluded: Bool = false
     var originType: String? = nil
     var originID: String? = nil
+    var instructions: String? = nil
 }

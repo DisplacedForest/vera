@@ -45,6 +45,13 @@ struct VeraApp: App {
             repository = nil
             repositoryError = "Local history couldn't open: \(error.localizedDescription)"
         }
+        if let repository {
+            var settings = configInstance.nativeSettings
+            if (try? NativePromptMigration.run(repository: repository, settings: &settings)) == true {
+                configInstance.nativeSettings = settings
+                try? configInstance.save()
+            }
+        }
         let storeInstance = ChatStore(
             config: ambient,
             client: client,
@@ -55,6 +62,7 @@ struct VeraApp: App {
             repositoryError: repositoryError,
             hasLegacyOWUI: legacy != nil,
             nativeSystemPrompt: configInstance.nativeSettings.systemPrompt,
+            nativePersonaID: configInstance.nativeSettings.activePersonaID,
             nativeOwnerName: configInstance.ownerName,
             nativeEnabledToolIDs: configInstance.nativeSettings.enabledToolIDs,
             nativeCapabilityOverrides: configInstance.nativeSettings.capabilityOverrides,

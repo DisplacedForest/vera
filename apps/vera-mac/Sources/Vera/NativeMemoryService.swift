@@ -55,7 +55,7 @@ enum NativeMemoryExtractionPolicy {
 }
 
 enum NativeMemorySafety {
-    private static let patterns = [
+    private static let secretPatterns = [
         #"(?i)\b(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|action[_ -]?token|client[_ -]?secret|private[_ -]?key|authorization|password|secret)\b\s*[:=]\s*\S+"#,
         #"\bsk-[A-Za-z0-9_-]{8,}\b"#,
         #"\bact_(?:live|test)_[A-Za-z0-9_-]{8,}\b"#,
@@ -66,6 +66,9 @@ enum NativeMemorySafety {
         #"\bAKIA[0-9A-Z]{16}\b"#,
         #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#,
         #"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"#,
+    ]
+
+    private static let patterns = [
         #"(?is)<(think|thought|analysis|reasoning)>.*?</\1>"#,
         #"(?i)\b(hidden reasoning|chain[- ]of[- ]thought)\b\s*[:=]"#,
         #"(?im)^[ \t-]*(token|service[_ -]?url|base[_ -]?url|api[_ -]?url|url|endpoint|(?:[a-z0-9]+[_ -]?)?model|settings|credentials|headers|valves)[ \t]*[:=][ \t]*(?:\S.*)?$"#,
@@ -91,7 +94,12 @@ enum NativeMemorySafety {
         "credentials",
     ]
 
+    static func containsSecret(_ value: String) -> Bool {
+        secretPatterns.contains { value.range(of: $0, options: .regularExpression) != nil }
+    }
+
     static func containsSensitiveData(_ value: String) -> Bool {
+        if containsSecret(value) { return true }
         if patterns.contains(where: { value.range(of: $0, options: .regularExpression) != nil }) {
             return true
         }

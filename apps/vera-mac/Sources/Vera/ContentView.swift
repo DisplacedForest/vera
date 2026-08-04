@@ -266,6 +266,14 @@ private struct ChatPane: View {
                     .frame(maxWidth: 760)
                     .padding(.horizontal, 28).padding(.bottom, 2)
                 }
+                if convo.isPersisted {
+                    HStack {
+                        ConversationInstructionsChip(conversation: convo)
+                        Spacer()
+                    }
+                    .frame(maxWidth: 760)
+                    .padding(.horizontal, 28).padding(.top, 4)
+                }
                 ComposerField().padding(.horizontal, 28).padding(.bottom, 18).padding(.top, 6)
                     .frame(maxWidth: 760)
             } else if let convo = store.selected, convo.isPersisted {
@@ -643,6 +651,16 @@ struct ComposerField: View {
             HStack(spacing: 10) {
                 Menu {
                     Button("Add files or photos") { pickFiles() }
+                    if let prompts = try? store.promptLibrary?.reusablePrompts(), !prompts.isEmpty {
+                        Divider()
+                        ForEach(prompts) { prompt in
+                            Button("Insert: \(prompt.name)") {
+                                store.draft = store.draft.isEmpty
+                                    ? prompt.content : store.draft + "\n" + prompt.content
+                                store.focusTick &+= 1
+                            }
+                        }
+                    }
                 } label: {
                     Image(systemName: "plus").font(.system(size: 14, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
@@ -650,7 +668,7 @@ struct ComposerField: View {
                         .background(.quaternary, in: Circle())
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("Add images to this message")
+                .help("Add images or insert a saved prompt")
                 Spacer()
                 Button(action: {}) {
                     Image(systemName: "waveform")

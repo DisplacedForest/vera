@@ -38,11 +38,20 @@ the built-ins in Settings, Tools, the tool-calling loop, and the confirmation pa
 like a native tool defined in code.
 
 `NativeContextAssembler` builds each request's system context deterministically, in a fixed
-order: app policy, the editable persona, session facts (date, time, owner name), recalled
-memory, a world-model seam, and capability context (per-tool usage contracts plus the ask,
+order: app policy, the active persona, user context, per-conversation instructions, session
+facts (date, time, owner name), recalled memory, a world-model seam, and capability context (per-tool usage contracts plus the ask,
 artifact, chart, and citation format contracts, injected only when the model and
 configuration support them; citations join only when a research-capable tool is active). Every section has a character cap, identical inputs assemble byte-identical context,
 and `--dump-context` shows exactly what a request would contain.
+
+The prompt library (Settings, Persona) manages that user-authored text in the local
+database: personas with one active selection, user-context profiles, and reusable prompts
+inserted into the composer as message text. Every save keeps a revision snapshot with exact
+restore, entries import and export as markdown with a small front-matter header, and
+validation rejects oversize content, credential-shaped text, and anything claiming the
+policy scope. The legacy single system prompt migrates in as the default persona on first
+launch. Per-conversation instructions live on the conversation row and are edited from a
+chip above the composer.
 
 ## Package & install
 ```bash

@@ -47,6 +47,7 @@ final class ChatStore: ObservableObject {
     private var nativeConfig: NativeChatConfig?
     private var nativeTransport: (any NativeChatTransport)?
     private var nativeSystemPrompt: String
+    private var nativePersonaID: String?
     private var nativeOwnerName: String?
     private var nativeEnabledToolIDs: Set<String>
     private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]
@@ -76,6 +77,7 @@ final class ChatStore: ObservableObject {
          nativeConfig: NativeChatConfig?, nativeTransport: (any NativeChatTransport)?,
          repository: (any ChatRepository)?, repositoryError: String? = nil, hasLegacyOWUI: Bool,
          nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt,
+         nativePersonaID: String? = nil,
          nativeOwnerName: String? = nil,
          nativeEnabledToolIDs: Set<String> = [],
          nativeCapabilityOverrides: [String: ModelCapabilityProfile] = [:],
@@ -94,6 +96,7 @@ final class ChatStore: ObservableObject {
         self.nativeConfig = nativeConfig
         self.nativeTransport = nativeTransport
         self.nativeSystemPrompt = nativeSystemPrompt
+        self.nativePersonaID = nativePersonaID
         self.nativeOwnerName = nativeOwnerName
         self.nativeEnabledToolIDs = nativeEnabledToolIDs
         self.nativeCapabilityOverrides = nativeCapabilityOverrides
@@ -241,6 +244,7 @@ final class ChatStore: ObservableObject {
     func adoptNative(
         _ cfg: NativeChatConfig,
         systemPrompt: String = NativeChatSettings.defaultSystemPrompt,
+        activePersonaID: String? = nil,
         ownerName: String? = nil,
         enabledToolIDs: Set<String>? = nil,
         capabilityOverrides: [String: ModelCapabilityProfile]? = nil,
@@ -252,6 +256,7 @@ final class ChatStore: ObservableObject {
         nativeConfig = cfg
         nativeTransport = NativeChatClient(config: cfg)
         nativeSystemPrompt = systemPrompt
+        nativePersonaID = activePersonaID
         nativeOwnerName = ownerName
         if let enabledToolIDs { nativeEnabledToolIDs = enabledToolIDs }
         if let capabilityOverrides { nativeCapabilityOverrides = capabilityOverrides }
@@ -984,6 +989,55 @@ final class ChatStore: ObservableObject {
         catch { chatConfigurationError = "The conversation memory setting could not save: \(error.localizedDescription)" }
     }
 
+    var promptLibrary: (any NativePromptLibraryRepository)? {
+        repository as? any NativePromptLibraryRepository
+    }
+
+    var activePersonaID: String? { nativePersonaID }
+
+    struct ResolvedPromptScopes: Equatable {
+        var persona: String
+        var userScope: String
+        var instructions: String
+    }
+
+    func resolvePromptScopes(conversationID: String?) -> ResolvedPromptScopes {
+        var persona = nativeSystemPrompt
+        var userScope = ""
+        if let library = promptLibrary, let profiles = try? library.promptProfiles() {
+            if let id = nativePersonaID,
+               let active = profiles.first(where: { $0.id == id && $0.scope == .persona }) {
+                persona = active.content
+            } else if let first = profiles.first(where: { $0.scope == .persona }) {
+                persona = first.content
+            }
+            userScope = profiles.filter { $0.scope == .user }
+                .map(\.content).joined(separator: "\n\n")
+        }
+        let instructions = conversationID
+            .flatMap { id in conversations.first(where: { $0.id == id })?.instructions } ?? ""
+        return ResolvedPromptScopes(persona: persona, userScope: userScope, instructions: instructions)
+    }
+
+    func setConversationInstructions(_ id: String, _ text: String) {
+        guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try NativePromptValidation.validateInstructions(trimmed)
+        } catch {
+            chatConfigurationError = error.localizedDescription
+            return
+        }
+        conversations[index].instructions = trimmed.isEmpty ? nil : trimmed
+        conversations[index].updatedAt = Date()
+        do { try repository?.saveConversation(conversations[index]) }
+        catch { chatConfigurationError = "The conversation instructions could not save: \(error.localizedDescription)" }
+    }
+
+    func adoptPersona(_ id: String?) {
+        nativePersonaID = id
+    }
+
     // id must be STABLE across renders (title is) — a fresh UUID each compute breaks SwiftUI's
     // LazyVStack identity and leaks the selected-row background onto a recycled slot.
     struct SidebarGroup: Identifiable { var id: String { title }; let title: String; let convos: [Conversation] }
@@ -1374,7 +1428,8 @@ final class ChatStore: ObservableObject {
         let bridgeTransportFactory = visionBridgeTransportFactory
         let memorySettings = nativeMemorySettings
         let memoryService = nativeMemoryService
-        let persona = nativeSystemPrompt
+        let scopes = resolvePromptScopes(conversationID: id)
+        let persona = scopes.persona
         let ownerName = nativeOwnerName ?? config?.ownerName
         let activeTools = nativeToolRegistry.active(enabledIDs: enabledToolIDs)
         Task {
@@ -1449,7 +1504,9 @@ final class ChatStore: ObservableObject {
                     contracts.insert(.citations)
                 }
                 let assembled = NativeContextAssembler.assemble(NativeContextInput(
-                    persona: persona, timestamp: Date(), timeZone: .current,
+                    persona: persona, userScope: scopes.userScope,
+                    conversationInstructions: scopes.instructions,
+                    timestamp: Date(), timeZone: .current,
                     ownerName: ownerName, memories: selectedMemories,
                     capabilities: capabilityProfile, tools: activeTools,
                     contracts: contracts))

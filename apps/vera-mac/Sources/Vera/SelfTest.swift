@@ -260,6 +260,7 @@ enum SelfTest {
         await runNativeMemory()
         await runNativeStore()
         runNativeMedia()
+        await runCapabilityRouting()
         await runPulseContinuation()
         guard let cfg = OWUIConfig.load() else {
             print("SELFTEST OK (offline). No OWUI config (~/.vera/config.json), live checks skipped")
@@ -1022,6 +1023,407 @@ enum SelfTest {
             print("selftest: native media OK")
         } catch {
             print("SELFTEST ERROR: native media \(error)"); exit(1)
+        }
+    }
+
+    private static func runCapabilityRouting() async {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vera-selftest-routing-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        do {
+            let vision = ModelCapabilityCatalog.resolve(model: "qwen3-vl-8b-instruct", overrides: [:])
+            let text = ModelCapabilityCatalog.resolve(model: "llama-3.1-8b-instruct", overrides: [:])
+            let overridden = ModelCapabilityCatalog.resolve(
+                model: "llama-3.1-8b-instruct",
+                overrides: ["llama-3.1-8b-instruct": .vision])
+            guard vision.profile.acceptsImages, vision.source == .pattern("vl"),
+                  ModelCapabilityCatalog.resolve(model: "llava-1.6", overrides: [:]).profile.acceptsImages,
+                  ModelCapabilityCatalog.resolve(model: "gemma-3-12b-it", overrides: [:]).profile.acceptsImages,
+                  !text.profile.acceptsImages, text.source == .fallback,
+                  text.profile.supportsTools, text.profile.supportsStreaming,
+                  overridden.profile.acceptsImages, overridden.source == .override,
+                  ModelCapabilityCatalog.resolve(model: "qwen3-vl-8b-instruct", overrides: [:]) == vision else {
+                print("SELFTEST ERROR: capability profile resolution"); exit(1)
+            }
+
+            let bridge = VisionBridgeConfig.resolve(
+                settings: VisionBridgeSettings(baseURL: "https://vision.example/v1", model: "vl-model"),
+                apiKey: nil, environment: [:])
+            guard bridge != nil,
+                  VisionBridgeConfig.resolve(settings: .fresh, apiKey: nil, environment: [:]) == nil,
+                  VisionBridgeConfig.resolve(
+                    settings: VisionBridgeSettings(baseURL: "https://vision.example", model: "vl-model"),
+                    apiKey: nil, environment: [:]) == nil else {
+                print("SELFTEST ERROR: vision bridge configuration validation"); exit(1)
+            }
+
+            guard AttachmentPreflight.route(profile: .vision, imageCount: 1, bridgeConfigured: false) == .direct,
+                  AttachmentPreflight.route(profile: .textOnly, imageCount: 1, bridgeConfigured: true) == .bridged,
+                  AttachmentPreflight.route(profile: .textOnly, imageCount: 1, bridgeConfigured: false) == .needsDecision,
+                  AttachmentPreflight.route(profile: .textOnly, imageCount: 0, bridgeConfigured: false) == nil,
+                  AttachmentPreflight.route(profile: .vision, imageCount: 9, bridgeConfigured: true) == .bridged,
+                  AttachmentPreflight.route(profile: .textOnly, imageCount: 1, bridgeConfigured: true)
+                      == AttachmentPreflight.route(profile: .textOnly, imageCount: 1, bridgeConfigured: true) else {
+                print("SELFTEST ERROR: attachment preflight routing"); exit(1)
+            }
+
+            let disclosure = VisionBridgeDisclosure.block(
+                descriptions: [("swatch.png", "An orange square.")], bridgeModel: "vl-model")
+            guard disclosure.contains("vision bridge"),
+                  disclosure.contains("vl-model"),
+                  disclosure.contains("did not receive"),
+                  disclosure.contains("Image \"swatch.png\": An orange square.") else {
+                print("SELFTEST ERROR: bridge disclosure assembly"); exit(1)
+            }
+
+            let blankBridge = VisionBridge(
+                config: VisionBridgeConfig(
+                    baseURL: URL(string: "https://vision.example/v1")!, apiKey: nil, model: "vl-model"),
+                transport: ScriptedNativeToolTransport(rounds: [
+                    [NativeChatStreamSnapshot(content: "  \n", toolCalls: [], finishReason: "stop")]
+                ]))
+            do {
+                _ = try await blankBridge.describe(name: "swatch.png", dataURL: "data:image/jpeg;base64,AAAA")
+                print("SELFTEST ERROR: malformed bridge output accepted"); exit(1)
+            } catch let error as VisionBridgeError {
+                guard error == .emptyDescription("swatch.png") else {
+                    print("SELFTEST ERROR: malformed bridge output error shape"); exit(1)
+                }
+            }
+
+            let legacyJSON = "{\"version\":2,\"profiles\":[],\"systemPrompt\":\"p\",\"enabledToolIDs\":[],\"onboardingState\":\"complete\",\"onboardingStep\":0}"
+            let decoded = try JSONDecoder().decode(
+                NativeChatSettings.self, from: Data(legacyJSON.utf8))
+            guard decoded.capabilityOverrides.isEmpty, decoded.visionBridge == .fresh else {
+                print("SELFTEST ERROR: settings decode compatibility"); exit(1)
+            }
+            var settings = NativeChatSettings.fresh
+            settings.setCapabilityOverride(model: "local-model", profile: .vision)
+            settings.visionBridge = VisionBridgeSettings(baseURL: "https://vision.example/v1", model: "vl-model")
+            let reloaded = try JSONDecoder().decode(
+                NativeChatSettings.self, from: JSONEncoder().encode(settings))
+            guard reloaded.capabilityOverrides["local-model"] == .vision,
+                  reloaded.visionBridge.isConfigured,
+                  reloaded.resolveCapabilities(model: "local-model").source == .override else {
+                print("SELFTEST ERROR: settings capability roundtrip"); exit(1)
+            }
+
+            let attachmentStore = NativeAttachmentStore(directory: directory)
+            let source = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { rect in
+                NSColor.systemTeal.setFill()
+                rect.fill()
+                return true
+            }
+            guard let pngData = source.pngData else {
+                print("SELFTEST ERROR: capability routing fixture image"); exit(1)
+            }
+            let record = try attachmentStore.save(data: pngData, preferredName: "swatch.png")
+            let loader: (MessageAttachment) -> String? = { attachmentStore.requestDataURL(for: $0) }
+
+            let bridgedMessage = Message(
+                role: .user, text: "What is this", attachments: [record],
+                routeNote: MessageRouteNote(
+                    route: .bridged, bridgeModel: "vl-model", disclosure: disclosure))
+            let bridgedHistory = NativeChatHistoryBuilder.build(
+                messages: [bridgedMessage], systemPrompt: "", imageLoader: loader)
+            let withheldHistory = NativeChatHistoryBuilder.build(
+                messages: [Message(role: .user, text: "Just text", attachments: [record],
+                                   routeNote: MessageRouteNote(route: .withheld))],
+                systemPrompt: "", imageLoader: loader)
+            let directHistory = NativeChatHistoryBuilder.build(
+                messages: [Message(role: .user, text: "Look", attachments: [record],
+                                   routeNote: MessageRouteNote(route: .direct))],
+                systemPrompt: "", imageLoader: loader)
+            guard bridgedHistory.count == 1, bridgedHistory[0].images.isEmpty,
+                  bridgedHistory[0].content.contains("What is this"),
+                  bridgedHistory[0].content.contains("An orange square."),
+                  withheldHistory.count == 1, withheldHistory[0].images.isEmpty,
+                  withheldHistory[0].content == "Just text",
+                  directHistory.count == 1, directHistory[0].images.count == 1 else {
+                print("SELFTEST ERROR: history builder route handling"); exit(1)
+            }
+
+            let strippedHistory = NativeChatHistoryBuilder.build(
+                messages: [
+                    Message(role: .user, text: "Old direct", attachments: [record],
+                            routeNote: MessageRouteNote(route: .direct)),
+                    Message(role: .user, text: "Legacy no note", attachments: [record]),
+                ],
+                systemPrompt: "", imageLoader: loader, capabilities: .textOnly)
+            guard strippedHistory.count == 2,
+                  strippedHistory.allSatisfy(\.images.isEmpty) else {
+                print("SELFTEST ERROR: history builder capability image stripping"); exit(1)
+            }
+            var singleImageVision = ModelCapabilityProfile.vision
+            singleImageVision.maxImagesPerRequest = 1
+            let cappedHistory = NativeChatHistoryBuilder.build(
+                messages: [
+                    Message(role: .user, text: "First", attachments: [record],
+                            routeNote: MessageRouteNote(route: .direct)),
+                    Message(role: .user, text: "Second", attachments: [record],
+                            routeNote: MessageRouteNote(route: .direct)),
+                ],
+                systemPrompt: "", imageLoader: loader, capabilities: singleImageVision)
+            guard cappedHistory.count == 2,
+                  cappedHistory[0].images.isEmpty,
+                  cappedHistory[1].images.count == 1 else {
+                print("SELFTEST ERROR: history builder image cap trimming"); exit(1)
+            }
+            let cappedImageOnly = NativeChatHistoryBuilder.build(
+                messages: [
+                    Message(role: .user, text: "", attachments: [record],
+                            routeNote: MessageRouteNote(route: .direct)),
+                    Message(role: .user, text: "Newest", attachments: [record],
+                            routeNote: MessageRouteNote(route: .direct)),
+                ],
+                systemPrompt: "", imageLoader: loader, capabilities: singleImageVision)
+            guard cappedImageOnly.count == 1,
+                  cappedImageOnly[0].content == "Newest",
+                  cappedImageOnly[0].images.count == 1 else {
+                print("SELFTEST ERROR: capped image-only message not dropped"); exit(1)
+            }
+            let missingRecord = try attachmentStore.save(data: pngData, preferredName: "gone.png")
+            attachmentStore.remove(missingRecord)
+            guard attachmentStore.missingImageNames(in: [record, missingRecord]) == ["gone.png"] else {
+                print("SELFTEST ERROR: missing image detection for route badge"); exit(1)
+            }
+            let corruptFileName = "corrupt-selftest.png"
+            try Data("not an image at all".utf8).write(
+                to: directory.appendingPathComponent(corruptFileName))
+            let corruptRecord = MessageAttachment(
+                name: "corrupt.png", ext: "PNG", isImage: true,
+                fileName: corruptFileName, mime: "image/png", byteSize: 18)
+            guard attachmentStore.requestDataURL(for: corruptRecord) == nil,
+                  attachmentStore.missingImageNames(in: [record, corruptRecord]) == ["corrupt.png"] else {
+                print("SELFTEST ERROR: undecodable image detection for route badge"); exit(1)
+            }
+            let unloadableHistory = NativeChatHistoryBuilder.build(
+                messages: [Message(role: .user, text: "", attachments: [missingRecord],
+                                   routeNote: MessageRouteNote(route: .direct))],
+                systemPrompt: "", imageLoader: loader, capabilities: .vision)
+            guard unloadableHistory.count == 1,
+                  unloadableHistory[0].images.isEmpty,
+                  unloadableHistory[0].content.contains("gone.png"),
+                  unloadableHistory[0].content.contains("could not be loaded") else {
+                print("SELFTEST ERROR: unloadable image disclosure marker"); exit(1)
+            }
+
+            let nonStreamClient = NativeChatClient(config: NativeChatConfig(
+                baseURL: URL(string: "https://models.example/v1")!, apiKey: nil,
+                model: "plain", chatTemplateKwargs: nil, streaming: false))
+            let nonStreamRequest = try nonStreamClient.request(
+                messages: [NativeChatMessage(role: "user", content: "Hi")], model: "plain")
+            let nonStreamBody = try JSONSerialization.jsonObject(with: nonStreamRequest.httpBody!) as? [String: Any]
+            let completeData = Data("""
+            {"choices":[{"message":{"content":"Full answer"},"finish_reason":"stop"}]}
+            """.utf8)
+            let completeToolData = Data("""
+            {"choices":[{"message":{"content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"apple_reminders_list","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}
+            """.utf8)
+            let completeSnapshot = try NativeChatClient.completeSnapshot(from: completeData)
+            let completeToolSnapshot = try NativeChatClient.completeSnapshot(from: completeToolData)
+            guard nonStreamBody?["stream"] as? Bool == false,
+                  completeSnapshot.content == "Full answer",
+                  completeSnapshot.finishReason == "stop",
+                  completeToolSnapshot.toolCalls == [
+                    NativeChatToolCall(id: "c1", name: "apple_reminders_list", arguments: "{}")
+                  ] else {
+                print("SELFTEST ERROR: non-streaming request shape or response parsing"); exit(1)
+            }
+            do {
+                _ = try NativeChatClient.completeSnapshot(from: Data("{\"choices\":[]}".utf8))
+                print("SELFTEST ERROR: malformed complete response accepted"); exit(1)
+            } catch let error as NativeChatClient.ClientError {
+                guard error == .invalidResponse else {
+                    print("SELFTEST ERROR: malformed complete response error shape"); exit(1)
+                }
+            }
+
+            let repository = try LocalChatRepository(inMemory: true)
+            try repository.saveConversation(Conversation(
+                id: "route-convo", title: "Routes", messages: [], updatedAt: Date()))
+            try repository.saveMessage(bridgedMessage, conversationID: "route-convo", ordinal: 0)
+            guard let restored = try repository.messages(conversationID: "route-convo").first,
+                  restored.routeNote?.route == .bridged,
+                  restored.routeNote?.bridgeModel == "vl-model",
+                  restored.routeNote?.disclosure == disclosure else {
+                print("SELFTEST ERROR: route note persistence"); exit(1)
+            }
+
+            let config = NativeChatConfig(
+                baseURL: URL(string: "https://model.example/v1")!,
+                apiKey: nil, model: "plain-text-model", chatTemplateKwargs: nil)
+            let decisionTransport = SelfTestNativeTransport()
+            let decisionStore = ChatStore(
+                config: nil, client: nil, socket: nil,
+                nativeConfig: config, nativeTransport: decisionTransport,
+                repository: try LocalChatRepository(inMemory: true),
+                hasLegacyOWUI: false,
+                attachmentStore: attachmentStore)
+            await decisionStore.connect()
+            let pending = Attachment(url: attachmentStore.url(for: record.fileName ?? "")!)
+            pending.nativeRecord = record
+            decisionStore.draft = "Describe this"
+            decisionStore.attachments = [pending]
+            decisionStore.send()
+            guard decisionStore.pendingSendDecision != nil,
+                  decisionStore.draft == "Describe this",
+                  decisionStore.attachments.count == 1,
+                  decisionStore.selected?.messages.isEmpty == true else {
+                print("SELFTEST ERROR: no-route decision gate"); exit(1)
+            }
+            decisionStore.cancelPendingSend()
+            guard decisionStore.pendingSendDecision == nil,
+                  decisionStore.draft == "Describe this",
+                  decisionStore.attachments.count == 1,
+                  decisionStore.selected?.messages.isEmpty == true,
+                  decisionTransport.histories.isEmpty else {
+                print("SELFTEST ERROR: decision cancellation preserved nothing"); exit(1)
+            }
+            decisionStore.send()
+            decisionStore.confirmSendWithoutAttachments()
+            await waitForGeneration(decisionStore)
+            guard let withheldSent = decisionStore.selected?.messages.first,
+                  withheldSent.routeNote?.route == .withheld,
+                  withheldSent.attachments.count == 1,
+                  decisionStore.attachments.isEmpty,
+                  decisionStore.draft.isEmpty,
+                  decisionTransport.histories.count == 1,
+                  decisionTransport.histories[0].allSatisfy(\.images.isEmpty) else {
+                print("SELFTEST ERROR: send-without-attachment flow"); exit(1)
+            }
+
+            let imageOnlyPending = Attachment(url: attachmentStore.url(for: record.fileName ?? "")!)
+            imageOnlyPending.nativeRecord = record
+            let countBeforeImageOnly = decisionStore.selected?.messages.count
+            decisionStore.attachments = [imageOnlyPending]
+            decisionStore.send()
+            decisionStore.confirmSendWithoutAttachments()
+            guard decisionStore.attachmentError != nil,
+                  decisionStore.attachments.count == 1,
+                  decisionStore.selected?.messages.count == countBeforeImageOnly,
+                  decisionTransport.histories.count == 1 else {
+                print("SELFTEST ERROR: image-only withheld send guarded"); exit(1)
+            }
+            decisionStore.attachments = []
+            decisionStore.attachmentError = nil
+
+            let selfBridgeStore = ChatStore(
+                config: nil, client: nil, socket: nil,
+                nativeConfig: config, nativeTransport: decisionTransport,
+                repository: try LocalChatRepository(inMemory: true),
+                hasLegacyOWUI: false,
+                visionBridgeConfig: VisionBridgeConfig(
+                    baseURL: URL(string: config.baseURL.absoluteString + "/")!,
+                    apiKey: nil, model: config.model),
+                attachmentStore: attachmentStore)
+            guard selfBridgeStore.effectiveBridgeConfig == nil,
+                  selfBridgeStore.attachmentRoute(imageCount: 1) == .needsDecision,
+                  VisionBridgeConfig(baseURL: config.baseURL, apiKey: nil, model: config.model)
+                      .isSameEndpoint(as: config),
+                  !VisionBridgeConfig(
+                      baseURL: URL(string: "https://vision.example/v1")!, apiKey: nil,
+                      model: config.model).isSameEndpoint(as: config) else {
+                print("SELFTEST ERROR: self-referential bridge guard"); exit(1)
+            }
+
+            let bridgeTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "An orange square.", toolCalls: [], finishReason: "stop")]
+            ])
+            let bridgedModelTransport = SelfTestNativeTransport()
+            let bridgedRepository = try LocalChatRepository(inMemory: true)
+            let bridgedStore = ChatStore(
+                config: nil, client: nil, socket: nil,
+                nativeConfig: config, nativeTransport: bridgedModelTransport,
+                repository: bridgedRepository,
+                hasLegacyOWUI: false,
+                visionBridgeConfig: VisionBridgeConfig(
+                    baseURL: URL(string: "https://vision.example/v1")!, apiKey: nil, model: "vl-model"),
+                visionBridgeTransportFactory: { _ in bridgeTransport },
+                attachmentStore: attachmentStore)
+            await bridgedStore.connect()
+            let bridgedPending = Attachment(url: attachmentStore.url(for: record.fileName ?? "")!)
+            bridgedPending.nativeRecord = record
+            bridgedStore.draft = "What color"
+            bridgedStore.attachments = [bridgedPending]
+            bridgedStore.send()
+            await waitForGeneration(bridgedStore)
+            guard let bridgedSent = bridgedStore.selected?.messages.first,
+                  bridgedSent.routeNote?.route == .bridged,
+                  bridgedSent.routeNote?.disclosure?.contains("An orange square.") == true,
+                  bridgedStore.selected?.messages.last?.state == .complete,
+                  bridgeTransport.histories.count == 1,
+                  bridgeTransport.histories[0].first?.images.count == 1,
+                  bridgedModelTransport.histories.count == 1,
+                  bridgedModelTransport.histories[0].allSatisfy(\.images.isEmpty),
+                  bridgedModelTransport.histories[0].contains(where: {
+                      $0.role == "user" && $0.content.contains("An orange square.")
+                  }),
+                  let bridgedID = bridgedStore.selected?.id,
+                  try bridgedRepository.messages(conversationID: bridgedID)
+                      .first?.routeNote?.disclosure?.contains("An orange square.") == true else {
+                print("SELFTEST ERROR: bridged send flow"); exit(1)
+            }
+
+            let failingBridge = InterruptedNativeToolTransport()
+            let failStoreRepository = try LocalChatRepository(inMemory: true)
+            let failModelTransport = SelfTestNativeTransport()
+            let failStore = ChatStore(
+                config: nil, client: nil, socket: nil,
+                nativeConfig: config, nativeTransport: failModelTransport,
+                repository: failStoreRepository,
+                hasLegacyOWUI: false,
+                visionBridgeConfig: VisionBridgeConfig(
+                    baseURL: URL(string: "https://vision.example/v1")!, apiKey: nil, model: "vl-model"),
+                visionBridgeTransportFactory: { _ in failingBridge },
+                attachmentStore: attachmentStore)
+            await failStore.connect()
+            let failPending = Attachment(url: attachmentStore.url(for: record.fileName ?? "")!)
+            failPending.nativeRecord = record
+            failStore.draft = "Try the bridge"
+            failStore.attachments = [failPending]
+            failStore.send()
+            await waitForGeneration(failStore)
+            guard let failUser = failStore.selected?.messages.first,
+                  failUser.text == "Try the bridge",
+                  failUser.routeNote == nil,
+                  failUser.attachments.count == 1,
+                  let failReply = failStore.selected?.messages.last,
+                  failReply.state == .interrupted,
+                  failReply.failure?.contains("vision bridge") == true,
+                  failModelTransport.histories.isEmpty,
+                  failStore.canSubmitChat,
+                  let failID = failStore.selected?.id,
+                  try failStoreRepository.messages(conversationID: failID).first?.text == "Try the bridge" else {
+                print("SELFTEST ERROR: bridge failure preserved the turn"); exit(1)
+            }
+
+            let toolService = SelfTestRemindersService()
+            let gatedTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "Plain answer.", toolCalls: [], finishReason: "stop")]
+            ])
+            let gatedStore = ChatStore(
+                config: nil, client: nil, socket: nil,
+                nativeConfig: config, nativeTransport: gatedTransport,
+                repository: try LocalChatRepository(inMemory: true),
+                hasLegacyOWUI: false,
+                nativeEnabledToolIDs: ["apple-reminders"],
+                nativeCapabilityOverrides: ["plain-text-model": ModelCapabilityProfile(
+                    acceptsImages: false, supportsTools: false, supportsStreaming: true,
+                    maxImagesPerRequest: 0)],
+                nativeToolRegistry: NativeToolRegistry(
+                    definitions: NativeRemindersTools.definitions(service: toolService)),
+                attachmentStore: attachmentStore)
+            await gatedStore.connect()
+            gatedStore.sendText("No tools please")
+            await waitForGeneration(gatedStore)
+            guard gatedTransport.schemas.count == 1, gatedTransport.schemas[0].isEmpty else {
+                print("SELFTEST ERROR: tool capability gating"); exit(1)
+            }
+
+            print("selftest: capability routing OK")
+        } catch {
+            print("SELFTEST ERROR: capability routing \(error)"); exit(1)
         }
     }
 

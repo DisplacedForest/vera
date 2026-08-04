@@ -122,6 +122,8 @@ struct OnboardingSheet: View {
             resolved,
             systemPrompt: config.nativeSettings.systemPrompt,
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
+            capabilityOverrides: config.nativeSettings.capabilityOverrides,
+            visionBridge: config.visionBridgeResolved,
             memorySettings: config.nativeSettings.memory,
             memoryService: config.nativeMemoryService)
         config.completeOnboarding()

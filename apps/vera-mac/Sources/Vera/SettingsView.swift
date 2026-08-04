@@ -51,6 +51,12 @@ private struct ModelTab: View {
             Section("Choose a model") {
                 NativeModelEditor()
             }
+            Section("Capabilities") {
+                NativeCapabilityEditor()
+            }
+            Section("Vision bridge") {
+                NativeVisionBridgeEditor()
+            }
             SaveSection()
         }
         .formStyle(.grouped)
@@ -232,6 +238,116 @@ struct NativeModelEditor: View {
                 try? config.save()
             } catch {
                 discovery = ModelDiscoveryState.classify(error)
+            }
+        }
+    }
+}
+
+struct NativeCapabilityEditor: View {
+    @EnvironmentObject var config: ConfigStore
+
+    private var model: String {
+        config.nativeResolved?.model
+            ?? config.activeNativeProfile?.selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ""
+    }
+    private var resolution: ModelCapabilityCatalog.Resolution {
+        config.nativeSettings.resolveCapabilities(model: model)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if model.isEmpty {
+                Text("Choose a model to review its capability profile.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            } else {
+                Text("These settings decide how attachments are routed before each send. They describe the model; nothing is probed at runtime.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 8) {
+                    Image(systemName: sourceIcon).foregroundStyle(Theme.accent)
+                    Text(sourceLabel).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    if resolution.source == .override {
+                        Button("Use defaults") { config.clearCapabilityOverride(model: model) }
+                    }
+                }
+                Toggle("Accepts image input", isOn: capabilityBinding(\.acceptsImages))
+                if resolution.profile.acceptsImages {
+                    Stepper(
+                        "Images per request: \(resolution.profile.maxImagesPerRequest)",
+                        value: Binding(
+                            get: { resolution.profile.maxImagesPerRequest },
+                            set: { value in
+                                config.updateCapability(model: model) { $0.maxImagesPerRequest = value }
+                            }),
+                        in: 1...16)
+                }
+                Toggle("Supports tool calls", isOn: capabilityBinding(\.supportsTools))
+                Toggle("Supports streaming replies", isOn: capabilityBinding(\.supportsStreaming))
+            }
+        }
+    }
+
+    private var sourceIcon: String {
+        switch resolution.source {
+        case .override: return "person.crop.circle.badge.checkmark"
+        case .pattern: return "text.magnifyingglass"
+        case .fallback: return "square.dashed"
+        }
+    }
+
+    private var sourceLabel: String {
+        switch resolution.source {
+        case .override:
+            return "Your saved profile for \(model)."
+        case .pattern(let pattern):
+            return "Defaults for \(model), matched by the bundled name pattern \"\(pattern)\"."
+        case .fallback:
+            return "Default text-only profile. Adjust it if \(model) accepts images."
+        }
+    }
+
+    private func capabilityBinding(_ keyPath: WritableKeyPath<ModelCapabilityProfile, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { resolution.profile[keyPath: keyPath] },
+            set: { value in
+                config.updateCapability(model: model) { profile in
+                    profile[keyPath: keyPath] = value
+                    if keyPath == \.acceptsImages, value, profile.maxImagesPerRequest < 1 {
+                        profile.maxImagesPerRequest = ModelCapabilityProfile.vision.maxImagesPerRequest
+                    }
+                }
+            })
+    }
+}
+
+struct NativeVisionBridgeEditor: View {
+    @EnvironmentObject var config: ConfigStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("When the selected model does not accept images, Vera can send attachments to this separate OpenAI-compatible vision endpoint and share its description with your model, clearly labeled in the conversation.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            LabeledContent("Base URL") {
+                TextField("https://vision-host.example/v1", text: config.visionBridgeBinding(\.baseURL))
+                    .textFieldStyle(.roundedBorder).autocorrectionDisabled().frame(maxWidth: 360)
+            }
+            LabeledContent("Model") {
+                TextField("vision-model-id", text: config.visionBridgeBinding(\.model))
+                    .textFieldStyle(.roundedBorder).autocorrectionDisabled().frame(maxWidth: 360)
+            }
+            LabeledContent("API key") {
+                SecureField("Optional", text: $config.visionBridgeAPIKey)
+                    .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+            }
+            if config.nativeSettings.visionBridge.isConfigured {
+                Label("The bridge is configured. Unsupported attachments are described here, with disclosure on every bridged turn.",
+                      systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 12)).foregroundStyle(.green)
+            } else {
+                Label("No bridge configured. When the model cannot take an attachment, Vera asks whether to send the message without it.",
+                      systemImage: "circle.dashed")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             }
         }
     }
@@ -674,7 +790,9 @@ private struct SaveSection: View {
         store.adoptNative(
             resolved,
             systemPrompt: config.nativeSettings.systemPrompt,
-            enabledToolIDs: config.nativeSettings.enabledToolIDs)
+            enabledToolIDs: config.nativeSettings.enabledToolIDs,
+            capabilityOverrides: config.nativeSettings.capabilityOverrides,
+            visionBridge: config.visionBridgeResolved)
         status = "Saved"
     }
 }

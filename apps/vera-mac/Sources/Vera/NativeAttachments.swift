@@ -18,10 +18,36 @@ enum NativeAttachmentError: LocalizedError, Equatable {
     }
 }
 
+final class LoadabilityCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var loadable: [String: Bool] = [:]
+
+    func value(for fileName: String, compute: () -> Bool) -> Bool {
+        lock.lock()
+        if let cached = loadable[fileName] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+        let result = compute()
+        lock.lock()
+        loadable[fileName] = result
+        lock.unlock()
+        return result
+    }
+
+    func invalidate(_ fileName: String) {
+        lock.lock()
+        loadable.removeValue(forKey: fileName)
+        lock.unlock()
+    }
+}
+
 final class NativeAttachmentStore: Sendable {
     static let maxMegabytes = 20
     static let maxBytes = maxMegabytes * 1_048_576
 
+    private let loadability = LoadabilityCache()
     let directory: URL
 
     static var standardDirectory: URL {
@@ -83,8 +109,19 @@ final class NativeAttachmentStore: Sendable {
         return ImageEncoder.dataURL(from: url)?.dataURL
     }
 
+    func missingImageNames(in attachments: [MessageAttachment]) -> [String] {
+        attachments.filter(\.isImage).compactMap { attachment in
+            guard let fileName = attachment.fileName else { return attachment.name }
+            let loadable = loadability.value(for: fileName) {
+                requestDataURL(for: attachment) != nil
+            }
+            return loadable ? nil : attachment.name
+        }
+    }
+
     func remove(_ attachment: MessageAttachment) {
         guard let fileName = attachment.fileName, let url = url(for: fileName) else { return }
+        loadability.invalidate(fileName)
         try? FileManager.default.removeItem(at: url)
     }
 

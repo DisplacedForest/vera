@@ -5,6 +5,18 @@ struct NativeChatConfig: Sendable, Equatable {
     let apiKey: String?
     let model: String
     let chatTemplateKwargs: String?
+    let streaming: Bool
+
+    init(
+        baseURL: URL, apiKey: String?, model: String, chatTemplateKwargs: String?,
+        streaming: Bool = true
+    ) {
+        self.baseURL = baseURL
+        self.apiKey = apiKey
+        self.model = model
+        self.chatTemplateKwargs = chatTemplateKwargs
+        self.streaming = streaming
+    }
 
     var completionsURL: URL { baseURL.appendingPathComponent("chat/completions") }
     var modelsURL: URL { baseURL.appendingPathComponent("models") }
@@ -206,7 +218,7 @@ struct NativeChatClient: NativeChatTransport, Sendable {
     ) throws -> URLRequest {
         var payload: [String: Any] = [
             "model": model,
-            "stream": true,
+            "stream": config.streaming,
             "messages": messages.map(Self.messageObject),
         ]
         if !tools.isEmpty {
@@ -226,7 +238,28 @@ struct NativeChatClient: NativeChatTransport, Sendable {
     func stream(
         messages: [NativeChatMessage], model: String, tools: [NativeToolSchema]
     ) -> AsyncThrowingStream<NativeChatStreamSnapshot, Error> {
-        AsyncThrowingStream { continuation in
+        guard config.streaming else {
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    do {
+                        let request = try request(messages: messages, model: model, tools: tools)
+                        let (data, response) = try await session.data(for: request)
+                        let status = try statusCode(response)
+                        guard (200..<300).contains(status) else {
+                            throw ClientError.http(status, Self.errorDetail(data))
+                        }
+                        continuation.yield(try Self.completeSnapshot(from: data))
+                        continuation.finish()
+                    } catch is CancellationError {
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let request = try request(messages: messages, model: model, tools: tools)
@@ -276,6 +309,33 @@ struct NativeChatClient: NativeChatTransport, Sendable {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    static func completeSnapshot(from data: Data) throws -> NativeChatStreamSnapshot {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ClientError.invalidResponse
+        }
+        if let error = object["error"] as? [String: Any] {
+            throw ClientError.server((error["message"] as? String) ?? "The model endpoint reported an error")
+        }
+        guard let choice = (object["choices"] as? [[String: Any]])?.first,
+              let message = choice["message"] as? [String: Any] else {
+            throw ClientError.invalidResponse
+        }
+        let content = (message["content"] as? String) ?? ""
+        let calls = (message["tool_calls"] as? [[String: Any]] ?? []).map { call -> NativeChatToolCall in
+            let function = call["function"] as? [String: Any]
+            return NativeChatToolCall(
+                id: (call["id"] as? String) ?? "",
+                name: (function?["name"] as? String) ?? "",
+                arguments: (function?["arguments"] as? String) ?? "")
+        }
+        let finishReason = choice["finish_reason"] as? String
+        if !calls.isEmpty,
+           finishReason != "tool_calls" || calls.contains(where: { $0.id.isEmpty || $0.name.isEmpty }) {
+            throw ClientError.invalidResponse
+        }
+        return NativeChatStreamSnapshot(content: content, toolCalls: calls, finishReason: finishReason)
     }
 
     static func content(from payload: String) throws -> String? {

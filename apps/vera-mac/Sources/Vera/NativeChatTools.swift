@@ -369,18 +369,40 @@ private final class NativeToolExecutionRace: @unchecked Sendable {
 enum NativeChatHistoryBuilder {
     static func build(
         messages: [Message], systemPrompt: String,
-        imageLoader: ((MessageAttachment) -> String?)? = nil
+        imageLoader: ((MessageAttachment) -> String?)? = nil,
+        capabilities: ModelCapabilityProfile? = nil
     ) -> [NativeChatMessage] {
         var history: [NativeChatMessage] = []
         let prompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if !prompt.isEmpty { history.append(NativeChatMessage(role: "system", content: prompt)) }
+        let allowsImages = capabilities?.acceptsImages ?? true
         for message in messages where message.state == .complete {
             if message.role == .user {
-                let images = imageLoader.map { load in
-                    message.attachments.filter(\.isImage).compactMap(load)
-                } ?? []
-                if !message.text.isEmpty || !images.isEmpty {
-                    history.append(NativeChatMessage(role: "user", content: message.text, images: images))
+                let route = message.routeNote?.route
+                var images: [String] = []
+                var unloadable: [String] = []
+                if allowsImages, route == nil || route == .direct, let load = imageLoader {
+                    for attachment in message.attachments where attachment.isImage {
+                        if let dataURL = load(attachment) {
+                            images.append(dataURL)
+                        } else {
+                            unloadable.append(attachment.name)
+                        }
+                    }
+                }
+                var content = message.text
+                if route == .bridged, let disclosure = message.routeNote?.disclosure,
+                   !disclosure.isEmpty {
+                    content = content.isEmpty ? disclosure : content + "\n\n" + disclosure
+                }
+                if !unloadable.isEmpty {
+                    let marker = unloadable.map {
+                        "[Attached image \"\($0)\" could not be loaded for this request]"
+                    }.joined(separator: "\n")
+                    content = content.isEmpty ? marker : content + "\n\n" + marker
+                }
+                if !content.isEmpty || !images.isEmpty {
+                    history.append(NativeChatMessage(role: "user", content: content, images: images))
                 }
                 continue
             }
@@ -402,7 +424,31 @@ enum NativeChatHistoryBuilder {
                 history.append(NativeChatMessage(role: "assistant", content: message.text))
             }
         }
+        if let capabilities, capabilities.acceptsImages {
+            history = capped(history, limit: max(capabilities.maxImagesPerRequest, 1))
+        }
         return history
+    }
+
+    private static func capped(_ history: [NativeChatMessage], limit: Int) -> [NativeChatMessage] {
+        var total = history.reduce(0) { $0 + $1.images.count }
+        guard total > limit else { return history }
+        var result = history
+        for index in result.indices {
+            guard total > limit else { break }
+            let images = result[index].images
+            guard !images.isEmpty else { continue }
+            let excess = min(images.count, total - limit)
+            let kept = Array(images.dropFirst(excess))
+            total -= excess
+            result[index] = NativeChatMessage(
+                role: result[index].role, content: result[index].content,
+                toolCallID: result[index].toolCallID, toolCalls: result[index].toolCalls,
+                images: kept)
+        }
+        return result.filter { message in
+            message.role != "user" || !message.content.isEmpty || !message.images.isEmpty
+        }
     }
 }
 

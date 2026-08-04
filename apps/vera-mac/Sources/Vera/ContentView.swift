@@ -402,8 +402,70 @@ struct MessageRow: View {
                             .background(Theme.userBubble)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
+                    if let note = message.routeNote {
+                        AttachmentRouteBadge(
+                            note: note,
+                            missingImages: attachmentStore?.missingImageNames(
+                                in: message.attachments) ?? [])
+                    }
                 }
             }
+        }
+    }
+}
+
+struct AttachmentRouteBadge: View {
+    let note: MessageRouteNote
+    var missingImages: [String] = []
+    @State private var showDisclosure = false
+
+    private var icon: String {
+        switch note.route {
+        case .direct: return missingImages.isEmpty ? "photo" : "exclamationmark.triangle"
+        case .bridged: return "arrow.triangle.branch"
+        case .withheld: return "eye.slash"
+        }
+    }
+
+    private var label: String {
+        switch note.route {
+        case .direct where !missingImages.isEmpty:
+            return "\(missingImages.joined(separator: ", ")) could not be loaded and was not included in the model request"
+        case .direct:
+            return "Image included in the model request"
+        case .bridged where note.disclosure == nil:
+            return "Routing through the vision bridge\(note.bridgeModel.map { " (\($0))" } ?? "")"
+        case .bridged:
+            return "Described by the vision bridge\(note.bridgeModel.map { " (\($0))" } ?? ""). The model did not receive the image."
+        case .withheld:
+            return "Sent without the attachment"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 10))
+            Text(label).font(.system(size: 11))
+            if note.route == .bridged, note.disclosure != nil {
+                Button(showDisclosure ? "Hide description" : "Show description") {
+                    showDisclosure.toggle()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.accent)
+            }
+        }
+        .foregroundStyle(Theme.textSecondary)
+        if showDisclosure, let disclosure = note.disclosure {
+            Text(disclosure)
+                .font(.system(size: 11, design: .monospaced))
+                .textSelection(.enabled)
+                .foregroundStyle(Theme.textSecondary)
+                .padding(10).frame(maxWidth: 480, alignment: .leading)
+                .background(Theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Theme.hairline, lineWidth: 1))
         }
     }
 }
@@ -587,6 +649,25 @@ struct ComposerField: View {
         }
         .onDisappear { removePasteMonitor() }
         .onChange(of: store.focusTick) { _, _ in focused = true }
+        .confirmationDialog(
+            store.pendingSendDecision?.imageLimit == nil
+                ? "This model can't take images" : "Too many images for this model",
+            isPresented: Binding(
+                get: { store.pendingSendDecision != nil },
+                set: { if !$0 { store.cancelPendingSend() } }),
+            titleVisibility: .visible
+        ) {
+            Button("Send without the attachments") { store.confirmSendWithoutAttachments() }
+            Button("Cancel", role: .cancel) { store.cancelPendingSend() }
+        } message: {
+            if let decision = store.pendingSendDecision {
+                if let limit = decision.imageLimit {
+                    Text("\(decision.modelID) accepts at most \(limit) image\(limit == 1 ? "" : "s") per request and no vision bridge is configured. Send the message without its \(decision.imageCount) images, or cancel and remove some. You can raise the limit or set up a bridge in Settings.")
+                } else {
+                    Text("\(decision.modelID) does not accept image input and no vision bridge is configured. Send the message without \(decision.imageCount == 1 ? "its image" : "its \(decision.imageCount) images"), or cancel and keep editing. You can set up a bridge or adjust this model's capabilities in Settings.")
+                }
+            }
+        }
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
             guard !files.isEmpty else { return false }

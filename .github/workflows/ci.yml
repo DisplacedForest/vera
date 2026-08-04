@@ -71,4 +71,15 @@ jobs:
           HOME_LOCATION_NAME: ${{ secrets.HOME_LOCATION_NAME }}
           WEATHER_LAT: ${{ secrets.WEATHER_LAT }}
           WEATHER_LON: ${{ secrets.WEATHER_LON }}
-        run: sh scripts/leak-gate.sh
+          LEAK_GATE_SCRIPT: ${{ secrets.LEAK_GATE_SCRIPT }}
+          LEAK_GATE_ALLOW: ${{ secrets.LEAK_GATE_ALLOW }}
+        run: |
+          if [ -z "$LEAK_GATE_SCRIPT" ]; then
+            echo "leak-gate: skipped (gate not available in this context)"
+            exit 0
+          fi
+          printf '%s' "$LEAK_GATE_SCRIPT" | base64 -d > scripts/leak-gate.sh
+          if [ -n "$LEAK_GATE_ALLOW" ]; then
+            printf '%s' "$LEAK_GATE_ALLOW" | base64 -d > scripts/leak-allow.txt
+          fi
+          sh scripts/leak-gate.sh

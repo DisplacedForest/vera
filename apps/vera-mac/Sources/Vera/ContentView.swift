@@ -403,7 +403,10 @@ struct MessageRow: View {
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
                     if let note = message.routeNote {
-                        AttachmentRouteBadge(note: note)
+                        AttachmentRouteBadge(
+                            note: note,
+                            missingImages: attachmentStore?.missingImageNames(
+                                in: message.attachments) ?? [])
                     }
                 }
             }
@@ -413,11 +416,12 @@ struct MessageRow: View {
 
 struct AttachmentRouteBadge: View {
     let note: MessageRouteNote
+    var missingImages: [String] = []
     @State private var showDisclosure = false
 
     private var icon: String {
         switch note.route {
-        case .direct: return "photo"
+        case .direct: return missingImages.isEmpty ? "photo" : "exclamationmark.triangle"
         case .bridged: return "arrow.triangle.branch"
         case .withheld: return "eye.slash"
         }
@@ -425,6 +429,8 @@ struct AttachmentRouteBadge: View {
 
     private var label: String {
         switch note.route {
+        case .direct where !missingImages.isEmpty:
+            return "\(missingImages.joined(separator: ", ")) could not be loaded and was not included in the model request"
         case .direct:
             return "Image included in the model request"
         case .bridged where note.disclosure == nil:

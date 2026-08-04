@@ -1184,6 +1184,9 @@ enum SelfTest {
             }
             let missingRecord = try attachmentStore.save(data: pngData, preferredName: "gone.png")
             attachmentStore.remove(missingRecord)
+            guard attachmentStore.missingImageNames(in: [record, missingRecord]) == ["gone.png"] else {
+                print("SELFTEST ERROR: missing image detection for route badge"); exit(1)
+            }
             let unloadableHistory = NativeChatHistoryBuilder.build(
                 messages: [Message(role: .user, text: "", attachments: [missingRecord],
                                    routeNote: MessageRouteNote(route: .direct))],

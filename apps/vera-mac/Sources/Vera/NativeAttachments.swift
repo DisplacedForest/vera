@@ -83,6 +83,16 @@ final class NativeAttachmentStore: Sendable {
         return ImageEncoder.dataURL(from: url)?.dataURL
     }
 
+    func missingImageNames(in attachments: [MessageAttachment]) -> [String] {
+        attachments.filter(\.isImage).compactMap { attachment in
+            guard let fileName = attachment.fileName, let url = url(for: fileName),
+                  FileManager.default.fileExists(atPath: url.path) else {
+                return attachment.name
+            }
+            return nil
+        }
+    }
+
     func remove(_ attachment: MessageAttachment) {
         guard let fileName = attachment.fileName, let url = url(for: fileName) else { return }
         try? FileManager.default.removeItem(at: url)

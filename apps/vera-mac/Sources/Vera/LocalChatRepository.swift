@@ -14,6 +14,8 @@ protocol ChatRepository: Sendable {
     func saveConversation(_ conversation: Conversation) throws
     func saveMessage(_ message: Message, conversationID: String, ordinal: Int) throws
     func deleteConversation(_ id: String) throws
+    func conversation(originType: String, originID: String) throws -> Conversation?
+    func createOriginConversation(_ conversation: Conversation, seed: Message) throws
 }
 
 protocol NativeMemoryRepository: Sendable {
@@ -138,6 +140,21 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 table.add(column: "memory_excluded", .boolean).notNull().defaults(to: false)
             }
         }
+        migrator.registerMigration("pulseContinuationV5") { db in
+            try db.alter(table: "conversations") { table in
+                table.add(column: "origin_type", .text)
+                table.add(column: "origin_id", .text)
+            }
+            try db.execute(sql: """
+                CREATE UNIQUE INDEX conversations_origin
+                ON conversations(origin_type, origin_id)
+                WHERE origin_type IS NOT NULL AND origin_id IS NOT NULL
+                """)
+            try db.alter(table: "messages") { table in
+                table.add(column: "content_type", .text).notNull().defaults(to: "text")
+                table.add(column: "metadata_json", .text)
+            }
+        }
         try migrator.migrate(database)
     }
 
@@ -174,27 +191,67 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
     func listConversations() throws -> [Conversation] {
         try database.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT id, title, created_at, updated_at, pinned, memory_excluded
+                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id
                 FROM conversations
                 ORDER BY pinned DESC, updated_at DESC
-                """).map { row in
-                    Conversation(
-                        id: row["id"],
-                        title: row["title"],
-                        messages: [],
-                        createdAt: Date(timeIntervalSince1970: row["created_at"]),
-                        updatedAt: Date(timeIntervalSince1970: row["updated_at"]),
-                        isPersisted: true,
-                        pinned: row["pinned"],
-                        memoryExcluded: row["memory_excluded"])
-                }
+                """).map(Self.decodeConversation)
+        }
+    }
+
+    func conversation(originType: String, originID: String) throws -> Conversation? {
+        try database.read { db in
+            try Row.fetchOne(db, sql: """
+                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id
+                FROM conversations
+                WHERE origin_type = ? AND origin_id = ?
+                """, arguments: [originType, originID]).map(Self.decodeConversation)
+        }
+    }
+
+    func createOriginConversation(_ conversation: Conversation, seed: Message) throws {
+        let metadata = Self.metadataJSON(for: seed)
+        try database.write { db in
+            try db.execute(sql: """
+                INSERT INTO conversations
+                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [
+                    conversation.id,
+                    conversation.title,
+                    conversation.createdAt.timeIntervalSince1970,
+                    conversation.updatedAt.timeIntervalSince1970,
+                    conversation.pinned,
+                    conversation.memoryExcluded,
+                    conversation.originType,
+                    conversation.originID,
+                ])
+            try db.execute(sql: """
+                INSERT INTO messages
+                    (id, conversation_id, ordinal, role, content, created_at, state,
+                     failure, model_id, tool_activity_json, content_type, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [
+                    seed.id.uuidString,
+                    conversation.id,
+                    0,
+                    seed.role.rawValue,
+                    seed.text,
+                    seed.createdAt.timeIntervalSince1970,
+                    seed.state.rawValue,
+                    seed.failure,
+                    seed.modelID,
+                    nil,
+                    seed.contentType.rawValue,
+                    metadata,
+                ])
         }
     }
 
     func messages(conversationID: String) throws -> [Message] {
         try database.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT id, role, content, created_at, state, failure, model_id, tool_activity_json
+                SELECT id, role, content, created_at, state, failure, model_id,
+                       tool_activity_json, content_type, metadata_json
                 FROM messages
                 WHERE conversation_id = ?
                 ORDER BY ordinal ASC
@@ -207,10 +264,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         guard limit > 0 else { return [] }
         return try database.read { db in
             let rows = try Row.fetchAll(db, sql: """
-                SELECT id, role, content, created_at, state, failure, model_id, tool_activity_json
+                SELECT id, role, content, created_at, state, failure, model_id,
+                       tool_activity_json, content_type, metadata_json
                 FROM (
                     SELECT id, role, content, created_at, state, failure, model_id,
-                           tool_activity_json, ordinal
+                           tool_activity_json, content_type, metadata_json, ordinal
                     FROM messages
                     WHERE conversation_id = ?
                     ORDER BY ordinal DESC
@@ -225,8 +283,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
     func saveConversation(_ conversation: Conversation) throws {
         try database.write { db in
             try db.execute(sql: """
-                INSERT INTO conversations (id, title, created_at, updated_at, pinned, memory_excluded)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO conversations
+                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     updated_at = excluded.updated_at,
@@ -239,6 +298,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     conversation.updatedAt.timeIntervalSince1970,
                     conversation.pinned,
                     conversation.memoryExcluded,
+                    conversation.originType,
+                    conversation.originID,
                 ])
         }
     }
@@ -250,17 +311,21 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         } else {
             activityJSON = String(decoding: try JSONEncoder().encode(message.toolActivities), as: UTF8.self)
         }
+        let metadata = Self.metadataJSON(for: message)
         try database.write { db in
             try db.execute(sql: """
                 INSERT INTO messages
-                    (id, conversation_id, ordinal, role, content, created_at, state, failure, model_id, tool_activity_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, conversation_id, ordinal, role, content, created_at, state,
+                     failure, model_id, tool_activity_json, content_type, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     content = excluded.content,
                     state = excluded.state,
                     failure = excluded.failure,
                     model_id = excluded.model_id,
-                    tool_activity_json = excluded.tool_activity_json
+                    tool_activity_json = excluded.tool_activity_json,
+                    content_type = excluded.content_type,
+                    metadata_json = excluded.metadata_json
                 """, arguments: [
                     message.id.uuidString,
                     conversationID,
@@ -272,6 +337,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     message.failure,
                     message.modelID,
                     activityJSON,
+                    message.contentType.rawValue,
+                    metadata,
                 ])
         }
     }
@@ -460,12 +527,40 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
             let activities = activityData.flatMap {
                 try? JSONDecoder().decode([NativeToolActivity].self, from: $0)
             } ?? []
-            return Message(
+            let contentType = MessageContentType(rawValue: (row["content_type"] as String?) ?? "text") ?? .text
+            var message = Message(
                 id: id, role: role, text: row["content"],
                 createdAt: Date(timeIntervalSince1970: row["created_at"]),
                 state: state, failure: row["failure"], modelID: row["model_id"],
-                toolActivities: activities)
+                toolActivities: activities, contentType: contentType)
+            if contentType == .pulseCard,
+               let raw: String = row["metadata_json"],
+               let snapshot = PulseCardSnapshot.decode(raw) {
+                let card = snapshot.card()
+                message.pulse = card
+                message.sources = card.sourceList
+            }
+            return message
         }
+    }
+
+    private static func metadataJSON(for message: Message) -> String? {
+        guard message.contentType == .pulseCard, let card = message.pulse else { return nil }
+        return PulseCardSnapshot(card: card, capturedAt: message.createdAt).encodedJSON()
+    }
+
+    private static func decodeConversation(_ row: Row) -> Conversation {
+        Conversation(
+            id: row["id"],
+            title: row["title"],
+            messages: [],
+            createdAt: Date(timeIntervalSince1970: row["created_at"]),
+            updatedAt: Date(timeIntervalSince1970: row["updated_at"]),
+            isPersisted: true,
+            pinned: row["pinned"],
+            memoryExcluded: row["memory_excluded"],
+            originType: row["origin_type"],
+            originID: row["origin_id"])
     }
 
     private static func decode<T: Decodable>(_ raw: String?, as type: T.Type) -> T? {

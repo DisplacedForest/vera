@@ -18,9 +18,12 @@ end in `/v1`; its key is optional. `VERA_MODEL_BASE`, `VERA_MODEL_API_KEY`, and 
 override file values. Existing Open WebUI keys remain readable for transitional surfaces and
 0.3.1 rollback. First launch with no native model config opens onboarding.
 
-Native chat is text only in this slice. Attachments, voice, tool calling, memory retrieval,
-document knowledge, Open WebUI import, and Pulse continuation are deferred. Pulse itself keeps
-working whenever the optional vera-api URL is configured.
+Native chat is text only in this slice. Attachments, voice, document knowledge, and
+Open WebUI import are deferred. Pulse itself keeps working whenever the optional vera-api
+URL is configured, and Continue in chat lands the card in the local database as a native
+conversation: text, citations, and provenance persist locally and reopen offline, while
+remote card images stay uncached and use the normal failure placeholders if their source
+goes away.
 
 ## Package & install
 ```bash

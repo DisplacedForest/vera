@@ -97,7 +97,9 @@ Apple Reminders is the first native tool surface. A standard tool-calling endpoi
 
 Each call renders as a pending, succeeded, or failed activity chip. Expand it to inspect the JSON request and result. Activity is stored with local conversation history without endpoint credentials or authorization headers. Unknown tools, disabled or unavailable tools, invalid JSON arguments, and calls past the loop limits do not execute. Their bounded error result is returned to the model. A turn stops after four tool rounds or eight total calls. A tool failure, malformed stream, endpoint outage, or exhausted limit keeps received text and activity and marks the assistant turn interrupted when no final answer arrives.
 
-Attachments, voice, document knowledge, MCP, custom HTTP tools, Vera API tools, and Pulse continuation remain unavailable in the native chat path.
+Attachments, voice, document knowledge, MCP, custom HTTP tools, and Vera API tools remain unavailable in the native chat path.
+
+Continuing a Pulse card into chat is native and local. The first continuation of a card re-reads `GET /pulse/cards` and then stores the card's text, sources, and provenance in the local database, so vera-api must be reachable only for that first step. After that the conversation opens offline, survives the card's expiry, and is reused by later continues of the same card. Card images are not cached locally.
 
 ### Native personal memory
 

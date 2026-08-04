@@ -70,7 +70,7 @@ Native personal memory is an optional, local-only Mac feature. It starts off, st
 
 ### Pulse: scheduled research briefings
 
-Vera researches overnight: topics drawn from her own accumulating interests and what the household actually asks about: and produces briefing cards with cited sources, inline statistics, and charts. Pulse remains an optional vera-api surface. Continuing a Pulse card into native chat is not part of the first native slice.
+Vera researches overnight: topics drawn from her own accumulating interests and what the household actually asks about: and produces briefing cards with cited sources, inline statistics, and charts. Pulse remains an optional vera-api surface. Continue in chat turns a card into a durable native conversation: the card's text, citations, and provenance are copied into the local database as the first message, so the conversation opens and survives even after the card expires or vera-api goes away. Creating that first continuation is the only step that needs vera-api reachable; each card maps to one local conversation, and continuing again reopens it. Remote card images are not cached locally and fall back to the existing placeholders when their source disappears.
 
 <div align="center"><img src="docs/assets/pulse-detail.png" alt="A Pulse briefing card: stats, sourced prose, charts" width="850"></div>
 

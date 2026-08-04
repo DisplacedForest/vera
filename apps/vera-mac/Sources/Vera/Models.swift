@@ -1,5 +1,10 @@
 import Foundation
 
+enum MessageContentType: String {
+    case text
+    case pulseCard = "pulse_card"
+}
+
 /// A chat message in the UI.
 struct Message: Identifiable, Hashable {
     enum Role: String { case user, assistant }
@@ -18,6 +23,7 @@ struct Message: Identifiable, Hashable {
     var pulse: PulseCard? = nil    // when set, render this turn as the rich Pulse briefing (continued in chat)
     var sources: [PulseSource] = []  // cited sources for this reply — drives the citation chips
     var toolActivities: [NativeToolActivity] = []
+    var contentType: MessageContentType = .text
 
     /// Build an assistant message from raw reply text, splitting out artifacts then any `vera:ask` block.
     static func assistant(from raw: String, sources: [PulseSource] = []) -> Message {
@@ -38,4 +44,6 @@ struct Conversation: Identifiable, Hashable {
     var serverUpdatedAt: Int = 0    // OWUI's own updated_at stamp — the reconcile freshness baseline
     var pinned: Bool = false
     var memoryExcluded: Bool = false
+    var originType: String? = nil
+    var originID: String? = nil
 }

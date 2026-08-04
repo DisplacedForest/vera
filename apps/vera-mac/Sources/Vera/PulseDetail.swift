@@ -13,6 +13,8 @@ struct PulseDetailView: View {
     var canContinue = true
     var canBookmark = false
 
+    private var isOpening: Bool { store.pulseContinuation[card.id] == .opening }
+
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Theme.bg.ignoresSafeArea()
@@ -33,8 +35,13 @@ struct PulseDetailView: View {
                         HStack(spacing: 14) {
                             Button(action: onContinue) {
                                 HStack(spacing: 8) {
-                                    Image(systemName: "bubble.left")
-                                    Text("Continue in chat")
+                                    if isOpening {
+                                        ProgressView().controlSize(.small)
+                                        Text("Opening…")
+                                    } else {
+                                        Image(systemName: "bubble.left")
+                                        Text("Continue in chat")
+                                    }
                                 }
                                 .font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
                                 .padding(.horizontal, 14).padding(.vertical, 9)
@@ -42,12 +49,19 @@ struct PulseDetailView: View {
                                 .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
                             }
                             .buttonStyle(.plain)
-                            .disabled(!canContinue)
-                            .help(canContinue ? "Continue in chat" : "Pulse continuation is not available in native chat yet")
+                            .disabled(!canContinue || isOpening)
+                            .help("Continue in chat")
                             detailThumb("hand.thumbsup", on: store.pulseRatings[card.id] == "up") { store.ratePulse(card, "up") }
                             detailThumb("hand.thumbsdown", on: store.pulseRatings[card.id] == "down") { store.ratePulse(card, "down") }
                         }
                         .padding(.top, 4)
+                        if case .failed(let reason) = store.pulseContinuation[card.id] {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.circle")
+                                Text(reason)
+                            }
+                            .font(.system(size: 12)).foregroundStyle(Color.orange)
+                        }
                     }
                     // Without a full-bleed hero the title is the topmost element — give it
                     // title-bar clearance (the overlay sits under the hidden title bar).

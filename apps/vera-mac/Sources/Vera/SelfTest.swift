@@ -1169,6 +1169,31 @@ enum SelfTest {
                   cappedHistory[1].images.count == 1 else {
                 print("SELFTEST ERROR: history builder image cap trimming"); exit(1)
             }
+            let cappedImageOnly = NativeChatHistoryBuilder.build(
+                messages: [
+                    Message(role: .user, text: "", attachments: [record],
+                            routeNote: MessageRouteNote(route: .direct)),
+                    Message(role: .user, text: "Newest", attachments: [record],
+                            routeNote: MessageRouteNote(route: .direct)),
+                ],
+                systemPrompt: "", imageLoader: loader, capabilities: singleImageVision)
+            guard cappedImageOnly.count == 1,
+                  cappedImageOnly[0].content == "Newest",
+                  cappedImageOnly[0].images.count == 1 else {
+                print("SELFTEST ERROR: capped image-only message not dropped"); exit(1)
+            }
+            let missingRecord = try attachmentStore.save(data: pngData, preferredName: "gone.png")
+            attachmentStore.remove(missingRecord)
+            let unloadableHistory = NativeChatHistoryBuilder.build(
+                messages: [Message(role: .user, text: "", attachments: [missingRecord],
+                                   routeNote: MessageRouteNote(route: .direct))],
+                systemPrompt: "", imageLoader: loader, capabilities: .vision)
+            guard unloadableHistory.count == 1,
+                  unloadableHistory[0].images.isEmpty,
+                  unloadableHistory[0].content.contains("gone.png"),
+                  unloadableHistory[0].content.contains("could not be loaded") else {
+                print("SELFTEST ERROR: unloadable image disclosure marker"); exit(1)
+            }
 
             let nonStreamClient = NativeChatClient(config: NativeChatConfig(
                 baseURL: URL(string: "https://models.example/v1")!, apiKey: nil,
@@ -1276,10 +1301,16 @@ enum SelfTest {
                 repository: try LocalChatRepository(inMemory: true),
                 hasLegacyOWUI: false,
                 visionBridgeConfig: VisionBridgeConfig(
-                    baseURL: config.baseURL, apiKey: nil, model: config.model),
+                    baseURL: URL(string: config.baseURL.absoluteString + "/")!,
+                    apiKey: nil, model: config.model),
                 attachmentStore: attachmentStore)
             guard selfBridgeStore.effectiveBridgeConfig == nil,
-                  selfBridgeStore.attachmentRoute(imageCount: 1) == .needsDecision else {
+                  selfBridgeStore.attachmentRoute(imageCount: 1) == .needsDecision,
+                  VisionBridgeConfig(baseURL: config.baseURL, apiKey: nil, model: config.model)
+                      .isSameEndpoint(as: config),
+                  !VisionBridgeConfig(
+                      baseURL: URL(string: "https://vision.example/v1")!, apiKey: nil,
+                      model: config.model).isSameEndpoint(as: config) else {
                 print("SELFTEST ERROR: self-referential bridge guard"); exit(1)
             }
 

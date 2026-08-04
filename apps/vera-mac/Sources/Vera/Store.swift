@@ -1097,8 +1097,7 @@ final class ChatStore: ObservableObject {
 
     var effectiveBridgeConfig: VisionBridgeConfig? {
         guard let bridge = visionBridgeConfig else { return nil }
-        if let nativeConfig, bridge.baseURL == nativeConfig.baseURL,
-           bridge.model == nativeConfig.model {
+        if let nativeConfig, bridge.isSameEndpoint(as: nativeConfig) {
             return nil
         }
         return bridge

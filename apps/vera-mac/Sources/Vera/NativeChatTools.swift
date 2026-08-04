@@ -379,18 +379,27 @@ enum NativeChatHistoryBuilder {
         for message in messages where message.state == .complete {
             if message.role == .user {
                 let route = message.routeNote?.route
-                let images: [String]
-                if allowsImages, route == nil || route == .direct {
-                    images = imageLoader.map { load in
-                        message.attachments.filter(\.isImage).compactMap(load)
-                    } ?? []
-                } else {
-                    images = []
+                var images: [String] = []
+                var unloadable: [String] = []
+                if allowsImages, route == nil || route == .direct, let load = imageLoader {
+                    for attachment in message.attachments where attachment.isImage {
+                        if let dataURL = load(attachment) {
+                            images.append(dataURL)
+                        } else {
+                            unloadable.append(attachment.name)
+                        }
+                    }
                 }
                 var content = message.text
                 if route == .bridged, let disclosure = message.routeNote?.disclosure,
                    !disclosure.isEmpty {
                     content = content.isEmpty ? disclosure : content + "\n\n" + disclosure
+                }
+                if !unloadable.isEmpty {
+                    let marker = unloadable.map {
+                        "[Attached image \"\($0)\" could not be loaded for this request]"
+                    }.joined(separator: "\n")
+                    content = content.isEmpty ? marker : content + "\n\n" + marker
                 }
                 if !content.isEmpty || !images.isEmpty {
                     history.append(NativeChatMessage(role: "user", content: content, images: images))
@@ -437,7 +446,9 @@ enum NativeChatHistoryBuilder {
                 toolCallID: result[index].toolCallID, toolCalls: result[index].toolCalls,
                 images: kept)
         }
-        return result
+        return result.filter { message in
+            message.role != "user" || !message.content.isEmpty || !message.images.isEmpty
+        }
     }
 }
 

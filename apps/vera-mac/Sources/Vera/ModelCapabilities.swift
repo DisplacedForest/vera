@@ -94,6 +94,12 @@ struct VisionBridgeConfig: Equatable, Sendable {
     let apiKey: String?
     let model: String
 
+    func isSameEndpoint(as config: NativeChatConfig) -> Bool {
+        model == config.model
+            && baseURL.appendingPathComponent("chat/completions").absoluteString.lowercased()
+                == config.completionsURL.absoluteString.lowercased()
+    }
+
     static func resolve(
         settings: VisionBridgeSettings?, apiKey: String?, environment: [String: String]
     ) -> VisionBridgeConfig? {

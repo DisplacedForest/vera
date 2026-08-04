@@ -8,7 +8,7 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, dreaming, feedback, groom_session, health, heartbeat, home, home_events, home_model, home_reconcile, images, integrations, journal, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, memory, overseerr, pulse, pulse_veins, reminders, research, scheduler, updates, user_profile, vein_builder, vein_engine, vera_memory, vera_memory_groom, weather, websearch
+from routers import actions, agentic, authoring, config_report, conversation_ingest, dreaming, feedback, groom_session, health, heartbeat, home, home_events, home_model, home_reconcile, identity_migrate, images, integrations, journal, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_veins, reminders, research, scheduler, updates, user_profile, vein_builder, vein_engine, vera_memory, vera_memory_groom, weather, websearch
 
 # vera-api: ONE container, many capabilities.
 # To add a capability: create routers/<name>.py exposing `router` (an APIRouter
@@ -39,6 +39,7 @@ VERSION = _version()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config_report.report(VERSION, data_root=DATA_ROOT)
+    identity_migrate.run()
     vein_engine.load_block_modules()
     # The home-events supervisor (starts capture only while the home_modeling feature
     # is enabled) + the built-in scheduler run for the app's lifetime.
@@ -60,7 +61,6 @@ CAPABILITIES = {
     "pulse": pulse.router,
     "pulse_veins": pulse_veins.router,
     "vein_builder": vein_builder.router,
-    "memory": memory.router,
     "weather": weather.router,
     "journal": journal.router,
     "kitchen": kitchen.router,
@@ -68,6 +68,7 @@ CAPABILITIES = {
     "knowledge_groom": knowledge_groom.router,
     "knowledge_restore": knowledge_restore.router,
     "user_profile": user_profile.router,
+    "conversation_ingest": conversation_ingest.router,
     "vera_memory": vera_memory.router,
     "vera_memory_groom": vera_memory_groom.router,
     "dreaming": dreaming.router,

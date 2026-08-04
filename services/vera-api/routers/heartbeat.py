@@ -39,8 +39,9 @@ from . import user_profile_store as up
 from . import vera_interests_store as vi
 from .home import compute_deviations
 from .persona import orientation, owner, personalize, voiced
-from .pulse import (OWUI_BASE, StatusCard, _active_users, _get_memories, _headers,
+from .pulse import (StatusCard, _active_users, _get_memories,
                     _recent_for_user, _vera, _vision, research_topic, status_card)
+from .pulse_llm import OWUI_BASE, _headers
 from .websearch import SearchRequest, search as web_search
 
 router = APIRouter()
@@ -370,7 +371,7 @@ async def _for_you(now_str, recent):
 
 
 class TickRequest(BaseModel):
-    pulse_folder_id: str | None = None
+    pass
 
 
 def _recently_proposed(recent, verb, target):

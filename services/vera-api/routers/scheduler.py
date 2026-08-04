@@ -47,11 +47,6 @@ async def _job_pulse():
     return await pulse.run_outcome(await pulse.run(pulse.PulseRequest()))
 
 
-async def _job_memory_groom():
-    from . import memory
-    return await memory.groom()
-
-
 async def _job_home_model():
     from . import home_model
     return await home_model.refresh()
@@ -86,7 +81,6 @@ async def _job_weight_fit():
 # id -> (label, default cron, handler). The shipped schedule; everything overridable.
 REGISTRY: dict[str, tuple[str, str, object]] = {
     "pulse":          ("Pulse briefing run",        "0 5 * * *",    _job_pulse),
-    "memory_groom":   ("Episodic memory groom",     "0 4 * * *",    _job_memory_groom),
     "home_model":     ("Home model refresh",        "30 3 * * *",   _job_home_model),
     "home_reconcile": ("Home map reconcile",        "0 3 * * *",    _job_home_reconcile),
     "home_digest":    ("Home rhythm digest",        "0 2 * * *",    _job_home_digest),

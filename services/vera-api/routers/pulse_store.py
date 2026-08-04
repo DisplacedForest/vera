@@ -10,9 +10,18 @@ import sqlite3
 import time
 
 DB_PATH = os.environ.get("PULSE_DB_PATH", "/data/pulse.db")
-# Household owner's OWUI user id — pre-existing cards and any user-unscoped call default to it.
-# Unset means unscoped cards stay unscoped; set it to your OWUI account's UUID for per-user feeds.
-DEFAULT_USER = os.environ.get("VERA_DEFAULT_USER", "")
+
+
+def _default_user() -> str:
+    try:
+        from .identity import owner_id
+        return owner_id()
+    except Exception:
+        return (os.environ.get("VERA_OWNER_ID", "").strip()
+                or os.environ.get("VERA_DEFAULT_USER", "").strip() or "owner")
+
+
+DEFAULT_USER = _default_user()
 
 ACTIVE = ("new", "seen", "bookmarked", "promoted")  # shown in the feed (not expired)
 

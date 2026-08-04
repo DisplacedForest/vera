@@ -20,7 +20,7 @@ import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from .pulse import DEFAULT_FOLDER, _inject, _vera
+from .pulse import _inject, _vera
 from .persona import owner, voiced
 
 router = APIRouter()
@@ -366,7 +366,7 @@ async def kitchen_state():
 
 
 class KitchenCheck(BaseModel):
-    pulse_folder_id: str | None = None
+    pass
 
 
 @router.post("/kitchen/check", tags=["kitchen"])
@@ -400,8 +400,7 @@ async def kitchen_check(req: KitchenCheck):
         else f"{len(state['below_min'])} staples low" if state["below_min"]
         else "today's plan"
     )
-    folder = req.pulse_folder_id or DEFAULT_FOLDER
-    await _inject(title, body, folder)
+    await _inject(title, body)
     out["injected"] = True
     out["title"] = title
     return out

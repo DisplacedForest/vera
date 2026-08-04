@@ -22,7 +22,8 @@ import aiohttp
 
 from . import extract_store as es
 from . import profile_graph_store as pg
-from .pulse import OWUI_BASE, _headers, _vera
+from .pulse import _vera
+from .pulse_llm import OWUI_BASE, _headers
 
 log = logging.getLogger(__name__)
 

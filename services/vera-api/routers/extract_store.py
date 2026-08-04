@@ -28,6 +28,15 @@ def init():
                    updated_at INTEGER
                )"""
         )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS ingested (
+                   source TEXT,
+                   conv_id TEXT,
+                   ts INTEGER,
+                   ingested_at INTEGER,
+                   PRIMARY KEY (source, conv_id)
+               )"""
+        )
 
 
 def get_cursor(source):
@@ -36,6 +45,22 @@ def get_cursor(source):
     with _conn() as c:
         r = c.execute("SELECT last_ts, last_id FROM cursor WHERE source=?", (source,)).fetchone()
     return {"last_ts": r["last_ts"] if r else 0, "last_id": r["last_id"] if r else None}
+
+
+def seen(source, conv_id) -> bool:
+    init()
+    with _conn() as c:
+        return c.execute("SELECT 1 FROM ingested WHERE source=? AND conv_id=?",
+                         (source, conv_id)).fetchone() is not None
+
+
+def mark_seen(source, conv_id, ts):
+    init()
+    with _conn() as c:
+        c.execute(
+            "INSERT OR IGNORE INTO ingested(source,conv_id,ts,ingested_at) VALUES(?,?,?,?)",
+            (source, conv_id, int(ts or 0), int(time.time())),
+        )
 
 
 def set_cursor(source, last_ts, last_id=None):

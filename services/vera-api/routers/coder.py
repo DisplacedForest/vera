@@ -1,13 +1,8 @@
 import json
 import os
 
-import aiohttp
-
 from .tool_protocol import dispatch, parse_tool_calls, register_tool, render_response, render_tools, tool_schemas
 from .websearch import SearchRequest, search as web_search
-
-CODER_BASE = os.environ.get("DREAM_BASE", "").rstrip("/")  # coder LLM, any OpenAI-compatible /v1
-CODER_MODEL = os.environ.get("DREAM_MODEL", "")
 
 
 def _registry_values() -> dict:
@@ -23,8 +18,9 @@ def _registry_values() -> dict:
 
 def _endpoint() -> tuple[str, str]:
     """The coder endpoint (base, model) — registry value, else the DREAM_* env directly."""
-    v = _registry_values()
-    return (v.get("url") or CODER_BASE).rstrip("/"), v.get("model") or CODER_MODEL
+    from . import model_client
+    c = model_client.config("coder")
+    return c["base"], c["model"]
 
 
 def tool_protocol() -> str:
@@ -67,20 +63,9 @@ async def _llm(messages, temperature, tools=None, max_tokens=None):
     the server supports the openai protocol, any tool_calls). `max_tokens` is sent only when
     given — some servers default to a small generation cap, so callers expecting a long
     structured reply must set their own budget."""
-    base, model = _endpoint()
-    body = {"model": model, "stream": False, "temperature": temperature, "messages": messages}
-    if tools:
-        body["tools"] = tools
-    if max_tokens:
-        body["max_tokens"] = max_tokens
-    async with aiohttp.ClientSession() as s:
-        async with s.post(
-            f"{base}/chat/completions",
-            json=body,
-            timeout=aiohttp.ClientTimeout(total=600),
-        ) as r:
-            d = await r.json()
-    return d["choices"][0]["message"]
+    from . import model_client
+    return await model_client.complete(messages, workload="coder", temperature=temperature,
+                                       tools=tools, max_tokens=max_tokens)
 
 
 async def _run_search(query):

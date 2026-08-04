@@ -1,4 +1,26 @@
 REGISTRY: dict[str, dict] = {
+    "model": {
+        "display_name": "Primary model",
+        "fields": [
+            {"id": "url", "env": "VERA_BASE", "label": "OpenAI-compatible base URL", "secret": False,
+             "hint": "any /v1 endpoint (llama.cpp, vLLM, llama-swap, mlx_lm.server, or a hosted API)"},
+            {"id": "model", "env": "VERA_MODEL", "label": "Model id", "secret": False},
+        ],
+        "unlocks": ["Pulse briefings, heartbeat, veins, research, and every other capability "
+                    "that thinks in language"],
+    },
+    "owner": {
+        "display_name": "Owner identity",
+        "fields": [
+            {"id": "user_id", "env": "VERA_OWNER_ID", "label": "Owner id", "secret": False,
+             "optional": True,
+             "hint": "the stable id cards, read marks, and profiles are keyed by; defaults to 'owner'"},
+            {"id": "name", "env": "VERA_OWNER_NAME", "label": "Display name", "secret": False,
+             "optional": True},
+        ],
+        "unlocks": ["per-person briefings, read marks, and profile learning keyed to a local "
+                    "identity instead of a chat backend account"],
+    },
     "coder": {
         "display_name": "Coder / Dream model",
         "fields": [

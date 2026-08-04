@@ -71,7 +71,8 @@ final class ChatStore: ObservableObject {
          nativeMemoryService: (any NativeMemoryServing)? = nil,
          nativeToolRegistry: NativeToolRegistry? = nil,
          pulseFeed: (any PulseFeedProviding)? = nil,
-         attachmentStore: NativeAttachmentStore = NativeAttachmentStore()) {
+         attachmentStore: NativeAttachmentStore = NativeAttachmentStore(),
+         sweepOrphanedAttachments: Bool = false) {
         self.config = config
         self.client = client
         self.socket = socket
@@ -91,6 +92,11 @@ final class ChatStore: ObservableObject {
         chatConfigurationError = repositoryError
         selectedID = conversations.first?.id
         loadArtifacts()
+        if sweepOrphanedAttachments, let repository,
+           let referenced = try? repository.referencedAttachmentFileNames() {
+            let store = attachmentStore
+            Task.detached(priority: .utility) { store.sweepOrphans(keeping: referenced) }
+        }
     }
 
     // MARK: - Canvas / artifacts
@@ -857,6 +863,10 @@ final class ChatStore: ObservableObject {
 
     func deleteConversation(_ id: String) {
         let idx = conversations.firstIndex { $0.id == id }
+        let stored = (try? repository?.messages(conversationID: id)) ?? []
+        for message in stored {
+            for attachment in message.attachments { attachmentStore.remove(attachment) }
+        }
         conversations.removeAll { $0.id == id }
         if selectedID == id {
             let next = idx.flatMap { conversations.indices.contains($0) ? conversations[$0] : conversations.last }
@@ -1107,6 +1117,8 @@ final class ChatStore: ObservableObject {
             try repository.saveConversation(conversations[idx])
             try repository.saveMessage(user, conversationID: id, ordinal: conversations[idx].messages.count - 1)
         } catch {
+            conversations[idx].messages.removeLast()
+            for record in records { attachmentStore.remove(record) }
             chatConfigurationError = "The message couldn't save: \(error.localizedDescription)"
             return
         }

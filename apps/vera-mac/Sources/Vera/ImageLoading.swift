@@ -46,7 +46,7 @@ struct AuthedAsyncImage: View {
                 if failed { failureMark }
             }
         }
-        .task(id: url) { await load() }
+        .task(id: "\(url ?? "")|\(apiBase ?? "")") { await load() }
     }
 
     private var failureMark: some View {
@@ -64,14 +64,19 @@ struct AuthedAsyncImage: View {
 
     private func load() async {
         failed = false
-        guard let url else { return }
-        guard let u = Self.resolve(url, apiBase: apiBase) else { failed = true; return }
+        guard let url else { image = nil; return }
+        guard let u = Self.resolve(url, apiBase: apiBase) else {
+            image = nil
+            failed = true
+            return
+        }
         if let cached = RemoteImageCache.shared.get(url) { image = cached; return }
         if u.isFileURL {
             if let img = NSImage(contentsOf: u) {
                 RemoteImageCache.shared.set(url, img)
                 image = img
             } else {
+                image = nil
                 failed = true
             }
             return
@@ -79,6 +84,7 @@ struct AuthedAsyncImage: View {
         var req = URLRequest(url: u)
         if let token, !token.isEmpty { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         guard let (data, _) = try? await URLSession.shared.data(for: req), let img = NSImage(data: data) else {
+            image = nil
             failed = true
             return
         }

@@ -89,6 +89,9 @@ final class SelfTestFailingCreateRepository: ChatRepository, @unchecked Sendable
         throw NSError(domain: "SelfTest", code: 1,
                       userInfo: [NSLocalizedDescriptionKey: "scripted create failure"])
     }
+    func referencedAttachmentFileNames() throws -> Set<String> {
+        try inner.referencedAttachmentFileNames()
+    }
 }
 
 final class ScriptedNativeToolTransport: NativeChatTransport, @unchecked Sendable {
@@ -954,6 +957,27 @@ enum SelfTest {
                   restored.mime == record.mime,
                   restored.name == record.name else {
                 print("SELFTEST ERROR: native media attachment persistence in chat history"); exit(1)
+            }
+
+            let referenced = try repository.referencedAttachmentFileNames()
+            guard referenced == [fileName] else {
+                print("SELFTEST ERROR: native media referenced file name query"); exit(1)
+            }
+            let orphanURL = directory.appendingPathComponent("orphan.png")
+            try pngData.write(to: orphanURL)
+            store.sweepOrphans(keeping: referenced)
+            guard !FileManager.default.fileExists(atPath: orphanURL.path),
+                  store.image(for: fileName) != nil else {
+                print("SELFTEST ERROR: native media orphan sweep"); exit(1)
+            }
+
+            let discard = try store.save(data: pngData, preferredName: "discard.png")
+            guard let discardFile = discard.fileName, let discardURL = store.url(for: discardFile) else {
+                print("SELFTEST ERROR: native media discard record"); exit(1)
+            }
+            store.remove(discard)
+            guard !FileManager.default.fileExists(atPath: discardURL.path) else {
+                print("SELFTEST ERROR: native media removal left the file on disk"); exit(1)
             }
 
             let loader: (MessageAttachment) -> String? = { store.requestDataURL(for: $0) }

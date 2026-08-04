@@ -16,6 +16,7 @@ protocol ChatRepository: Sendable {
     func deleteConversation(_ id: String) throws
     func conversation(originType: String, originID: String) throws -> Conversation?
     func createOriginConversation(_ conversation: Conversation, seed: Message) throws
+    func referencedAttachmentFileNames() throws -> Set<String>
 }
 
 protocol NativeMemoryRepository: Sendable {
@@ -354,6 +355,22 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
     func deleteConversation(_ id: String) throws {
         try database.write { db in
             try db.execute(sql: "DELETE FROM conversations WHERE id = ?", arguments: [id])
+        }
+    }
+
+    func referencedAttachmentFileNames() throws -> Set<String> {
+        try database.read { db in
+            let rows = try Row.fetchAll(
+                db, sql: "SELECT attachments_json FROM messages WHERE attachments_json IS NOT NULL")
+            var names: Set<String> = []
+            for row in rows {
+                let attachments = Self.decode(
+                    row["attachments_json"] as String?, as: [MessageAttachment].self) ?? []
+                for attachment in attachments {
+                    if let fileName = attachment.fileName { names.insert(fileName) }
+                }
+            }
+            return names
         }
     }
 

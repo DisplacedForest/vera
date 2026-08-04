@@ -602,7 +602,9 @@ struct ComposerField: View {
     private func installPasteMonitor() {
         guard pasteMonitor == nil else { return }
         pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+            guard focused,
+                  let window = event.window, window == NSApp.keyWindow,
+                  event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
                   event.charactersIgnoringModifiers == "v" else { return event }
             let pasteboard = NSPasteboard.general
             if pasteboard.string(forType: .string) != nil { return event }

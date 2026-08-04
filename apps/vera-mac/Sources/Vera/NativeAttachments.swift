@@ -88,6 +88,14 @@ final class NativeAttachmentStore: Sendable {
         try? FileManager.default.removeItem(at: url)
     }
 
+    func sweepOrphans(keeping referenced: Set<String>) {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil) else { return }
+        for entry in entries where !referenced.contains(entry.lastPathComponent) {
+            try? FileManager.default.removeItem(at: entry)
+        }
+    }
+
     static func sniff(_ data: Data) -> (ext: String, mime: String)? {
         guard data.count >= 12 else { return nil }
         let head = [UInt8](data.prefix(12))

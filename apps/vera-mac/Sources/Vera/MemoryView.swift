@@ -76,6 +76,10 @@ struct MemoryView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(store.memoryServiceState.label).font(.system(size: 13, weight: .semibold))
                 Text(statusDetail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                if let outcome = store.memoryGroomOutcome {
+                    Text(outcome.label).font(.system(size: 11))
+                        .foregroundStyle(outcome.error == nil ? Theme.textSecondary : .red)
+                }
             }
             Spacer()
             SettingsLink { Text("Memory settings") }
@@ -111,7 +115,7 @@ struct MemoryView: View {
         case .ready: "Only approved, relevant, unexpired items can be added to native chat requests."
         case .indexing: "Vera is preparing approved items for semantic recall."
         case .pendingReview: "Nothing in the queue changes approved memory until you accept it."
-        case .maintenanceNeeded: "Review capacity, expiry, or consolidation suggestions. Nothing is removed automatically."
+        case .maintenanceNeeded: "Review capacity, expiry, or consolidation suggestions. Only expired episodic items are removed automatically."
         case .retrievalUnavailable(let detail), .failed(let detail): "\(detail) Ordinary chat continues without memory context."
         }
     }

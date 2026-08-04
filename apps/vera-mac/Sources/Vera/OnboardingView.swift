@@ -137,7 +137,7 @@ struct NativeMemoryOnboardingEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle("Turn on local memory", isOn: config.memoryBoolBinding(\.enabled))
-            Text("Memory is optional and starts off after upgrade. Approved facts stay on this Mac. Suggestions, corrections, merges, expiry cleanup, and deletion all require your review.")
+            Text("Memory is optional and starts off after upgrade. Approved facts stay on this Mac. Suggestions, corrections, merges, and deletion all require your review.")
                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             if config.nativeSettings.memory.enabled {
                 TextField("Embeddings model identifier", text: config.memoryStringBinding(\.embeddingsModel))
@@ -145,7 +145,7 @@ struct NativeMemoryOnboardingEditor: View {
                 TextField("Extraction model identifier", text: config.memoryStringBinding(\.extractionModel))
                     .textFieldStyle(.roundedBorder)
                 Toggle("Generate reviewable suggestions from completed chats", isOn: config.memoryBoolBinding(\.generateFromChats))
-                Text("Episodic facts need an absolute expiry date and stop being recalled when they expire. Vera never deletes them automatically.")
+                Text("Episodic facts need an absolute expiry date and stop being recalled when they expire. A daily groom removes them after that date passes, with every removal recorded in the audit trail.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
         }

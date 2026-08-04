@@ -314,6 +314,7 @@ enum SelfTest {
         await runNativeTools()
         await runNativeWebTools()
         await runNativeMemory()
+        await runNativeMemoryGroom()
         await runNativeStore()
         runNativeMedia()
         await runCapabilityRouting()
@@ -1347,6 +1348,150 @@ enum SelfTest {
             print("  native memory OK (opt-in, review, CRUD, recall, expiry, budgets, prompt, relaunch)")
         } catch {
             print("SELFTEST ERROR: native memory \(error)"); exit(1)
+        }
+    }
+
+    private static func runNativeMemoryGroom() async {
+        do {
+            let repository = try LocalChatRepository(inMemory: true)
+            let now = Date(timeIntervalSince1970: 2_000_000_000)
+            let dayBeforeYesterday = Date(timeIntervalSince1970: 1_999_814_400)
+            let yesterday = Date(timeIntervalSince1970: 1_999_900_800)
+            let today = Date(timeIntervalSince1970: 1_999_987_200)
+            let tomorrow = Date(timeIntervalSince1970: 2_000_073_600)
+            var utc = Calendar(identifier: .gregorian)
+            utc.timeZone = TimeZone(secondsFromGMT: 0)!
+            var chicago = Calendar(identifier: .gregorian)
+            chicago.timeZone = TimeZone(identifier: "America/Chicago")!
+            var buddhist = Calendar(identifier: .buddhist)
+            buddhist.timeZone = TimeZone(secondsFromGMT: 0)!
+            func record(
+                _ id: String, durability: NativeMemoryDurability, expiry: Date?,
+                status: NativeMemoryStatus = .approved
+            ) -> NativeMemoryRecord {
+                NativeMemoryRecord(
+                    id: id, title: "Fact \(id)", summary: "A short fact",
+                    details: ["A short user fact"], group: .areas, category: .plan,
+                    bank: "personal", durability: durability, expiry: expiry, status: status,
+                    embedding: nil, sourceConversationID: nil, sourceMessageID: nil,
+                    createdAt: now, updatedAt: now)
+            }
+            let expiredYesterday = record("expired-yesterday", durability: .episodic, expiry: yesterday)
+            let expiresToday = record("expires-today", durability: .episodic, expiry: today)
+            let durable = record("durable", durability: .durable, expiry: nil)
+            let future = record("future", durability: .episodic, expiry: tomorrow)
+            let suppressed = record(
+                "suppressed", durability: .episodic, expiry: yesterday, status: .suppressed)
+            guard NativeMemoryGroom.isExpired(expiredYesterday, now: now, calendar: utc),
+                  !NativeMemoryGroom.isExpired(expiresToday, now: now, calendar: utc),
+                  !NativeMemoryGroom.isExpired(durable, now: now, calendar: utc),
+                  !NativeMemoryGroom.isExpired(future, now: now, calendar: utc),
+                  !NativeMemoryGroom.isExpired(suppressed, now: now, calendar: utc),
+                  !NativeMemoryGroom.isExpired(expiredYesterday, now: now, calendar: chicago),
+                  NativeMemoryGroom.isExpired(
+                    record("older", durability: .episodic, expiry: dayBeforeYesterday),
+                    now: now, calendar: chicago),
+                  !NativeMemoryGroom.isExpired(expiresToday, now: now, calendar: buddhist),
+                  NativeMemoryGroom.isExpired(expiredYesterday, now: now, calendar: buddhist) else {
+                print("SELFTEST ERROR: native memory groom boundary"); exit(1)
+            }
+            for memory in [expiredYesterday, expiresToday, durable, future, suppressed] {
+                try repository.saveMemory(memory, decision: .accepted, note: "Groom fixture")
+            }
+            func proposal(_ id: String, targets: [String]) -> NativeMemoryProposal {
+                NativeMemoryProposal(
+                    id: id, kind: .update, title: "Update \(id)", summary: "A revision",
+                    details: ["A revised user fact"], group: .areas, category: .plan,
+                    bank: "personal", durability: .durable, expiry: nil, targetIDs: targets,
+                    sourceConversationID: nil, sourceMessageID: nil, createdAt: now,
+                    status: .pending)
+            }
+            try repository.saveProposal(proposal("dangling", targets: [durable.id, expiredYesterday.id]))
+            try repository.saveProposal(proposal("kept", targets: [durable.id]))
+            var settings = NativeMemorySettings.fresh
+            settings.enabled = true
+            settings.embeddingsModel = "embed-model"
+            let store = ChatStore(
+                config: nil, client: nil, socket: nil, nativeConfig: nil, nativeTransport: nil,
+                repository: repository, hasLegacyOWUI: false, nativeMemorySettings: settings)
+            store.reloadNativeMemory()
+            let preview = store.runMemoryGroom(dryRun: true, now: now, calendar: utc)
+            guard preview?.removedIDs == [expiredYesterday.id], preview?.dryRun == true,
+                  store.memoryGroomOutcome == preview,
+                  try repository.approvedMemories().count == 4,
+                  try repository.pendingProposals().count == 2 else {
+                print("SELFTEST ERROR: native memory groom dry run"); exit(1)
+            }
+            let outcome = store.runMemoryGroom(now: now, calendar: utc)
+            let survivors = try repository.approvedMemories().map(\.id)
+            let changes = try repository.memoryChanges(limit: 20)
+            guard outcome?.removedCount == 1, outcome?.invalidatedProposalCount == 1,
+                  outcome?.error == nil, store.memoryGroomOutcome == outcome,
+                  !survivors.contains(expiredYesterday.id),
+                  survivors.contains(expiresToday.id), survivors.contains(durable.id),
+                  survivors.contains(future.id),
+                  try repository.pendingProposals().map(\.id) == ["kept"],
+                  changes.contains(where: {
+                      $0.memoryID == expiredYesterday.id && $0.decision == .deleted
+                          && $0.note == "Removed by the expiry groom"
+                  }),
+                  changes.contains(where: {
+                      $0.proposalID == "dangling" && $0.decision == .dismissed
+                          && $0.memoryID == expiredYesterday.id
+                          && $0.note.hasPrefix("Invalidated by the expiry groom")
+                  }) else {
+                print("SELFTEST ERROR: native memory groom pass"); exit(1)
+            }
+            guard store.runMemoryGroom(now: now, calendar: utc) == nil,
+                  store.memoryGroomOutcome == nil,
+                  try repository.approvedMemories().count == 3,
+                  try repository.pendingProposals().count == 1 else {
+                print("SELFTEST ERROR: native memory groom idempotence"); exit(1)
+            }
+            try repository.saveProposal(proposal("orphaned", targets: [future.id]))
+            try repository.deleteMemory(future.id)
+            store.memoryGroomOutcomeDisplaySeconds = 0.01
+            let healed = store.runMemoryGroom(now: now, calendar: utc)
+            guard healed?.removedCount == 0, healed?.invalidatedProposalCount == 1,
+                  try repository.pendingProposals().map(\.id) == ["kept"],
+                  try repository.memoryChanges(limit: 5).contains(where: {
+                      $0.proposalID == "orphaned" && $0.decision == .dismissed
+                          && $0.memoryID == future.id
+                  }) else {
+                print("SELFTEST ERROR: native memory groom dangling self-heal"); exit(1)
+            }
+            for _ in 0..<200 where store.memoryGroomOutcome != nil {
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            guard store.memoryGroomOutcome == nil else {
+                print("SELFTEST ERROR: native memory groom outcome did not clear"); exit(1)
+            }
+            let disabledRepository = try LocalChatRepository(inMemory: true)
+            try disabledRepository.saveMemory(
+                record("dormant", durability: .episodic, expiry: yesterday),
+                decision: .accepted, note: "Groom fixture")
+            let disabledStore = ChatStore(
+                config: nil, client: nil, socket: nil, nativeConfig: nil, nativeTransport: nil,
+                repository: disabledRepository, hasLegacyOWUI: false, nativeMemorySettings: .fresh)
+            guard disabledStore.runMemoryGroom(now: now, calendar: utc) == nil,
+                  try disabledRepository.approvedMemories().count == 1 else {
+                print("SELFTEST ERROR: native memory groom ran while memory is off"); exit(1)
+            }
+            let launchRepository = try LocalChatRepository(inMemory: true)
+            try launchRepository.saveMemory(
+                record("ancient", durability: .episodic, expiry: Date(timeIntervalSince1970: 86_400)),
+                decision: .accepted, note: "Groom fixture")
+            let launchStore = ChatStore(
+                config: nil, client: nil, socket: nil, nativeConfig: nil, nativeTransport: nil,
+                repository: launchRepository, hasLegacyOWUI: false, nativeMemorySettings: settings)
+            await launchStore.connect()
+            guard launchStore.memoryGroomOutcome?.removedCount == 1,
+                  try launchRepository.approvedMemories().isEmpty else {
+                print("SELFTEST ERROR: native memory groom launch wiring"); exit(1)
+            }
+            print("  native memory groom OK (boundary, audit, invalidation, idempotence, dry run, launch)")
+        } catch {
+            print("SELFTEST ERROR: native memory groom \(error)"); exit(1)
         }
     }
 

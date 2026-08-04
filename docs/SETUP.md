@@ -99,9 +99,70 @@ Each call renders as a pending, succeeded, or failed activity chip. Expand it to
 
 Settings, Model also holds each model's capability profile and the optional vision bridge. The profile (accepts image input, supports tool calls, supports streaming replies, images per request) defaults from a bundled name-pattern table of known vision-model families and can be overridden per model; the pane names which pattern matched or that your override is active, and Use defaults clears an override. The profile is enforced at request time: a model marked without tool support receives no tool schemas, a model marked without streaming gets one complete non-streamed response, image history is trimmed to the per-request limit, and a model marked text-only never receives image parts, including images from earlier turns after a model switch. The vision bridge is any separate OpenAI-compatible vision endpoint (base URL ending in `/v1`, model id, optional keychain-stored API key; `VERA_VISION_BRIDGE_BASE`, `VERA_VISION_BRIDGE_MODEL`, and `VERA_VISION_BRIDGE_API_KEY` override the saved values). When the active model does not accept an attached image, a configured bridge describes it and the description enters the request as labeled context with the bridge model named on the turn; without a bridge the app asks whether to send the message without its attachment. Attachments only ever leave the machine toward the model endpoint or the bridge you configured.
 
-Voice, document knowledge, MCP, custom HTTP tools, and Vera API tools remain unavailable in the native chat path.
+Voice, document knowledge, and MCP remain unavailable in the native chat path.
 
 Continuing a Pulse card into chat is native and local. The first continuation of a card re-reads `GET /pulse/cards` and then stores the card's text, sources, and provenance in the local database, so vera-api must be reachable only for that first step. After that the conversation opens offline, survives the card's expiry, and is reused by later continues of the same card. Card images are not cached locally.
+
+### Custom chat tools
+
+Chat tools beyond the built-ins are configuration, not code. Drop a JSON file in
+`~/.vera/tools.d/` (next to `config.json`; `VERA_CONFIG_DIR` relocates the whole directory)
+and the app loads it at startup and again whenever Settings saves. Each valid file becomes
+a native tool: a toggle appears in Settings, Tools, the model is offered the tool when it is
+enabled and available, calls execute over HTTP, and each call renders as an activity chip
+in chat like any other tool. A malformed file is skipped, with the reason shown in Settings.
+
+A declaration is one JSON object per file. For example, a tool over a home inventory
+service:
+
+```json
+{
+  "name": "list_inventory_items",
+  "title": "List inventory items",
+  "description": "Looks up items in the household inventory service by name or location. Use this when the user asks what is in stock or where something is stored.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string" },
+      "in_stock_only": { "type": "boolean" }
+    },
+    "required": ["query"],
+    "additionalProperties": false
+  },
+  "endpoint": "/inventory/items",
+  "method": "GET",
+  "confirmation": "none",
+  "timeout_s": 20,
+  "enabled": true
+}
+```
+
+- `name`: the unique function name the model calls.
+- `title`: the short label shown in Settings and in the activity chip.
+- `description`: what the tool does and when to use it, written for the model.
+- `parameters`: a JSON Schema object. The supported subset is string and boolean
+  properties, plus `required` and `additionalProperties: false`.
+- `endpoint`: an absolute URL, or a path starting with `/`, resolved against the
+  configured vera-api base URL. A path-relative tool stays unavailable until that URL is
+  set.
+- `method`: `GET` sends the arguments as query parameters; `POST` sends them as a JSON
+  body.
+- `confirmation`: `"none"` runs the call immediately; `"required"` asks in the chat UI
+  before the request fires.
+- `timeout_s`: optional, seconds before the call is abandoned (default 20).
+- `enabled`: optional, default true.
+- `json_fields`: optional, POST only. Maps a declared string property to a request body
+  field, and the string must then contain a JSON object, for example
+  `"json_fields": {"filters_json": "filters"}`. This lets a tool accept a nested object
+  while the parameters stay within the string and boolean subset.
+
+The response comes back to the model as tool data: JSON is preferred, plain text is
+tolerated, and it is held under a size cap. A non-2xx response shows in chat as a failed
+tool call with its status. Deleting a declaration, or setting `enabled` to false, removes
+the tool starting with the next message.
+
+The app bundles two declarations this way, an actions surface and a self-authoring/journal
+surface over vera-api routes, and both activate once the vera-api base URL is configured.
 
 ### Native personal memory
 

@@ -277,7 +277,14 @@ enum NativeChatToolCatalog {
         tools(veraAPIConfigured: OWUIConfig.resolvedVeraAPIBase() != nil)
     }
 
-    static func tools(veraAPIConfigured: Bool) -> [NativeChatToolDescriptor] {
+    static func tools(
+        veraAPIConfigured: Bool, declarations: [NativeToolDeclaration] = []
+    ) -> [NativeChatToolDescriptor] {
+        builtIn(veraAPIConfigured: veraAPIConfigured)
+            + NativeCapabilityTools.descriptors(declarations, veraAPIConfigured: veraAPIConfigured)
+    }
+
+    private static func builtIn(veraAPIConfigured: Bool) -> [NativeChatToolDescriptor] {
         [
             NativeChatToolDescriptor(
                 id: "external-tools",

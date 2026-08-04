@@ -37,6 +37,7 @@ final class ConfigStore: ObservableObject {
     @Published var nativeSettings: NativeChatSettings
     @Published private var nativeAPIKeys: [String: String]
     @Published var visionBridgeAPIKey: String
+    @Published private(set) var capabilityTools: NativeCapabilityToolCatalog
     private let credentialStore: any NativeCredentialStore
 
     static let visionBridgeCredentialID = "vision-bridge"
@@ -74,6 +75,7 @@ final class ConfigStore: ObservableObject {
         nativeSettings = settings
         nativeAPIKeys = keys
         visionBridgeAPIKey = credentialStore.value(for: Self.visionBridgeCredentialID) ?? ""
+        capabilityTools = NativeCapabilityTools.catalog()
         self.credentialStore = credentialStore
         showOnboarding = !settings.hasValidConfiguration
             && settings.onboardingState != .skipped
@@ -120,6 +122,11 @@ final class ConfigStore: ObservableObject {
         try credentialStore.set(visionBridgeAPIKey, for: Self.visionBridgeCredentialID)
         raw = nativeSettings.merging(into: raw)
         try ConfigFile.write(raw)
+        capabilityTools = NativeCapabilityTools.catalog()
+    }
+
+    func reloadCapabilityTools() {
+        capabilityTools = NativeCapabilityTools.catalog()
     }
 
     /// The fully resolved connection config (env over file). Nil until OWUI base + key exist.

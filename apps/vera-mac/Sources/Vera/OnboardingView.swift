@@ -126,7 +126,8 @@ struct OnboardingSheet: View {
             capabilityOverrides: config.nativeSettings.capabilityOverrides,
             visionBridge: config.visionBridgeResolved,
             memorySettings: config.nativeSettings.memory,
-            memoryService: config.nativeMemoryService)
+            memoryService: config.nativeMemoryService,
+            capabilityDeclarations: config.capabilityTools.declarations)
         config.completeOnboarding()
     }
 }

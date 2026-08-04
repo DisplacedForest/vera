@@ -32,6 +32,11 @@ locally after macOS permission. Web search and deep research call the configured
 unconfigured hint. Deep research runs on its own 300-second deadline, and its report renders
 with citation chips and a numbered sources row that persist with the conversation.
 
+Config-driven tools extend the same registry. A JSON declaration dropped in
+`~/.vera/tools.d/` loads at startup and again on every Settings save, and a valid one joins
+the built-ins in Settings, Tools, the tool-calling loop, and the confirmation path exactly
+like a native tool defined in code.
+
 `NativeContextAssembler` builds each request's system context deterministically, in a fixed
 order: app policy, the editable persona, session facts (date, time, owner name), recalled
 memory, a world-model seam, and capability context (per-tool usage contracts plus the ask,

@@ -80,6 +80,22 @@ struct NativeToolActivity: Codable, Equatable, Hashable, Identifiable, Sendable 
     let confirmationRequired: Bool
 }
 
+struct NativeToolConfirmationRequest: Equatable, Hashable, Identifiable, Sendable {
+    let id: String
+    let toolID: String
+    let name: String
+    let title: String
+    let request: String
+
+    init(activity: NativeToolActivity) {
+        id = activity.id
+        toolID = activity.toolID
+        name = activity.name
+        title = activity.title
+        request = activity.request
+    }
+}
+
 enum NativeToolConfirmation: String, Equatable, Sendable {
     case none
     case required

@@ -1039,6 +1039,19 @@ enum SelfTest {
             action: PulseAction(verb: "ha.service", preview: "Do a thing", risk: "low",
                                 reversible: true, token: "ACTION-COMMIT-TOKEN"),
             provenance: "heartbeat", category: "vera",
+            changeSet: [{
+                var entity = GroomSnapshot(kind: "entity", id: "router")
+                entity.type = "device"
+                entity.name = "router"
+                entity.attrs = [
+                    "room": "closet",
+                    "password": "SECRET-ATTR-VALUE",
+                    "api_key": "SECRET-ATTR-KEY",
+                    "note": "Bearer SECRET-BEARER-VALUE",
+                ]
+                return GroomOp(index: 0, type: "gc", store: "knowledge",
+                               reason: "orphan", before: [entity], after: nil)
+            }()],
             items: [PulseDigestItem(itemID: "i1", title: "Pick", subtitle: "Sub", mediaType: nil,
                                     tmdbID: nil, token: "ITEM-COMMIT-TOKEN", state: "pending")])
     }
@@ -1071,6 +1084,9 @@ enum SelfTest {
         guard let json = snapshot.encodedJSON(),
               !json.contains("ACTION-COMMIT-TOKEN"),
               !json.contains("ITEM-COMMIT-TOKEN"),
+              !json.contains("SECRET-ATTR-VALUE"),
+              !json.contains("SECRET-ATTR-KEY"),
+              !json.contains("SECRET-BEARER-VALUE"),
               !json.contains("ftp://"),
               !json.contains("file://") else {
             print("SELFTEST ERROR: pulse snapshot leaked tokens or non-web URLs"); exit(1)
@@ -1086,6 +1102,7 @@ enum SelfTest {
               restored.inlineImages.map(\.url) == ["https://img.example/inline.png"],
               restored.items.count == 1,
               restored.items.first?.token == nil,
+              restored.changeSet.first?.before.first?.attrs == ["room": "closet"],
               restored.provenance == "heartbeat",
               restored.category == "vera",
               restored.severity == "notice" else {

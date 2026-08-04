@@ -145,6 +145,18 @@ struct PulseCardSnapshot: Codable, Equatable {
         return snapshot
     }
 
+    private static let credentialKeyPattern =
+        "(?i)(password|passwd|secret|token|api[_-]?key|apikey|authorization|auth[_-]?header|bearer|credential|private[_-]?key|client[_-]?secret|access[_-]?key|session[_-]?id|cookie)"
+    private static let credentialValuePattern =
+        "(?i)(bearer\\s+\\S+|basic\\s+[A-Za-z0-9+/=]{8,}|eyJ[A-Za-z0-9_-]{10,})"
+
+    private static func sanitizedAttrs(_ attrs: [String: String]) -> [String: String] {
+        attrs.filter { key, value in
+            key.range(of: credentialKeyPattern, options: .regularExpression) == nil
+                && value.range(of: credentialValuePattern, options: .regularExpression) == nil
+        }
+    }
+
     private static func webURL(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty,
               let url = URL(string: raw),
@@ -155,7 +167,8 @@ struct PulseCardSnapshot: Codable, Equatable {
     private static func groomRecord(_ snapshot: GroomSnapshot) -> GroomSnapshotRecord {
         GroomSnapshotRecord(
             kind: snapshot.kind, id: snapshot.id, topic: snapshot.topic, content: snapshot.content,
-            tier: snapshot.tier, type: snapshot.type, name: snapshot.name, attrs: snapshot.attrs,
+            tier: snapshot.tier, type: snapshot.type, name: snapshot.name,
+            attrs: sanitizedAttrs(snapshot.attrs),
             schemaFields: snapshot.schemaFields, entityCount: snapshot.entityCount,
             migrated: snapshot.migrated)
     }

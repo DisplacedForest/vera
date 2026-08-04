@@ -139,7 +139,9 @@ final class ConfigStore: ObservableObject {
             ?? profile.flatMap { nativeAPIKeys[$0.id]?.nilIfBlank }
         let kwargs = env["VERA_CHAT_TEMPLATE_KWARGS"]?.nilIfBlank
             ?? self["chat_template_kwargs"].nilIfBlank
-        return NativeChatConfig(baseURL: base, apiKey: apiKey, model: model, chatTemplateKwargs: kwargs)
+        return NativeChatConfig(
+            baseURL: base, apiKey: apiKey, model: model, chatTemplateKwargs: kwargs,
+            streaming: nativeSettings.resolveCapabilities(model: model).profile.supportsStreaming)
     }
 
     var activeNativeProfile: NativeEndpointProfile? { nativeSettings.activeProfile }

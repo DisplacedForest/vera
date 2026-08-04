@@ -1086,6 +1086,7 @@ final class ChatStore: ObservableObject {
         let text: String
         let modelID: String
         let imageCount: Int
+        let imageLimit: Int?
     }
 
     var activeCapabilityResolution: ModelCapabilityCatalog.Resolution? {
@@ -1094,12 +1095,21 @@ final class ChatStore: ObservableObject {
             model: nativeConfig.model, overrides: nativeCapabilityOverrides)
     }
 
+    var effectiveBridgeConfig: VisionBridgeConfig? {
+        guard let bridge = visionBridgeConfig else { return nil }
+        if let nativeConfig, bridge.baseURL == nativeConfig.baseURL,
+           bridge.model == nativeConfig.model {
+            return nil
+        }
+        return bridge
+    }
+
     func attachmentRoute(imageCount: Int) -> AttachmentRoute? {
         guard imageCount > 0 else { return nil }
         guard let resolution = activeCapabilityResolution else { return nil }
         return AttachmentPreflight.route(
             profile: resolution.profile, imageCount: imageCount,
-            bridgeConfigured: visionBridgeConfig != nil)
+            bridgeConfigured: effectiveBridgeConfig != nil)
     }
 
     func send() {
@@ -1114,8 +1124,11 @@ final class ChatStore: ObservableObject {
         let imageCount = atts.filter { $0.nativeRecord?.isImage == true }.count
         let route = attachmentRoute(imageCount: imageCount)
         if route == .needsDecision, let model = nativeConfig?.model {
+            let profile = activeCapabilityResolution?.profile
             pendingSendDecision = PendingSendDecision(
-                text: text, modelID: model, imageCount: imageCount)
+                text: text, modelID: model, imageCount: imageCount,
+                imageLimit: profile?.acceptsImages == true
+                    ? max(profile?.maxImagesPerRequest ?? 1, 1) : nil)
             return
         }
         draft = ""
@@ -1123,7 +1136,7 @@ final class ChatStore: ObservableObject {
         let note: MessageRouteNote?
         switch route {
         case .direct: note = MessageRouteNote(route: .direct)
-        case .bridged: note = MessageRouteNote(route: .bridged, bridgeModel: visionBridgeConfig?.model)
+        case .bridged: note = MessageRouteNote(route: .bridged, bridgeModel: effectiveBridgeConfig?.model)
         default: note = nil
         }
         sendText(text, attachments: atts, routeNote: note)
@@ -1134,7 +1147,10 @@ final class ChatStore: ObservableObject {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let atts = attachments
         pendingSendDecision = nil
-        guard !text.isEmpty || !atts.isEmpty else { return }
+        guard !text.isEmpty else {
+            attachmentError = "There is no message text to send without the attachment. Add text or remove the attachment."
+            return
+        }
         draft = ""
         attachments = []
         sendText(text, attachments: atts, routeNote: MessageRouteNote(route: .withheld))
@@ -1213,7 +1229,7 @@ final class ChatStore: ObservableObject {
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
         let enabledToolIDs = capabilityProfile.supportsTools ? nativeEnabledToolIDs : []
-        let bridgeConfig = visionBridgeConfig
+        let bridgeConfig = effectiveBridgeConfig
         let bridgeTransportFactory = visionBridgeTransportFactory
         let memorySettings = nativeMemorySettings
         let memoryService = nativeMemoryService
@@ -1262,7 +1278,7 @@ final class ChatStore: ObservableObject {
                     ?? []
                 var history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: nativeSystemPrompt,
-                    imageLoader: imageLoader)
+                    imageLoader: imageLoader, capabilities: capabilityProfile)
                 if memorySettings.enabled {
                     if memorySettings.embeddingsModel.isEmpty || memoryService == nil {
                         memoryServiceState = .setupRequired
@@ -1279,7 +1295,7 @@ final class ChatStore: ObservableObject {
                             history = NativeMemoryPromptAssembler.build(
                                 messages: turnMessages,
                                 systemPrompt: nativeSystemPrompt, selected: selected,
-                                imageLoader: imageLoader)
+                                imageLoader: imageLoader, capabilities: capabilityProfile)
                             memoryServiceState = memoryProposals.isEmpty
                                 ? .ready : .pendingReview(memoryProposals.count)
                         } catch {
@@ -1347,6 +1363,13 @@ final class ChatStore: ObservableObject {
                     conversations[i].messages[replyIndex].state = .interrupted
                     conversations[i].messages[replyIndex].failure = error.localizedDescription
                     conversations[i].updatedAt = Date()
+                    if userIndex >= 0, userIndex < conversations[i].messages.count,
+                       conversations[i].messages[userIndex].routeNote?.route == .bridged,
+                       conversations[i].messages[userIndex].routeNote?.disclosure == nil {
+                        conversations[i].messages[userIndex].routeNote = nil
+                        try? repository.saveMessage(
+                            conversations[i].messages[userIndex], conversationID: id, ordinal: userIndex)
+                    }
                     try? repository.saveMessage(conversations[i].messages[replyIndex], conversationID: id, ordinal: replyIndex)
                     try? repository.saveConversation(conversations[i])
                 }

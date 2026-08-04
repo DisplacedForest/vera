@@ -247,7 +247,9 @@ struct NativeCapabilityEditor: View {
     @EnvironmentObject var config: ConfigStore
 
     private var model: String {
-        config.activeNativeProfile?.selectedModel.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        config.nativeResolved?.model
+            ?? config.activeNativeProfile?.selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ""
     }
     private var resolution: ModelCapabilityCatalog.Resolution {
         config.nativeSettings.resolveCapabilities(model: model)

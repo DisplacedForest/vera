@@ -1143,6 +1143,64 @@ enum SelfTest {
                 print("SELFTEST ERROR: history builder route handling"); exit(1)
             }
 
+            let strippedHistory = NativeChatHistoryBuilder.build(
+                messages: [
+                    Message(role: .user, text: "Old direct", attachments: [record],
+                            routeNote: MessageRouteNote(route: .direct)),
+                    Message(role: .user, text: "Legacy no note", attachments: [record]),
+                ],
+                systemPrompt: "", imageLoader: loader, capabilities: .textOnly)
+            guard strippedHistory.count == 2,
+                  strippedHistory.allSatisfy(\.images.isEmpty) else {
+                print("SELFTEST ERROR: history builder capability image stripping"); exit(1)
+            }
+            var singleImageVision = ModelCapabilityProfile.vision
+            singleImageVision.maxImagesPerRequest = 1
+            let cappedHistory = NativeChatHistoryBuilder.build(
+                messages: [
+                    Message(role: .user, text: "First", attachments: [record],
+                            routeNote: MessageRouteNote(route: .direct)),
+                    Message(role: .user, text: "Second", attachments: [record],
+                            routeNote: MessageRouteNote(route: .direct)),
+                ],
+                systemPrompt: "", imageLoader: loader, capabilities: singleImageVision)
+            guard cappedHistory.count == 2,
+                  cappedHistory[0].images.isEmpty,
+                  cappedHistory[1].images.count == 1 else {
+                print("SELFTEST ERROR: history builder image cap trimming"); exit(1)
+            }
+
+            let nonStreamClient = NativeChatClient(config: NativeChatConfig(
+                baseURL: URL(string: "https://models.example/v1")!, apiKey: nil,
+                model: "plain", chatTemplateKwargs: nil, streaming: false))
+            let nonStreamRequest = try nonStreamClient.request(
+                messages: [NativeChatMessage(role: "user", content: "Hi")], model: "plain")
+            let nonStreamBody = try JSONSerialization.jsonObject(with: nonStreamRequest.httpBody!) as? [String: Any]
+            let completeData = Data("""
+            {"choices":[{"message":{"content":"Full answer"},"finish_reason":"stop"}]}
+            """.utf8)
+            let completeToolData = Data("""
+            {"choices":[{"message":{"content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"apple_reminders_list","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}
+            """.utf8)
+            let completeSnapshot = try NativeChatClient.completeSnapshot(from: completeData)
+            let completeToolSnapshot = try NativeChatClient.completeSnapshot(from: completeToolData)
+            guard nonStreamBody?["stream"] as? Bool == false,
+                  completeSnapshot.content == "Full answer",
+                  completeSnapshot.finishReason == "stop",
+                  completeToolSnapshot.toolCalls == [
+                    NativeChatToolCall(id: "c1", name: "apple_reminders_list", arguments: "{}")
+                  ] else {
+                print("SELFTEST ERROR: non-streaming request shape or response parsing"); exit(1)
+            }
+            do {
+                _ = try NativeChatClient.completeSnapshot(from: Data("{\"choices\":[]}".utf8))
+                print("SELFTEST ERROR: malformed complete response accepted"); exit(1)
+            } catch let error as NativeChatClient.ClientError {
+                guard error == .invalidResponse else {
+                    print("SELFTEST ERROR: malformed complete response error shape"); exit(1)
+                }
+            }
+
             let repository = try LocalChatRepository(inMemory: true)
             try repository.saveConversation(Conversation(
                 id: "route-convo", title: "Routes", messages: [], updatedAt: Date()))
@@ -1195,6 +1253,34 @@ enum SelfTest {
                   decisionTransport.histories.count == 1,
                   decisionTransport.histories[0].allSatisfy(\.images.isEmpty) else {
                 print("SELFTEST ERROR: send-without-attachment flow"); exit(1)
+            }
+
+            let imageOnlyPending = Attachment(url: attachmentStore.url(for: record.fileName ?? "")!)
+            imageOnlyPending.nativeRecord = record
+            let countBeforeImageOnly = decisionStore.selected?.messages.count
+            decisionStore.attachments = [imageOnlyPending]
+            decisionStore.send()
+            decisionStore.confirmSendWithoutAttachments()
+            guard decisionStore.attachmentError != nil,
+                  decisionStore.attachments.count == 1,
+                  decisionStore.selected?.messages.count == countBeforeImageOnly,
+                  decisionTransport.histories.count == 1 else {
+                print("SELFTEST ERROR: image-only withheld send guarded"); exit(1)
+            }
+            decisionStore.attachments = []
+            decisionStore.attachmentError = nil
+
+            let selfBridgeStore = ChatStore(
+                config: nil, client: nil, socket: nil,
+                nativeConfig: config, nativeTransport: decisionTransport,
+                repository: try LocalChatRepository(inMemory: true),
+                hasLegacyOWUI: false,
+                visionBridgeConfig: VisionBridgeConfig(
+                    baseURL: config.baseURL, apiKey: nil, model: config.model),
+                attachmentStore: attachmentStore)
+            guard selfBridgeStore.effectiveBridgeConfig == nil,
+                  selfBridgeStore.attachmentRoute(imageCount: 1) == .needsDecision else {
+                print("SELFTEST ERROR: self-referential bridge guard"); exit(1)
             }
 
             let bridgeTransport = ScriptedNativeToolTransport(rounds: [
@@ -1256,6 +1342,7 @@ enum SelfTest {
             await waitForGeneration(failStore)
             guard let failUser = failStore.selected?.messages.first,
                   failUser.text == "Try the bridge",
+                  failUser.routeNote == nil,
                   failUser.attachments.count == 1,
                   let failReply = failStore.selected?.messages.last,
                   failReply.state == .interrupted,

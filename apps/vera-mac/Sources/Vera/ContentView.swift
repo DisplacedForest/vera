@@ -426,7 +426,9 @@ struct AttachmentRouteBadge: View {
     private var label: String {
         switch note.route {
         case .direct:
-            return "Image sent to the model"
+            return "Image included in the model request"
+        case .bridged where note.disclosure == nil:
+            return "Routing through the vision bridge\(note.bridgeModel.map { " (\($0))" } ?? "")"
         case .bridged:
             return "Described by the vision bridge\(note.bridgeModel.map { " (\($0))" } ?? ""). The model did not receive the image."
         case .withheld:
@@ -642,17 +644,22 @@ struct ComposerField: View {
         .onDisappear { removePasteMonitor() }
         .onChange(of: store.focusTick) { _, _ in focused = true }
         .confirmationDialog(
-            "This model can't take images",
+            store.pendingSendDecision?.imageLimit == nil
+                ? "This model can't take images" : "Too many images for this model",
             isPresented: Binding(
                 get: { store.pendingSendDecision != nil },
                 set: { if !$0 { store.cancelPendingSend() } }),
             titleVisibility: .visible
         ) {
-            Button("Send without the attachment") { store.confirmSendWithoutAttachments() }
+            Button("Send without the attachments") { store.confirmSendWithoutAttachments() }
             Button("Cancel", role: .cancel) { store.cancelPendingSend() }
         } message: {
             if let decision = store.pendingSendDecision {
-                Text("\(decision.modelID) does not accept image input and no vision bridge is configured. Send the message without \(decision.imageCount == 1 ? "its image" : "its \(decision.imageCount) images"), or cancel and keep editing. You can set up a bridge or adjust this model's capabilities in Settings.")
+                if let limit = decision.imageLimit {
+                    Text("\(decision.modelID) accepts at most \(limit) image\(limit == 1 ? "" : "s") per request and no vision bridge is configured. Send the message without its \(decision.imageCount) images, or cancel and remove some. You can raise the limit or set up a bridge in Settings.")
+                } else {
+                    Text("\(decision.modelID) does not accept image input and no vision bridge is configured. Send the message without \(decision.imageCount == 1 ? "its image" : "its \(decision.imageCount) images"), or cancel and keep editing. You can set up a bridge or adjust this model's capabilities in Settings.")
+                }
             }
         }
         .dropDestination(for: URL.self) { urls, _ in

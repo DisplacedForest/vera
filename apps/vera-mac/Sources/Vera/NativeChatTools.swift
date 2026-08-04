@@ -369,16 +369,18 @@ private final class NativeToolExecutionRace: @unchecked Sendable {
 enum NativeChatHistoryBuilder {
     static func build(
         messages: [Message], systemPrompt: String,
-        imageLoader: ((MessageAttachment) -> String?)? = nil
+        imageLoader: ((MessageAttachment) -> String?)? = nil,
+        capabilities: ModelCapabilityProfile? = nil
     ) -> [NativeChatMessage] {
         var history: [NativeChatMessage] = []
         let prompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if !prompt.isEmpty { history.append(NativeChatMessage(role: "system", content: prompt)) }
+        let allowsImages = capabilities?.acceptsImages ?? true
         for message in messages where message.state == .complete {
             if message.role == .user {
                 let route = message.routeNote?.route
                 let images: [String]
-                if route == nil || route == .direct {
+                if allowsImages, route == nil || route == .direct {
                     images = imageLoader.map { load in
                         message.attachments.filter(\.isImage).compactMap(load)
                     } ?? []
@@ -413,7 +415,29 @@ enum NativeChatHistoryBuilder {
                 history.append(NativeChatMessage(role: "assistant", content: message.text))
             }
         }
+        if let capabilities, capabilities.acceptsImages {
+            history = capped(history, limit: max(capabilities.maxImagesPerRequest, 1))
+        }
         return history
+    }
+
+    private static func capped(_ history: [NativeChatMessage], limit: Int) -> [NativeChatMessage] {
+        var total = history.reduce(0) { $0 + $1.images.count }
+        guard total > limit else { return history }
+        var result = history
+        for index in result.indices {
+            guard total > limit else { break }
+            let images = result[index].images
+            guard !images.isEmpty else { continue }
+            let excess = min(images.count, total - limit)
+            let kept = Array(images.dropFirst(excess))
+            total -= excess
+            result[index] = NativeChatMessage(
+                role: result[index].role, content: result[index].content,
+                toolCallID: result[index].toolCallID, toolCalls: result[index].toolCalls,
+                images: kept)
+        }
+        return result
     }
 }
 

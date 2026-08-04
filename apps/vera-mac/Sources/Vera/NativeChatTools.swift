@@ -106,6 +106,7 @@ struct NativeToolDefinition: Sendable {
     let description: String
     let parameters: NativeJSONValue
     let confirmation: NativeToolConfirmation
+    var timeout: Duration? = nil
     let isAvailable: @Sendable () -> Bool
     let execute: @Sendable ([String: NativeJSONValue]) async throws -> NativeJSONValue
 
@@ -570,7 +571,8 @@ struct NativeToolLoop: Sendable {
                                     }
                                 }
                                 let value = try await Self.execute(
-                                    definition, arguments: arguments, timeout: executionTimeout)
+                                    definition, arguments: arguments,
+                                    timeout: definition.timeout ?? executionTimeout)
                                 result = try Self.json(value)
                                 state = .succeeded
                             } catch {

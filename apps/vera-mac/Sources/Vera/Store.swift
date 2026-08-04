@@ -96,7 +96,8 @@ final class ChatStore: ObservableObject {
         self.nativeMemorySettings = nativeMemorySettings
         self.nativeMemoryService = nativeMemoryService
         self.nativeToolRegistry = nativeToolRegistry ?? NativeToolRegistry(
-            definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared))
+            definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared)
+                + NativeWebTools.definitions(base: { OWUIConfig.resolvedVeraAPIBase() }))
         self.repository = repository
         self.repositoryInitializationError = repositoryError
         self.hasLegacyOWUI = hasLegacyOWUI
@@ -1306,10 +1307,15 @@ final class ChatStore: ObservableObject {
                         }
                     }
                 }
+                var contracts = NativePresentationContract.chatDefaults
+                if activeTools.contains(where: { NativeWebTools.researchCapableIDs.contains($0.id) }) {
+                    contracts.insert(.citations)
+                }
                 let assembled = NativeContextAssembler.assemble(NativeContextInput(
                     persona: persona, timestamp: Date(), timeZone: .current,
                     ownerName: ownerName, memories: selectedMemories,
-                    capabilities: capabilityProfile, tools: activeTools))
+                    capabilities: capabilityProfile, tools: activeTools,
+                    contracts: contracts))
                 let history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: assembled.prompt,
                     imageLoader: imageLoader, capabilities: capabilityProfile)
@@ -1324,6 +1330,8 @@ final class ChatStore: ObservableObject {
                     conversations[i].messages[replyIndex].ask = ask
                     conversations[i].messages[replyIndex].artifacts = arts
                     conversations[i].messages[replyIndex].toolActivities = snapshot.activities
+                    let lifted = NativeResearchSources.lift(snapshot.activities)
+                    if !lifted.isEmpty { conversations[i].messages[replyIndex].sources = lifted }
                     if let latest = arts.last,
                        latest.id != activeArtifact?.id || latest.content != activeArtifact?.content {
                         openArtifact(latest)

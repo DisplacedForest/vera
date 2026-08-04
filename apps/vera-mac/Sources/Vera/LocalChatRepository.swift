@@ -166,6 +166,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 table.add(column: "route_json", .text)
             }
         }
+        migrator.registerMigration("messageSourcesV8") { db in
+            try db.alter(table: "messages") { table in
+                table.add(column: "sources_json", .text)
+            }
+        }
         try migrator.migrate(database)
     }
 
@@ -265,7 +270,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         try database.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT id, role, content, created_at, state, failure, model_id,
-                       tool_activity_json, content_type, metadata_json, attachments_json, route_json
+                       tool_activity_json, content_type, metadata_json, attachments_json,
+                       route_json, sources_json
                 FROM messages
                 WHERE conversation_id = ?
                 ORDER BY ordinal ASC
@@ -279,11 +285,12 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         return try database.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT id, role, content, created_at, state, failure, model_id,
-                       tool_activity_json, content_type, metadata_json, attachments_json, route_json
+                       tool_activity_json, content_type, metadata_json, attachments_json,
+                       route_json, sources_json
                 FROM (
                     SELECT id, role, content, created_at, state, failure, model_id,
                            tool_activity_json, content_type, metadata_json, attachments_json,
-                           route_json, ordinal
+                           route_json, sources_json, ordinal
                     FROM messages
                     WHERE conversation_id = ?
                     ORDER BY ordinal DESC
@@ -332,8 +339,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 INSERT INTO messages
                     (id, conversation_id, ordinal, role, content, created_at, state,
                      failure, model_id, tool_activity_json, content_type, metadata_json,
-                     attachments_json, route_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     attachments_json, route_json, sources_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     content = excluded.content,
                     state = excluded.state,
@@ -343,7 +350,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     content_type = excluded.content_type,
                     metadata_json = excluded.metadata_json,
                     attachments_json = excluded.attachments_json,
-                    route_json = excluded.route_json
+                    route_json = excluded.route_json,
+                    sources_json = excluded.sources_json
                 """, arguments: [
                     message.id.uuidString,
                     conversationID,
@@ -359,6 +367,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     metadata,
                     Self.attachmentsJSON(for: message),
                     Self.routeJSON(for: message),
+                    Self.sourcesJSON(for: message),
                 ])
         }
     }
@@ -571,6 +580,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 state: state, failure: row["failure"], modelID: row["model_id"],
                 attachments: attachments, toolActivities: activities, contentType: contentType,
                 routeNote: decode(row["route_json"] as String?, as: MessageRouteNote.self))
+            if let sources = decode(row["sources_json"] as String?, as: [PulseSource].self),
+               !sources.isEmpty {
+                message.sources = sources
+            }
             if contentType == .pulseCard,
                let raw: String = row["metadata_json"],
                let snapshot = PulseCardSnapshot.decode(raw) {
@@ -596,6 +609,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
     private static func routeJSON(for message: Message) -> String? {
         guard let note = message.routeNote else { return nil }
         return try? encode(note)
+    }
+
+    private static func sourcesJSON(for message: Message) -> String? {
+        guard message.contentType != .pulseCard, !message.sources.isEmpty else { return nil }
+        return try? encode(message.sources)
     }
 
     private static func decodeConversation(_ row: Row) -> Conversation {

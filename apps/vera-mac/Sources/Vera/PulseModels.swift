@@ -33,7 +33,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 }
 
 /// One numbered source backing a Pulse card (for per-paragraph chips + the expandable list).
-struct PulseSource: Identifiable, Hashable {
+struct PulseSource: Identifiable, Hashable, Codable {
     let n: Int
     let title: String
     let url: String

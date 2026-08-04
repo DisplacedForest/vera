@@ -2667,6 +2667,17 @@ enum SelfTest {
                       try awkwardRepository.promptProfile(awkwardID)?.content == legacy else {
                     print("SELFTEST ERROR: legacy prompt must migrate byte-exact"); exit(1)
                 }
+                guard var edited = try awkwardRepository.promptProfile(awkwardID) else {
+                    print("SELFTEST ERROR: migrated persona missing"); exit(1)
+                }
+                edited.content = "Trimmed to a valid persona."
+                try awkwardRepository.savePromptProfile(edited)
+                guard let legacyRevision = try awkwardRepository.promptRevisions(entityID: awkwardID)
+                    .first(where: { $0.content == legacy }),
+                      try awkwardRepository.restorePromptRevision(legacyRevision.id) != nil,
+                      try awkwardRepository.promptProfile(awkwardID)?.content == legacy else {
+                    print("SELFTEST ERROR: migrated revision must restore byte-exact"); exit(1)
+                }
             }
         } catch {
             print("SELFTEST ERROR: prompt migration \(error)"); exit(1)

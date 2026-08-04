@@ -65,6 +65,7 @@ protocol NativePromptLibraryRepository: Sendable {
     func saveReusablePrompt(_ prompt: ReusablePrompt) throws
     func deleteReusablePrompt(_ id: String) throws
     func promptRevisions(entityID: String) throws -> [PromptRevision]
+    func restorePromptRevision(_ revisionID: String) throws -> PromptRevision?
 }
 
 enum PromptValidationError: Error, Equatable, LocalizedError {

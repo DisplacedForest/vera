@@ -686,6 +686,38 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         }
     }
 
+    func restorePromptRevision(_ revisionID: String) throws -> PromptRevision? {
+        try database.write { db in
+            guard let row = try Row.fetchOne(db, sql: """
+                SELECT id, entity_id, content, created_at
+                FROM prompt_revisions
+                WHERE id = ?
+                """, arguments: [revisionID]) else { return nil }
+            let revision = PromptRevision(
+                id: row["id"], entityID: row["entity_id"], content: row["content"],
+                createdAt: Date(timeIntervalSince1970: row["created_at"]))
+            let now = Date().timeIntervalSince1970
+            let profileUpdated = try Bool.fetchOne(db, sql: """
+                SELECT EXISTS(SELECT 1 FROM prompt_profiles WHERE id = ?)
+                """, arguments: [revision.entityID]) ?? false
+            if profileUpdated {
+                try db.execute(sql: """
+                    UPDATE prompt_profiles SET content = ?, updated_at = ? WHERE id = ?
+                    """, arguments: [revision.content, now, revision.entityID])
+            } else {
+                let reusableUpdated = try Bool.fetchOne(db, sql: """
+                    SELECT EXISTS(SELECT 1 FROM reusable_prompts WHERE id = ?)
+                    """, arguments: [revision.entityID]) ?? false
+                guard reusableUpdated else { return nil }
+                try db.execute(sql: """
+                    UPDATE reusable_prompts SET content = ?, updated_at = ? WHERE id = ?
+                    """, arguments: [revision.content, now, revision.entityID])
+            }
+            try Self.snapshotRevision(entityID: revision.entityID, content: revision.content, db: db)
+            return revision
+        }
+    }
+
     private static let promptRevisionKeep = 50
 
     private static func snapshotRevision(entityID: String, content: String, db: Database) throws {

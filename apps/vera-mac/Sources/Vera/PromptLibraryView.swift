@@ -356,9 +356,18 @@ struct PromptLibraryArea: View {
     }
 
     private func restore(_ revision: PromptRevision) {
-        editorContent = revision.content
-        save()
+        var restored = false
+        let applied = apply {
+            guard try repository.restorePromptRevision(revision.id) != nil else { return }
+            restored = true
+        }
         showHistory = false
+        if applied, !restored {
+            note("That revision's prompt no longer exists.", isError: true)
+        }
+        guard restored else { return }
+        editorContent = revision.content
+        reload()
         note("Restored the revision from \(revision.createdAt.formatted(date: .abbreviated, time: .shortened)).")
     }
 

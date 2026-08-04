@@ -135,7 +135,6 @@ Each integration unlocks its capability when its test passes; each degrades to "
 | Embeddings | Pulse novelty ranking and the duplicate-finding floor, profile-graph node embeddings for dedup-merge | Any OpenAI-compatible `POST {base}/v1/embeddings` endpoint; the model id is only needed for multi-model servers (llama-swap, hosted APIs). The LLM server can serve this too |
 | Vision review | Reviews generated Pulse cover art and permits one retry | Any OpenAI-compatible vision-capable endpoint, including the primary-model endpoint when that model accepts images. Configure its base URL and model, then promote Pulse's visual-review workflow draft. |
 | Apple Reminders | Reminders lists read/write from chat, shared lists included | URL of the `vera-reminders` bridge (see satellite services below) |
-| Code sandbox | The `code_interpreter` tool: the model runs Python in an isolated kernel for tasks no named tool covers | Stand one up with `scripts/vera-sandbox-setup.sh` (egress-free, resource-capped); point `VERA_SANDBOX_URL`/`VERA_SANDBOX_TOKEN` at it |
 
 ## 6. Satellite services (all optional)
 

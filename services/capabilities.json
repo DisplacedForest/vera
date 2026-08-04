@@ -14,12 +14,6 @@
       "avoid_when": "A single quick fact (use web_search instead)."
     },
     {
-      "tool": "execute_code", "node": "sandbox",
-      "summary": "Run Python in an isolated sandbox (pandas/numpy/matplotlib).",
-      "use_when": "Exact math, statistics, data analysis, date/unit conversions, or parsing/transforming files. Prefer running code over hand-calculating.",
-      "avoid_when": "Trivial arithmetic you can do reliably in your head."
-    },
-    {
       "tool": "kitchen_status", "node": "api",
       "summary": "Live kitchen state: low/expiring stock (Grocy) + recipes and today's meal plan (Mealie).",
       "use_when": "The user asks what's low/expiring, what to cook or what to buy, or about meals.",

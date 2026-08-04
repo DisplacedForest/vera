@@ -510,8 +510,10 @@ struct NativeToolLoop: Sendable {
             let task = Task {
                 do {
                     let active = registry.active(enabledIDs: enabledToolIDs)
-                    let definitions = Dictionary(uniqueKeysWithValues: active.map { ($0.name, $0) })
-                    let schemas = active.map(\.schema)
+                    let definitions = Dictionary(
+                        active.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+                    var seen: Set<String> = []
+                    let schemas = active.filter { seen.insert($0.name).inserted }.map(\.schema)
                     var history = messages
                     var content = ""
                     var activities: [NativeToolActivity] = []

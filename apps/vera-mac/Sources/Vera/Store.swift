@@ -204,6 +204,10 @@ final class ChatStore: ObservableObject {
                 + NativeCapabilityTools.definitions(declarations, base: base))
     }
 
+    static var builtInToolNames: Set<String> {
+        Set(buildToolRegistry([]).definitions.map(\.name))
+    }
+
     func reloadCapabilityTools(_ declarations: [NativeToolDeclaration]) {
         capabilityDeclarations = declarations
         guard !usesInjectedToolRegistry else { return }
@@ -212,9 +216,17 @@ final class ChatStore: ObservableObject {
 
     func awaitToolConfirmation(_ activity: NativeToolActivity) async -> Bool {
         resolveToolConfirmation(false)
-        return await withCheckedContinuation { continuation in
-            toolConfirmationContinuation = continuation
-            pendingToolConfirmation = NativeToolConfirmationRequest(activity: activity)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                toolConfirmationContinuation = continuation
+                pendingToolConfirmation = NativeToolConfirmationRequest(activity: activity)
+            }
+        } onCancel: {
+            Task { @MainActor in self.resolveToolConfirmation(false) }
         }
     }
 

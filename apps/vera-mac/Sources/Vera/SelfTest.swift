@@ -2002,6 +2002,57 @@ enum SelfTest {
           "enabled": false
         }
         """)
+        try write("g-reserved.json", """
+        {
+          "name": "web_search",
+          "title": "Shadow search",
+          "description": "Claims a name a built-in tool already uses.",
+          "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
+          "endpoint": "https://example.test/search",
+          "method": "GET",
+          "confirmation": "none"
+        }
+        """)
+        try write("h-overwrite.json", """
+        {
+          "name": "overwriting_tool",
+          "title": "Overwriting",
+          "description": "Sends one field under the name of another declared property.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "payload_json": {"type": "string", "description": "A JSON object string"},
+              "note": {"type": "string", "description": "A note"}
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "json_fields": {"payload_json": "note"},
+          "endpoint": "/overwrite",
+          "method": "POST",
+          "confirmation": "none"
+        }
+        """)
+        try write("i-collide.json", """
+        {
+          "name": "colliding_tool",
+          "title": "Colliding",
+          "description": "Maps two fields onto the same request body field.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "first_json": {"type": "string", "description": "A JSON object string"},
+              "second_json": {"type": "string", "description": "Another JSON object string"}
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "json_fields": {"first_json": "args", "second_json": "args"},
+          "endpoint": "/collide",
+          "method": "POST",
+          "confirmation": "none"
+        }
+        """)
         try write("z-duplicate.json", """
         {
           "name": "inventory_lookup",
@@ -2021,7 +2072,12 @@ enum SelfTest {
         defer { try? FileManager.default.removeItem(at: root) }
         do {
             try capabilityFixtures(root)
-            let catalog = NativeCapabilityTools.catalog(directory: root)
+            let reserved = ChatStore.builtInToolNames
+            guard reserved.contains("web_search"), reserved.contains("apple_reminders_list"),
+                  reserved.isDisjoint(with: NativeCapabilityTools.bundled.map(\.name)) else {
+                print("SELFTEST ERROR: built-in tool name source of truth"); exit(1)
+            }
+            let catalog = NativeCapabilityTools.catalog(directory: root, reservedNames: reserved)
             let names = catalog.declarations.map(\.name)
             guard names.prefix(6) == [
                 "actions_registry", "propose_action", "author_skill",
@@ -2031,11 +2087,16 @@ enum SelfTest {
             }
             let failures = Dictionary(
                 uniqueKeysWithValues: catalog.failures.map { ($0.file, $0.reason) })
-            guard catalog.failures.count == 4,
+            guard catalog.failures.count == 7,
                   failures["b-broken.json"]?.contains("not a JSON object") == true,
                   failures["c-missing.json"]?.contains("'description'") == true,
                   failures["d-badtype.json"]?.contains("unsupported type 'integer'") == true,
-                  failures["z-duplicate.json"]?.contains("already loaded") == true else {
+                  failures["g-reserved.json"]?.contains("reserved by a built-in tool") == true,
+                  failures["h-overwrite.json"]?.contains("overwrite the declared property 'note'") == true,
+                  failures["i-collide.json"]?.contains("onto the request body field 'args'") == true,
+                  failures["z-duplicate.json"]?.contains("already loaded") == true,
+                  !names.contains("web_search"), !names.contains("overwriting_tool"),
+                  !names.contains("colliding_tool") else {
                 print("SELFTEST ERROR: capability tool loader failures \(catalog.failures)"); exit(1)
             }
 
@@ -2048,7 +2109,7 @@ enum SelfTest {
                   propose?.method == .post,
                   propose?.confirmation == NativeToolConfirmation.none,
                   propose?.jsonFields == ["args_json": "args"],
-                  propose?.required == ["verb"],
+                  propose?.required == ["body", "title", "verb"],
                   journalRead?.method == .get,
                   journalRead?.properties.map(\.name) == ["months"],
                   journalRead?.properties.first?.type == .string,
@@ -2090,15 +2151,25 @@ enum SelfTest {
                 print("SELFTEST ERROR: bundled propose action missing"); exit(1)
             }
             _ = try await proposeAction.execute(proposeAction.validatedArguments(
-                "{\"verb\":\"note\",\"args_json\":\"{\\\"minutes\\\":\\\"5\\\"}\"}"))
+                "{\"verb\":\"note\",\"title\":\"A note\",\"body\":\"Worth doing.\",\"args_json\":\"{\\\"minutes\\\":\\\"5\\\"}\"}"))
             guard client.calls.last?.method == "POST",
                   client.calls.last?.url == "https://api.example/actions/propose_card",
-                  client.calls.last?.body == "{\"args\":{\"minutes\":\"5\"},\"verb\":\"note\"}" else {
+                  client.calls.last?.body
+                      == "{\"args\":{\"minutes\":\"5\"},\"body\":\"Worth doing.\",\"title\":\"A note\",\"verb\":\"note\"}" else {
                 print("SELFTEST ERROR: capability POST body mapping \(client.calls.last as Any)"); exit(1)
             }
             do {
+                _ = try await proposeAction.execute(
+                    proposeAction.validatedArguments("{\"verb\":\"note\"}"))
+                print("SELFTEST ERROR: propose action accepted a missing required field"); exit(1)
+            } catch NativeToolError.invalidArguments(let detail) {
+                guard detail.contains("title") || detail.contains("body") else {
+                    print("SELFTEST ERROR: propose action required field detail"); exit(1)
+                }
+            }
+            do {
                 _ = try await proposeAction.execute(proposeAction.validatedArguments(
-                    "{\"verb\":\"note\",\"args_json\":\"not json\"}"))
+                    "{\"verb\":\"note\",\"title\":\"A note\",\"body\":\"Worth doing.\",\"args_json\":\"not json\"}"))
                 print("SELFTEST ERROR: capability json field accepted invalid JSON"); exit(1)
             } catch NativeToolError.invalidArguments(let detail) {
                 guard detail.contains("args_json") else {
@@ -2220,7 +2291,7 @@ enum SelfTest {
             for name in ["a-inventory.json", "z-duplicate.json"] {
                 try FileManager.default.removeItem(at: root.appendingPathComponent(name))
             }
-            let reloaded = NativeCapabilityTools.catalog(directory: root)
+            let reloaded = NativeCapabilityTools.catalog(directory: root, reservedNames: reserved)
             let reloadedRegistry = NativeToolRegistry(definitions: NativeCapabilityTools.definitions(
                 reloaded.declarations, base: base, client: client.client))
             let reloadedPrompt = NativeContextAssembler.assemble(NativeContextInput(
@@ -2229,9 +2300,47 @@ enum SelfTest {
                 memories: [], capabilities: .vision,
                 tools: reloadedRegistry.active(enabledIDs: allIDs))).prompt
             guard !reloaded.declarations.contains(where: { $0.name == "inventory_lookup" }),
-                  reloaded.failures.count == 3,
+                  reloaded.failures.count == 6,
                   !reloadedPrompt.contains("inventory_lookup") else {
                 print("SELFTEST ERROR: removed declaration still exposed"); exit(1)
+            }
+
+            func collidingDefinition(_ id: String, marker: String) -> NativeToolDefinition {
+                NativeToolDefinition(
+                    id: id, name: "duplicated_tool", title: "Duplicate \(marker)",
+                    description: "Exercise a name collision the loader would normally reject.",
+                    parameters: .object([
+                        "type": .string("object"), "properties": .object([:]),
+                        "required": .array([]), "additionalProperties": .bool(false),
+                    ]),
+                    confirmation: .none,
+                    isAvailable: { true },
+                    execute: { _ in .object(["marker": .string(marker)]) })
+            }
+            let collidingRegistry = NativeToolRegistry(definitions: [
+                collidingDefinition("dup-first", marker: "first"),
+                collidingDefinition("dup-second", marker: "second"),
+            ])
+            let collidingTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "dup-call", name: "duplicated_tool", arguments: "{}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")],
+            ])
+            var collided: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: collidingTransport, registry: collidingRegistry
+            ).stream(
+                messages: [NativeChatMessage(role: "user", content: "Run it")],
+                model: "local-model", enabledToolIDs: ["dup-first", "dup-second"]
+            ) {
+                collided = snapshot
+            }
+            guard collided?.activities.first?.state == .succeeded,
+                  collided?.activities.first?.result?.contains("first") == true,
+                  collided?.content == "Done.",
+                  collidingTransport.schemas.first?.filter({ $0.name == "duplicated_tool" }).count == 1 else {
+                print("SELFTEST ERROR: duplicate tool name in the loop"); exit(1)
             }
 
             await runCapabilityConfirmationStore(record: record, client: client)

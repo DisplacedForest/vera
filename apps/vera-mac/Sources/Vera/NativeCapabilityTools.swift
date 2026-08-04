@@ -12,8 +12,16 @@ struct NativeHTTPToolClient: Sendable {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
-        return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+        let (stream, response) = try await URLSession.shared.bytes(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let limit = NativeCapabilityTools.responseByteCap + 1
+        var data = Data()
+        data.reserveCapacity(limit)
+        for try await byte in stream {
+            data.append(byte)
+            if data.count >= limit { break }
+        }
+        return (data, status)
     }
 }
 
@@ -100,9 +108,11 @@ enum NativeCapabilityTools {
             .appendingPathComponent(directoryName, isDirectory: true)
     }
 
-    static func catalog(directory: URL = defaultDirectory) -> NativeCapabilityToolCatalog {
+    static func catalog(
+        directory: URL = defaultDirectory, reservedNames: Set<String> = []
+    ) -> NativeCapabilityToolCatalog {
         var declarations = bundled
-        var taken = Set(declarations.map(\.name))
+        var taken = Set(declarations.map(\.name)).union(reservedNames)
         var failures: [NativeToolDeclarationFailure] = []
         let files = ((try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil)) ?? [])
@@ -120,7 +130,9 @@ enum NativeCapabilityTools {
                 guard !taken.contains(declaration.name) else {
                     failures.append(NativeToolDeclarationFailure(
                         file: label,
-                        reason: "A tool named '\(declaration.name)' is already loaded"))
+                        reason: reservedNames.contains(declaration.name)
+                            ? "The name '\(declaration.name)' is reserved by a built-in tool"
+                            : "A tool named '\(declaration.name)' is already loaded"))
                     continue
                 }
                 taken.insert(declaration.name)
@@ -427,7 +439,9 @@ enum NativeCapabilityTools {
             guard method == .post else {
                 throw NativeToolDeclarationError(reason: "'json_fields' requires the POST method")
             }
-            for (key, field) in mapping {
+            var claimed: [String: String] = [:]
+            for key in mapping.keys.sorted() {
+                let field = mapping[key] ?? ""
                 guard properties.contains(where: { $0.name == key && $0.type == .string }) else {
                     throw NativeToolDeclarationError(
                         reason: "'json_fields' names '\(key)', which is not a declared string property")
@@ -435,6 +449,15 @@ enum NativeCapabilityTools {
                 guard !field.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw NativeToolDeclarationError(
                         reason: "'json_fields' needs a request body field name for '\(key)'")
+                }
+                if let existing = claimed[field] {
+                    throw NativeToolDeclarationError(
+                        reason: "'json_fields' maps both '\(existing)' and '\(key)' onto the request body field '\(field)'")
+                }
+                claimed[field] = key
+                if field != key, properties.contains(where: { $0.name == field }) {
+                    throw NativeToolDeclarationError(
+                        reason: "'json_fields' sends '\(key)' as '\(field)', which would overwrite the declared property '\(field)'")
                 }
             }
             jsonFields = mapping
@@ -479,7 +502,7 @@ enum NativeCapabilityTools {
         {
           "name": "propose_action",
           "title": "Propose an action",
-          "description": "Propose an action for review. The verb must come from the action registry. Pass args_json as a JSON object string holding that verb's arguments, for example {\\"key\\": \\"value\\"}. The proposal is queued for a decision, not run.",
+          "description": "Propose an action for review. The verb must come from the action registry, and both title and body are required. Pass args_json as a JSON object string holding that verb's arguments, for example {\\"key\\": \\"value\\"}, when the verb takes any. The proposal is queued for a decision, not run.",
           "parameters": {
             "type": "object",
             "properties": {
@@ -488,7 +511,7 @@ enum NativeCapabilityTools {
               "title": {"type": "string", "description": "Short headline for the proposal"},
               "body": {"type": "string", "description": "One or two sentences explaining why the action is worth taking"}
             },
-            "required": ["verb"],
+            "required": ["verb", "title", "body"],
             "additionalProperties": false
           },
           "json_fields": {"args_json": "args"},

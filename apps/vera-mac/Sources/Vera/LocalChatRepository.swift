@@ -25,8 +25,21 @@ protocol NativeMemoryRepository: Sendable {
     func pendingProposals() throws -> [NativeMemoryProposal]
     func saveMemory(_ memory: NativeMemoryRecord, decision: NativeMemoryDecision, note: String) throws
     func saveProposal(_ proposal: NativeMemoryProposal) throws
-    func decideProposal(_ id: String, status: NativeMemoryProposalStatus) throws
-    func deleteMemory(_ id: String) throws
+    func decideProposal(_ id: String, status: NativeMemoryProposalStatus, note: String) throws
+    func deleteMemory(_ id: String, note: String) throws
+    func memoryChanges(limit: Int) throws -> [NativeMemoryChange]
+}
+
+extension NativeMemoryRepository {
+    func decideProposal(_ id: String, status: NativeMemoryProposalStatus) throws {
+        try decideProposal(
+            id, status: status,
+            note: status == .accepted ? "Approved memory proposal" : "Dismissed memory proposal")
+    }
+
+    func deleteMemory(_ id: String) throws {
+        try deleteMemory(id, note: "Deleted by the user")
+    }
 }
 
 final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchecked Sendable {
@@ -480,7 +493,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         }
     }
 
-    func decideProposal(_ id: String, status: NativeMemoryProposalStatus) throws {
+    func decideProposal(_ id: String, status: NativeMemoryProposalStatus, note: String) throws {
         try database.write { db in
             guard let row = try Row.fetchOne(
                 db, sql: "SELECT proposal_json FROM native_memory_proposals WHERE id = ?", arguments: [id]),
@@ -493,12 +506,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 NativeMemoryChange(
                     id: UUID().uuidString, memoryID: proposal.targetIDs.first, proposalID: id,
                     decision: status == .accepted ? .accepted : .dismissed,
-                    note: status == .accepted ? "Approved memory proposal" : "Dismissed memory proposal",
-                    createdAt: Date()), db: db)
+                    note: note, createdAt: Date()), db: db)
         }
     }
 
-    func deleteMemory(_ id: String) throws {
+    func deleteMemory(_ id: String, note: String) throws {
         try database.write { db in
             guard let row = try Row.fetchOne(
                 db, sql: "SELECT record_json FROM native_memories WHERE id = ?", arguments: [id]),
@@ -510,7 +522,18 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
             try Self.writeChange(
                 NativeMemoryChange(
                     id: UUID().uuidString, memoryID: id, proposalID: nil,
-                    decision: .deleted, note: "Deleted by the user", createdAt: Date()), db: db)
+                    decision: .deleted, note: note, createdAt: Date()), db: db)
+        }
+    }
+
+    func memoryChanges(limit: Int) throws -> [NativeMemoryChange] {
+        try database.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT change_json FROM native_memory_changes
+                ORDER BY created_at DESC, id ASC
+                LIMIT ?
+                """, arguments: [limit])
+                .compactMap { row in Self.decode(row["change_json"], as: NativeMemoryChange.self) }
         }
     }
 

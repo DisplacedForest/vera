@@ -15,7 +15,7 @@ The Memory area organizes readable records into four sections:
 
 Each row shows a name, concise summary, and last-updated date. The detail view shows readable durable details and provides edit, delete, and source controls. Embeddings, similarity scores, and retrieval metadata are not shown in the primary library.
 
-Each record also has an internal category and bank. Banks scope recall without replacing the four user-facing sections. A record is either durable or episodic. Episodic records require an absolute expiry date and stop appearing in recall immediately after that date. Expiry cleanup remains a reviewable proposal.
+Each record also has an internal category and bank. Banks scope recall without replacing the four user-facing sections. A record is either durable or episodic. Episodic records require an absolute expiry date and stop appearing in recall immediately after that date. An automatic groom then removes an approved episodic record once its expiry date is strictly before the current date in the user's calendar: a record expiring today survives until tomorrow, and durable records and records without an expiry are never touched.
 
 ## Chat behavior
 
@@ -50,13 +50,13 @@ The repository contains `services/owui-functions/adaptive_memory_v3.valves.md`, 
 | Text and semantic duplicate handling | Exact proposals are skipped, similar content becomes an update proposal, and extracted creates reconcile to updates |
 | Correction and deletion | User edits are immediate, model suggestions wait for review, and deletion immediately prevents later recall |
 | Durable and episodic facts | Episodic records require an absolute expiry date and are excluded after it |
-| Consolidation and bounded storage | Merge, consolidation, expiry, and capacity actions are reviewable proposals |
+| Consolidation and bounded storage | Merge, consolidation, and capacity actions are reviewable proposals; past-expiry episodic records are groomed automatically |
 | Clear status | Off, setup required, indexing, ready, pending review, unavailable, maintenance needed, and failed states |
 
 The native design intentionally differs in these ways:
 
-* Open WebUI and vera-api are not personal-memory runtime dependencies.
-* There are no opaque background writes or automatic destructive actions.
+* Personal memory has no server runtime dependencies; it runs entirely against the local store.
+* The only automatic removal is the expiry groom, and every removal writes an inspectable audit entry.
 * Provider settings, credentials, authorization headers, action tokens, function code, and hidden reasoning are not stored as memory.
 * Maintenance runs only while the app is active and memory is enabled.
 * Optional service failure never blocks ordinary native chat.
@@ -66,6 +66,8 @@ The native design intentionally differs in these ways:
 
 The review queue supports accept and dismiss for all proposal types. Accepted creates become approved records and are embedded before recall. Accepted updates and merges replace only the records named in the visible proposal. User edits invalidate the old embedding and reindex the approved text. Delete and suppress decisions remove the record from recall immediately.
 
-Maintenance never performs network work when memory is off or the optional memory service is unavailable. Expired episodic records and capacity pressure create proposals. They do not delete or prune records on their own.
+Maintenance never performs network work when memory is off or the optional memory service is unavailable. Records expiring today and capacity pressure create proposals; they do not delete or prune records on their own.
+
+The expiry groom is separate from proposal-driven maintenance. It runs at app launch and every 24 hours while the app stays running, only while memory is enabled, entirely against the local store. Each pass deletes approved episodic records whose expiry date is strictly before the current date, writes an audit entry for every removal through the memory change trail, and dismisses pending proposals that target a removed record so the review queue never dangles. A pass with nothing to do is silent; a nonzero pass or a failure shows a transient outcome line on the Memory status card. Passes are idempotent, and a dry run reports candidates without deleting anything.
 
 At 1,000 approved records, the local repository rejects another approved create until the user accepts an actionable cleanup or consolidation proposal. The proposal names and links the exact records it would replace or remove.

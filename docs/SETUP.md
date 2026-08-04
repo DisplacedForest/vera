@@ -107,7 +107,7 @@ Continuing a Pulse card into chat is native and local. The first continuation of
 
 Settings, Memory controls the optional native personal-memory feature. It starts off after upgrade. Approved records stay in the Mac app's local database and are organized in the Memory Library as **You**, **Topics**, **Areas**, and **People**. A compatible embeddings model enables semantic recall. A compatible chat model can create bounded proposals from completed turns and natural-language change requests. Missing or failed optional models leave ordinary chat usable.
 
-All generated changes wait in the Memory review queue. Vera does not automatically create, update, merge, suppress, expire, prune, or delete approved memory. Episodic memory requires an absolute expiry date and stops appearing in recall after that date. A conversation can be excluded from suggestions through its sidebar menu.
+All generated changes wait in the Memory review queue. Vera does not automatically create, update, merge, suppress, or prune approved memory. Episodic memory requires an absolute expiry date, stops appearing in recall after that date, and is removed by an automatic groom once the date has passed, with each removal recorded in the audit trail. A conversation can be excluded from suggestions through its sidebar menu.
 
 See [Native memory](NATIVE_MEMORY.md) for the recall budgets, privacy boundary, retained Adaptive Memory behavior, and intentional differences.
 

@@ -16,6 +16,7 @@ final class ChatStore: ObservableObject {
     @Published var memoryRecords: [NativeMemoryRecord] = []
     @Published var memoryProposals: [NativeMemoryProposal] = []
     @Published var memoryServiceState: NativeMemoryServiceState = .off
+    @Published var memoryGroomOutcome: NativeMemoryGroomOutcome?
     @Published var journalEntries: [JournalEntry] = []        // her standing commitments (read-only)
     @Published var journalArchive: [JournalArchiveMonth] = [] // recently resolved ones
     @Published var streamStatus: String?     // live tool/progress line while Vera is thinking
@@ -232,8 +233,10 @@ final class ChatStore: ObservableObject {
         newConversation()
         await refreshPulse()
         reloadNativeMemory()
+        runMemoryGroom()
         runNativeMemoryMaintenance()
         startReconcileLoop()
+        startMemoryGroomLoop()
     }
 
     private var reconcilingChats = false
@@ -572,6 +575,7 @@ final class ChatStore: ObservableObject {
         nativeMemorySettings = settings
         nativeMemoryService = service
         reloadNativeMemory()
+        runMemoryGroom()
         runNativeMemoryMaintenance()
     }
 
@@ -765,6 +769,67 @@ final class ChatStore: ObservableObject {
             reloadNativeMemory()
         } catch {
             memoryServiceState = .failed("The memory library could not be cleared: \(error.localizedDescription)")
+        }
+    }
+
+    @discardableResult
+    func runMemoryGroom(
+        dryRun: Bool = false, now: Date = Date(), calendar: Calendar = .current
+    ) -> NativeMemoryGroomOutcome? {
+        guard nativeMemorySettings.enabled,
+              let memoryRepository = repository as? any NativeMemoryRepository else { return nil }
+        do {
+            let expired = NativeMemoryGroom.expired(
+                records: try memoryRepository.allMemories(), now: now, calendar: calendar)
+            if dryRun {
+                let outcome = NativeMemoryGroomOutcome(
+                    removedCount: expired.count, invalidatedProposalCount: 0,
+                    dryRun: true, error: nil, finishedAt: now)
+                memoryGroomOutcome = outcome
+                return outcome
+            }
+            guard !expired.isEmpty else {
+                memoryGroomOutcome = nil
+                return nil
+            }
+            var removedIDs = Set<String>()
+            for record in expired {
+                try memoryRepository.deleteMemory(record.id, note: "Removed by the expiry groom")
+                removedIDs.insert(record.id)
+            }
+            let dangling = NativeMemoryGroom.danglingProposals(
+                pending: try memoryRepository.pendingProposals(), removedIDs: removedIDs)
+            for proposal in dangling {
+                try memoryRepository.decideProposal(
+                    proposal.id, status: .dismissed,
+                    note: "Invalidated by the expiry groom: the target memory expired")
+            }
+            let outcome = NativeMemoryGroomOutcome(
+                removedCount: removedIDs.count, invalidatedProposalCount: dangling.count,
+                dryRun: false, error: nil, finishedAt: now)
+            memoryGroomOutcome = outcome
+            reloadNativeMemory()
+            return outcome
+        } catch {
+            let outcome = NativeMemoryGroomOutcome(
+                removedCount: 0, invalidatedProposalCount: 0, dryRun: dryRun,
+                error: error.localizedDescription, finishedAt: now)
+            memoryGroomOutcome = outcome
+            return outcome
+        }
+    }
+
+    private var memoryGroomLoopStarted = false
+    private func startMemoryGroomLoop() {
+        guard !memoryGroomLoopStarted else { return }
+        memoryGroomLoopStarted = true
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 24 * 60 * 60 * 1_000_000_000)
+                guard let self else { return }
+                self.runMemoryGroom()
+                self.runNativeMemoryMaintenance()
+            }
         }
     }
 

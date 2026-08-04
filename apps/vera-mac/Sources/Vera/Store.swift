@@ -45,6 +45,7 @@ final class ChatStore: ObservableObject {
     private var nativeConfig: NativeChatConfig?
     private var nativeTransport: (any NativeChatTransport)?
     private var nativeSystemPrompt: String
+    private var nativeOwnerName: String?
     private var nativeEnabledToolIDs: Set<String>
     private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]
     private var visionBridgeConfig: VisionBridgeConfig?
@@ -70,6 +71,7 @@ final class ChatStore: ObservableObject {
          nativeConfig: NativeChatConfig?, nativeTransport: (any NativeChatTransport)?,
          repository: (any ChatRepository)?, repositoryError: String? = nil, hasLegacyOWUI: Bool,
          nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt,
+         nativeOwnerName: String? = nil,
          nativeEnabledToolIDs: Set<String> = [],
          nativeCapabilityOverrides: [String: ModelCapabilityProfile] = [:],
          visionBridgeConfig: VisionBridgeConfig? = nil,
@@ -86,6 +88,7 @@ final class ChatStore: ObservableObject {
         self.nativeConfig = nativeConfig
         self.nativeTransport = nativeTransport
         self.nativeSystemPrompt = nativeSystemPrompt
+        self.nativeOwnerName = nativeOwnerName
         self.nativeEnabledToolIDs = nativeEnabledToolIDs
         self.nativeCapabilityOverrides = nativeCapabilityOverrides
         self.visionBridgeConfig = visionBridgeConfig
@@ -153,7 +156,8 @@ final class ChatStore: ObservableObject {
 
     /// Standalone constructor (screenshots / `Shot`): loads config and builds its own deps.
     convenience init() {
-        let native = ConfigStore().nativeResolved
+        let configStore = ConfigStore()
+        let native = configStore.nativeResolved
         let legacy = OWUIConfig.load()
         let ambient = legacy ?? OWUIConfig.ambientOnly(native: native)
         self.init(
@@ -164,6 +168,7 @@ final class ChatStore: ObservableObject {
             nativeTransport: native.map { NativeChatClient(config: $0) },
             repository: try? LocalChatRepository(inMemory: true),
             hasLegacyOWUI: legacy != nil,
+            nativeOwnerName: configStore.ownerName,
             nativeMemorySettings: .fresh)
     }
 
@@ -187,6 +192,7 @@ final class ChatStore: ObservableObject {
     func adoptNative(
         _ cfg: NativeChatConfig,
         systemPrompt: String = NativeChatSettings.defaultSystemPrompt,
+        ownerName: String? = nil,
         enabledToolIDs: Set<String>? = nil,
         capabilityOverrides: [String: ModelCapabilityProfile]? = nil,
         visionBridge: VisionBridgeConfig? = nil,
@@ -196,6 +202,7 @@ final class ChatStore: ObservableObject {
         nativeConfig = cfg
         nativeTransport = NativeChatClient(config: cfg)
         nativeSystemPrompt = systemPrompt
+        nativeOwnerName = ownerName
         if let enabledToolIDs { nativeEnabledToolIDs = enabledToolIDs }
         if let capabilityOverrides { nativeCapabilityOverrides = capabilityOverrides }
         visionBridgeConfig = visionBridge
@@ -1232,6 +1239,9 @@ final class ChatStore: ObservableObject {
         let bridgeTransportFactory = visionBridgeTransportFactory
         let memorySettings = nativeMemorySettings
         let memoryService = nativeMemoryService
+        let persona = nativeSystemPrompt
+        let ownerName = nativeOwnerName ?? config?.ownerName
+        let activeTools = nativeToolRegistry.active(enabledIDs: enabledToolIDs)
         Task {
             defer { generating = false }
             var lastCheckpoint = Date.distantPast
@@ -1275,9 +1285,7 @@ final class ChatStore: ObservableObject {
                 }
                 let turnMessages = conversations.first(where: { $0.id == id })?.messages
                     ?? []
-                var history = NativeChatHistoryBuilder.build(
-                    messages: turnMessages, systemPrompt: nativeSystemPrompt,
-                    imageLoader: imageLoader, capabilities: capabilityProfile)
+                var selectedMemories: [NativeMemoryRanked] = []
                 if memorySettings.enabled {
                     if memorySettings.embeddingsModel.isEmpty || memoryService == nil {
                         memoryServiceState = .setupRequired
@@ -1288,13 +1296,9 @@ final class ChatStore: ObservableObject {
                               let memoryService {
                         do {
                             let query = try await memoryService.embed(text)
-                            let selected = NativeMemoryRecall.rank(
+                            selectedMemories = NativeMemoryRecall.rank(
                                 records: try memoryRepository.approvedMemories(), query: query,
                                 bankScope: memorySettings.bankScope)
-                            history = NativeMemoryPromptAssembler.build(
-                                messages: turnMessages,
-                                systemPrompt: nativeSystemPrompt, selected: selected,
-                                imageLoader: imageLoader, capabilities: capabilityProfile)
                             memoryServiceState = memoryProposals.isEmpty
                                 ? .ready : .pendingReview(memoryProposals.count)
                         } catch {
@@ -1302,6 +1306,13 @@ final class ChatStore: ObservableObject {
                         }
                     }
                 }
+                let assembled = NativeContextAssembler.assemble(NativeContextInput(
+                    persona: persona, timestamp: Date(), timeZone: .current,
+                    ownerName: ownerName, memories: selectedMemories,
+                    capabilities: capabilityProfile, tools: activeTools))
+                let history = NativeChatHistoryBuilder.build(
+                    messages: turnMessages, systemPrompt: assembled.prompt,
+                    imageLoader: imageLoader, capabilities: capabilityProfile)
                 for try await snapshot in toolLoop.stream(
                     messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
                 ) {

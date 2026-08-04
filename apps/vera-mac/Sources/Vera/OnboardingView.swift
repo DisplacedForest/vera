@@ -121,6 +121,7 @@ struct OnboardingSheet: View {
         store.adoptNative(
             resolved,
             systemPrompt: config.nativeSettings.systemPrompt,
+            ownerName: config.ownerName,
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,
             visionBridge: config.visionBridgeResolved,

@@ -69,6 +69,7 @@ scan "lan-ip"          '(^|[^0-9.])(192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{
 scan "lan-ip-10"       '(^|[^0-9.])10(\.[0-9]{1,3}){3}([^0-9]|$)'
 scan "home-abs-path"   '/Users/[A-Za-z0-9]'
 scan "internal-issue-ref" 'SER-[0-9]+'
+scan "tracker-name"    'linear\.app|Linear (ticket|issue|identifier|key|comment|project)'
 
 # Secret-shaped strings. The shapes are the single source shared with the vein export
 # sanitizer (services/vera-api/routers/leak_patterns.txt), so the gate and the sanitizer

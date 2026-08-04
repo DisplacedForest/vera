@@ -71,8 +71,8 @@ def test_gated_run_is_plain_skip():
 
 
 def test_generic_fallback_never_dumps_dict():
-    out = summarize_outcome("memory_groom", {"ok": True, "pruned": 4, "kept": 99, "nested": {"a": 1}})
-    assert out == "Episodic memory groom completed."
+    out = summarize_outcome("home_model", {"ok": True, "pruned": 4, "kept": 99, "nested": {"a": 1}})
+    assert out == "Home model refresh completed."
     _no_record_markers(out)
 
 

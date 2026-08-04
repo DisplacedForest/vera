@@ -6,7 +6,7 @@ import aiohttp
 
 from .persona import think_kwargs
 
-OWUI_BASE = os.environ.get("OWUI_BASE", "").rstrip("/")          # Open WebUI (memory, chat promotion)
+OWUI_BASE = os.environ.get("OWUI_BASE", "").rstrip("/")
 OWUI_KEY = os.environ.get("OWUI_KEY", "")
 VERA_BASE = os.environ.get("VERA_BASE", "").rstrip("/")          # main LLM, any OpenAI-compatible /v1
 MODEL = os.environ.get("VERA_MODEL", "")
@@ -50,21 +50,15 @@ def _chat_payload(messages, temperature, think=None) -> dict:
 
 
 async def _vera(messages, temperature=0.4, think=None):
-    d = await _request_json("POST", f"{VERA_BASE}/chat/completions",
-                            timeout=300, json=_chat_payload(messages, temperature, think))
-    return d["choices"][0]["message"]["content"]
+    from . import model_client
+    return await model_client.complete_text(messages, temperature=temperature, think=think)
 
 
-async def _get_memories():
-    return await _request_json("GET", f"{OWUI_BASE}/api/v1/memories/",
-                               timeout=30, headers=_headers())
+async def _get_memories(user_id=None):
+    from . import memory_context
+    return await memory_context.native_memories(user_id)
 
 
 async def _active_users():
-    """OWUI accounts — the people Vera serves. Each gets their own briefing/feed."""
-    try:
-        d = await _request_json("GET", f"{OWUI_BASE}/api/v1/users/", timeout=20, headers=_headers())
-        users = d.get("users") if isinstance(d, dict) else d
-        return [{"id": u.get("id"), "name": u.get("name")} for u in (users or []) if u.get("id")]
-    except Exception:
-        return []
+    from .identity import active_users
+    return await active_users()

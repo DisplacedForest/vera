@@ -96,7 +96,7 @@ def test_drill_in_topology():
     assert hb["stage_layout"] == "fan"
     assert [s["id"] for s in hb["stages"]] == ["learn", "refine", "propose", "watch", "foryou"]
     # Simple jobs carry no stages: the manifest decides depth.
-    assert "stages" not in _flow(out, "memory_groom")
+    assert "stages" not in _flow(out, "home_model")
 
 
 def test_pulse_topology_comes_from_the_active_workflow():

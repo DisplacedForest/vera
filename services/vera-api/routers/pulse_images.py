@@ -121,24 +121,22 @@ async def _vision(pause: bool):
 
 
 async def review_cover(image_url: str, headline: str, summary: str, body: str) -> dict | None:
-    vision_base, vision_model = _vision_config()
-    if not vision_base or not vision_model or not image_url:
+    from . import model_client
+    if not model_client.configured("vision") or not image_url:
         return None
-    base = vision_base if vision_base.endswith("/v1") else f"{vision_base}/v1"
     prompt = (
         "Review this briefing-card image against the supplied story. Return JSON only with "
         "accept (boolean), score (number from zero to one), and reason (short string). Reject only if it is unrelated, contains "
         "prominent text or logos, or fails to depict the main subject. Story: "
         f"Headline: {headline}. Summary: {summary}. Body: {body[:600]}"
     )
-    payload = {"model": vision_model, "temperature": 0,
-               "messages": [{"role": "user", "content": [
-                   {"type": "text", "text": prompt},
-                   {"type": "image_url", "image_url": {"url": image_url}},
-               ]}]}
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": image_url}},
+    ]}]
     try:
-        response = await _request_json("POST", f"{base}/chat/completions", timeout=120, json=payload)
-        content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+        msg = await model_client.complete(messages, workload="vision", temperature=0)
+        content = msg.get("content") or ""
         match = re.search(r"\{.*\}", content, re.DOTALL)
         verdict = json.loads(match.group(0) if match else content)
         if not isinstance(verdict.get("accept"), bool):

@@ -22,7 +22,6 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import aiohttp
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
@@ -35,8 +34,6 @@ from .persona import voiced  # SOUL — the dream coder is a generic instruct mo
 router = APIRouter()
 TZ = ZoneInfo(os.environ.get("HOME_TZ", "UTC"))
 
-DREAM_BASE = os.environ.get("DREAM_BASE", "").rstrip("/")  # dreaming/coder LLM, any OpenAI-compatible /v1
-DREAM_MODEL = os.environ.get("DREAM_MODEL", "")
 AGENT_TOKEN = os.environ.get("KNOWLEDGE_AGENT_TOKEN", "")  # same coding-agent token as the groom routes
 
 # Tunables (env-overridable; conservative defaults).
@@ -50,14 +47,8 @@ DREAMS_MD = os.path.join(vm.DIR, "DREAMS.md")
 async def _dream_llm(messages, temperature=0.3):
     """One call to the dream coder (OpenAI-compatible). Long timeout: it's an on-demand model that
     may be cold-loading (~15-30s) at the start of a nightly run."""
-    async with aiohttp.ClientSession() as s:
-        async with s.post(
-            f"{DREAM_BASE}/chat/completions",
-            json={"model": DREAM_MODEL, "stream": False, "temperature": temperature, "messages": messages},
-            timeout=aiohttp.ClientTimeout(total=600),
-        ) as r:
-            d = await r.json()
-    return d["choices"][0]["message"]["content"]
+    from . import model_client
+    return await model_client.complete_text(messages, workload="coder", temperature=temperature)
 
 
 def _norm(e):
@@ -288,8 +279,10 @@ async def reverify(b: ReverifyBody, x_agent_token: str = Header(default="")):
     dry_run defaults true (never deletes live memory without an explicit dry_run=false)."""
     if not AGENT_TOKEN or x_agent_token != AGENT_TOKEN:
         raise HTTPException(403, "reverify requires X-Agent-Token")
-    if not DREAM_BASE or not DREAM_MODEL:
-        raise HTTPException(503, "reverify requires the dream/coder LLM. Set DREAM_BASE and DREAM_MODEL")
+    from . import model_client
+    reason = model_client.unavailable_reason("coder")
+    if reason:
+        raise HTTPException(503, reason)
     cands = _reverify_candidates()[: b.limit]
     today = datetime.now(TZ).strftime("%A, %B %d, %Y")
     flagged = []

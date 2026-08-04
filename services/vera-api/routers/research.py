@@ -14,7 +14,8 @@ import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from .pulse import OWUI_BASE, OWUI_KEY, _headers, _vera
+from .pulse import _vera
+from .pulse_llm import OWUI_BASE, OWUI_KEY, _headers
 from .persona import owner, voiced
 from .tool_protocol import LOOP_RULES, loop_budget
 from .websearch import SearchRequest, search as web_search

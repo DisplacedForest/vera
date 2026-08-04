@@ -7,7 +7,7 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 | Piece | What it is | Required? |
 |---|---|---|
 | An OpenAI-compatible LLM server | llama.cpp / llama-swap / vLLM / Ollama / a hosted API — anything serving `/v1` | Yes |
-| [Open WebUI](https://github.com/open-webui/open-webui) | Transitional memory and tool surfaces | No |
+| [Open WebUI](https://github.com/open-webui/open-webui) | Transitional tool and skill surfaces | No |
 | **Vera.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
 | **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, heartbeat, scheduler, actions) | Optional |
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
@@ -19,7 +19,7 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 
 - **An LLM endpoint** — any standard OpenAI-compatible `/v1` server with a capable instruct model.
 - **Docker** (optional) on any Linux/macOS host for vera-api or Open WebUI.
-- **Open WebUI** (optional) for the transitional memory and tool surfaces that have not moved into the native engine.
+- **Open WebUI** (optional) for the transitional tool and skill surfaces that have not moved into the native engine.
 
 ## 2. vera-api
 
@@ -49,9 +49,9 @@ docker compose logs vera-api | head -60
 | Block | Variables | What it unlocks |
 |---|---|---|
 | Core LLM | `VERA_BASE`, `VERA_MODEL` | Everything generated: Pulse briefings, card text, judges |
-| Open WebUI | `OWUI_BASE`, `OWUI_KEY`, `VERA_DEFAULT_USER` | Memory, promoted cards, self-authored skills |
+| Open WebUI | `OWUI_BASE`, `OWUI_KEY` | Self-authored skills, knowledge collections, and chat-history learning while one is still connected |
 | Web search | `SEARXNG_BASE` (+ optional `PLAYWRIGHT_WS`) | Research, Pulse sourcing, watcher veins, and the Mac app's web search and deep research chat tools (the app reaches them through its `vera_api_base` setting, never SearXNG directly) |
-| Identity | `VERA_OWNER_NAME`, `HOME_LOCATION_NAME`, `HOME_TZ`, `WEATHER_LAT`/`LON`, `TEMPERATURE_UNIT` | Personalization, schedules in your timezone, weather anchoring |
+| Identity | `VERA_OWNER_ID`, `VERA_OWNER_NAME`, `HOME_LOCATION_NAME`, `HOME_TZ`, `WEATHER_LAT`/`LON`, `TEMPERATURE_UNIT` | Personalization, the owner id that cards/read marks/profiles are keyed by (defaults to `owner`), schedules in your timezone, weather anchoring |
 | Dream/coder | `DREAM_BASE`, `DREAM_MODEL`, `DREAM_TOOL_PROTOCOL` | Nightly knowledge consolidation + fact verification |
 | Audit hooks | `AUDIT_WAKE_URL`, `AUDIT_RELEASE_URL` | Cross-model claim audits on every Pulse run when the audit model is served on demand (POSTed before/after the batched end-of-run audit; unset = no hook calls) |
 | Image gen | `VERA_IMAGE_BASE`, `IMAGE_PROTOCOL` | Generated cover art on Pulse cards |
@@ -110,6 +110,10 @@ Settings, Memory controls the optional native personal-memory feature. It starts
 All generated changes wait in the Memory review queue. Vera does not automatically create, update, merge, suppress, or prune approved memory. Episodic memory requires an absolute expiry date, stops appearing in recall after that date, and is removed by an automatic groom once the date has passed, with each removal recorded in the audit trail. A conversation can be excluded from suggestions through its sidebar menu.
 
 See [Native memory](NATIVE_MEMORY.md) for the recall budgets, privacy boundary, retained Adaptive Memory behavior, and intentional differences.
+
+### Conversation ingestion (opt-in)
+
+vera-api's Profile Graph learns from conversation transcripts. Alongside the scheduled pull sources, `POST /conversations/ingest` accepts batched transcripts pushed by a client (each with a stable `conv_id`, a unix `ts`, and role/text messages). The endpoint is guarded by the `X-Agent-Token` header matching `KNOWLEDGE_AGENT_TOKEN` and rejects everything when that variable is unset, so nothing is ingested unless you explicitly configure the token and point a client at it. Ingestion is idempotent per `conv_id`: re-posting a conversation is counted as a duplicate and changes nothing.
 
 When vera-api is configured, Pulse and the other ambient surfaces continue operating independently. The two opt-in surfaces afterward each live inside the feature they drive:
 
@@ -177,8 +181,7 @@ vera-api runs all recurring work itself — no external cron. Defaults:
 
 | Job | Default | Gated on |
 |---|---|---|
-| Pulse briefing | daily 5:00 | — (core; needs your LLM + Open WebUI) |
-| Episodic memory groom | daily 4:00 | — (core; needs Open WebUI) |
+| Pulse briefing | daily 5:00 | — (core; needs your LLM) |
 | Home modeling (3 nightly jobs) | 2:00–3:30 | Home Assistant's home-modeling consent |
 | Heartbeat tick | every 20 min | `HEARTBEAT_ENABLED` kill switch |
 | Vein runs (`vein_<kind>`) | each definition's `schedule` | that vein's enable state |

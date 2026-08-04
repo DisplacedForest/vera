@@ -390,7 +390,7 @@ def test_pulse_run_executes_every_inserted_flow_node(pulse_harness, fake_get):
     assert rows["notify"]["output"]["cards"] == 1
     cards = _notify_cards(pulse_store)
     assert len(cards) == 1
-    assert cards[0]["situation_key"] == "workflow-notify:pulse:notify"
+    assert cards[0]["situation_key"] == f"workflow-notify:pulse:notify:{pulse_store.DEFAULT_USER}"
 
 
 def _insert_into(definition, node, upstream, downstream):

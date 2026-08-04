@@ -183,8 +183,6 @@ FLOW_FACE: dict[str, dict] = {
                        "group": "Ambient", "feeds": ["pulse_feed"],
                        "tools": ["websearch", "vera-image"],
                        "stage_layout": "pipeline", "stages": _PULSE_STAGES},
-    "memory_groom":   {"label": "Memory groom", "icon": "archivebox", "tint": "purple",
-                       "group": "Memory", "feeds": ["memory"], "tools": []},
     "home_model":     {"label": "Home model", "icon": "house", "tint": "cyan",
                        "group": "Home", "feeds": ["actions"], "tools": []},
     "home_reconcile": {"label": "Map reconcile", "icon": "checklist", "tint": "cyan",

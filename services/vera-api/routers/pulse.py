@@ -10,7 +10,6 @@ The scheduler's only job is to trigger this each morning.
 import asyncio
 import logging
 import os
-import re
 import time
 import uuid
 from datetime import datetime
@@ -22,7 +21,6 @@ from . import pulse_veins
 from . import pulse_store as store
 from . import user_profile_store as up
 from . import vera_interests_store as vi
-from . import pulse_llm
 from . import pulse_images
 from . import pulse_gates
 from . import pulse_synthesis
@@ -33,8 +31,8 @@ from . import pulse_nodes
 from . import workflow_nodes
 from .websearch import search as web_search
 from .pulse_llm import (
-    OWUI_BASE, OWUI_KEY, VERA_BASE, MODEL, TZ,
-    _vera, _chat_payload, _headers, _get_memories, _active_users, _parse_template_kwargs,
+    VERA_BASE, MODEL, TZ,
+    _vera, _chat_payload, _get_memories, _active_users, _parse_template_kwargs,
 )
 from .pulse_images import (
     VERA_IMAGE_BASE, STYLE_PALETTE, IMAGE_SYS,
@@ -59,8 +57,6 @@ from .pulse_audit import (
 router = APIRouter()
 log = logging.getLogger("vera.pulse")
 
-DEFAULT_FOLDER = os.environ.get("PULSE_FOLDER_ID", "")
-
 # The delivery contract per run: keep re-triaging (bounded rounds) until at least the floor
 # of NOVEL cards lands; the ceiling caps a run no matter how much looks interesting. The
 # dedup gate never loosens — a gated topic costs the run a retry, not a card.
@@ -84,63 +80,17 @@ CHAT_TEMPLATE_KWARGS = _parse_template_kwargs()
 class PulseRequest(BaseModel):
     interests: list[str] = []
     max_cards: int | None = None  # explicit cap; defaults to PULSE_MAX_CARDS and never exceeds it
-    pulse_folder_id: str | None = None
     sweep_only: bool = False  # run just the cleanup sweep, skip generation
     user_id: str | None = None    # who this briefing is for (defaults to the household owner)
     user_name: str | None = None  # display name for the briefing voice
 
 
-def _marker_body(c):
-    """Encode a card's structure as vera-* markers + body, so a promoted OWUI chat is self-describing
-    (the app reconstructs the rich card from these on load — sources, inline photos, tint, cover)."""
-    m = []
-    if c.get("image_url"):
-        m.append(f"<!--vera-image {c['image_url']}-->")
-    if c.get("tint"):
-        m.append(f"<!--vera-tint {c['tint']}-->")
-    if c.get("summary"):
-        m.append(f"<!--vera-summary {c['summary']}-->")
-    for s in (c.get("sources") or []):
-        title_clean = re.sub(r"\s+", " ", str(s["title"]).replace("|", " ")).strip()
-        m.append(f"<!--vera-source {s['n']}|{title_clean}|{s['url']}-->")
-    for im in (c.get("inline_images") or []):
-        m.append(f"<!--vera-inline {im['n']}|{im['url']}|{_clean_caption(im.get('caption', ''))}|{im.get('sourceN') or 0}-->")
-    body = c.get("body", "")
-    return ("\n".join(m) + "\n\n" + body) if m else body
-
-
-async def _create_owui_chat(card):
-    """Promotion: create a real OWUI chat (no folder) seeded with the marker-encoded card. Returns id."""
-    mid = str(uuid.uuid4())
-    ts = int(time.time())
-    title = card.get("title", "")
-    body = _marker_body(card)
-    chat = {
-        "id": "",
-        "title": f"Pulse · {title}",
-        "models": [MODEL],
-        "params": {},
-        "history": {
-            "currentId": mid,
-            "messages": {mid: {"id": mid, "parentId": None, "childrenIds": [], "role": "assistant",
-                               "content": body, "timestamp": ts, "models": [MODEL]}},
-        },
-        "messages": [{"role": "assistant", "content": body}],
-        "tags": [],
-        "files": [],
-        "timestamp": ts * 1000,
-    }
-    obj = await pulse_llm._request_json("POST", f"{OWUI_BASE}/api/v1/chats/new",
-                                        timeout=30, headers=_headers(), json={"chat": chat})
-    return obj.get("id")
-
-
-async def _inject(title, body, folder_id=None, image_url=None, tint=None, sources=None,
+async def _inject(title, body, image_url=None, tint=None, sources=None,
                   summary=None, inline_images=None, action=None, kind="research", severity=None,
                   user_id=None, provenance="scheduled", category=None, change_set=None, items=None,
                   situation_key=None):
     """Store a Pulse card. Compat shim for the helper routers (health/kitchen/weather/
-    heartbeat) that surface cards. `folder_id` is ignored — Pulse is store-backed.
+    heartbeat) that surface cards.
     `kind`/`severity` place the card in an ambient vein; default is the research feed.
     `user_id` is the person the card is FOR; defaults to the household owner.
     `provenance` records how the card was triggered — "scheduled" vs "heartbeat".
@@ -290,7 +240,6 @@ async def _build_run_context(req, out):
     who = req.user_name or profile.get("name") or "them"
 
     # 1) gather + triage. Ground in this person's profile interests + whatever the caller passed.
-    #    Only the owner's OWUI memories are read here (other users' memories must not leak).
     memories = []
     if user_id == store.DEFAULT_USER:
         try:
@@ -566,12 +515,9 @@ async def promote(card_id: str):
     c = store.get_card(card_id)
     if not c:
         return {"ok": False, "error": "not found"}
-    if c.get("promoted_chat_id"):
-        return {"ok": True, "chat_id": c["promoted_chat_id"]}
-    chat_id = await _create_owui_chat(c)
-    if chat_id:
-        store.set_status(card_id, "promoted", promoted_chat_id=chat_id)
-    return {"ok": bool(chat_id), "chat_id": chat_id}
+    if c["status"] != "promoted":
+        store.set_status(card_id, "promoted")
+    return {"ok": True, "chat_id": c.get("promoted_chat_id")}
 
 
 @router.post("/pulse/{card_id}/bookmark", tags=["pulse"])
@@ -579,15 +525,11 @@ async def bookmark(card_id: str, body: BookmarkBody):
     c = store.get_card(card_id)
     if not c:
         return {"ok": False, "error": "not found"}
-    chat_id = c.get("promoted_chat_id")
     if body.on:
-        # Create the backing OWUI chat so the bookmark is openable from the sidebar; stays in feed.
-        if not chat_id:
-            chat_id = await _create_owui_chat(c)
-        store.set_status(card_id, "bookmarked", promoted_chat_id=chat_id)
+        store.set_status(card_id, "bookmarked")
     elif c["status"] == "bookmarked":
         store.set_status(card_id, "seen")
-    return {"ok": True, "chat_id": chat_id}
+    return {"ok": True, "chat_id": c.get("promoted_chat_id")}
 
 
 @router.delete("/pulse/{card_id}", tags=["pulse"])

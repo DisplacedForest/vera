@@ -71,6 +71,8 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
     var onboardingState: NativeOnboardingState
     var onboardingStep: Int
     var memory: NativeMemorySettings
+    var capabilityOverrides: [String: ModelCapabilityProfile]
+    var visionBridge: VisionBridgeSettings
 
     static var fresh: NativeChatSettings {
         NativeChatSettings(
@@ -81,7 +83,9 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
             enabledToolIDs: [],
             onboardingState: .notStarted,
             onboardingStep: 0,
-            memory: .fresh)
+            memory: .fresh,
+            capabilityOverrides: [:],
+            visionBridge: .fresh)
     }
 
     var activeProfile: NativeEndpointProfile? {
@@ -131,13 +135,15 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case version, profiles, activeProfileID, systemPrompt, enabledToolIDs
-        case onboardingState, onboardingStep, memory
+        case onboardingState, onboardingStep, memory, capabilityOverrides, visionBridge
     }
 
     init(
         version: Int, profiles: [NativeEndpointProfile], activeProfileID: String?,
         systemPrompt: String, enabledToolIDs: Set<String>, onboardingState: NativeOnboardingState,
-        onboardingStep: Int, memory: NativeMemorySettings
+        onboardingStep: Int, memory: NativeMemorySettings,
+        capabilityOverrides: [String: ModelCapabilityProfile] = [:],
+        visionBridge: VisionBridgeSettings = .fresh
     ) {
         self.version = version
         self.profiles = profiles
@@ -147,6 +153,8 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         self.onboardingState = onboardingState
         self.onboardingStep = onboardingStep
         self.memory = memory
+        self.capabilityOverrides = capabilityOverrides
+        self.visionBridge = visionBridge
     }
 
     init(from decoder: Decoder) throws {
@@ -159,6 +167,10 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         onboardingState = try values.decodeIfPresent(NativeOnboardingState.self, forKey: .onboardingState) ?? .notStarted
         onboardingStep = try values.decodeIfPresent(Int.self, forKey: .onboardingStep) ?? 0
         memory = try values.decodeIfPresent(NativeMemorySettings.self, forKey: .memory) ?? .fresh
+        capabilityOverrides = try values.decodeIfPresent(
+            [String: ModelCapabilityProfile].self, forKey: .capabilityOverrides) ?? [:]
+        visionBridge = try values.decodeIfPresent(
+            VisionBridgeSettings.self, forKey: .visionBridge) ?? .fresh
     }
 
     func merging(into raw: [String: Any]) -> [String: Any] {
@@ -211,6 +223,18 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
             $0.selectedModel = model
             $0.selectionBasis = basis
         }
+    }
+
+    func resolveCapabilities(model: String) -> ModelCapabilityCatalog.Resolution {
+        ModelCapabilityCatalog.resolve(model: model, overrides: capabilityOverrides)
+    }
+
+    mutating func setCapabilityOverride(model: String, profile: ModelCapabilityProfile) {
+        capabilityOverrides[model] = profile
+    }
+
+    mutating func clearCapabilityOverride(model: String) {
+        capabilityOverrides.removeValue(forKey: model)
     }
 }
 

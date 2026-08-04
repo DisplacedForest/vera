@@ -36,7 +36,10 @@ final class ConfigStore: ObservableObject {
     @Published var showOnboarding: Bool
     @Published var nativeSettings: NativeChatSettings
     @Published private var nativeAPIKeys: [String: String]
+    @Published var visionBridgeAPIKey: String
     private let credentialStore: any NativeCredentialStore
+
+    static let visionBridgeCredentialID = "vision-bridge"
 
     /// THE `~/.vera/config.json` key ↔ environment-variable mapping (env wins at resolve
     /// time). Canonical names match the backend's convention (`OWUI_KEY`); deprecated
@@ -70,6 +73,7 @@ final class ConfigStore: ObservableObject {
         raw = loaded
         nativeSettings = settings
         nativeAPIKeys = keys
+        visionBridgeAPIKey = credentialStore.value(for: Self.visionBridgeCredentialID) ?? ""
         self.credentialStore = credentialStore
         showOnboarding = !settings.hasValidConfiguration
             && settings.onboardingState != .skipped
@@ -113,6 +117,7 @@ final class ConfigStore: ObservableObject {
         for profile in nativeSettings.profiles {
             try credentialStore.set(nativeAPIKeys[profile.id], for: profile.id)
         }
+        try credentialStore.set(visionBridgeAPIKey, for: Self.visionBridgeCredentialID)
         raw = nativeSettings.merging(into: raw)
         try ConfigFile.write(raw)
     }
@@ -146,6 +151,13 @@ final class ConfigStore: ObservableObject {
         NativeChatConfigurationResolver.discovery(
             profile: activeNativeProfile,
             apiKey: activeNativeAPIKey,
+            environment: ProcessInfo.processInfo.environment)
+    }
+
+    var visionBridgeResolved: VisionBridgeConfig? {
+        VisionBridgeConfig.resolve(
+            settings: nativeSettings.visionBridge,
+            apiKey: visionBridgeAPIKey,
             environment: ProcessInfo.processInfo.environment)
     }
 
@@ -228,6 +240,30 @@ final class ConfigStore: ObservableObject {
         if enabled, id == "apple-reminders" {
             Task { _ = await RemindersBridge.shared.nativeRequestAccess() }
         }
+    }
+
+    func visionBridgeBinding(_ keyPath: WritableKeyPath<VisionBridgeSettings, String>) -> Binding<String> {
+        Binding(
+            get: { self.nativeSettings.visionBridge[keyPath: keyPath] },
+            set: { value in
+                var updated = self.nativeSettings
+                updated.visionBridge[keyPath: keyPath] = value
+                self.nativeSettings = updated
+            })
+    }
+
+    func updateCapability(model: String, _ update: (inout ModelCapabilityProfile) -> Void) {
+        var updated = nativeSettings
+        var profile = updated.resolveCapabilities(model: model).profile
+        update(&profile)
+        updated.setCapabilityOverride(model: model, profile: profile)
+        nativeSettings = updated
+    }
+
+    func clearCapabilityOverride(model: String) {
+        var updated = nativeSettings
+        updated.clearCapabilityOverride(model: model)
+        nativeSettings = updated
     }
 
     func updateMemory(_ update: (inout NativeMemorySettings) -> Void) {

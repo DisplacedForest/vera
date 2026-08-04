@@ -402,8 +402,62 @@ struct MessageRow: View {
                             .background(Theme.userBubble)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
+                    if let note = message.routeNote {
+                        AttachmentRouteBadge(note: note)
+                    }
                 }
             }
+        }
+    }
+}
+
+struct AttachmentRouteBadge: View {
+    let note: MessageRouteNote
+    @State private var showDisclosure = false
+
+    private var icon: String {
+        switch note.route {
+        case .direct: return "photo"
+        case .bridged: return "arrow.triangle.branch"
+        case .withheld: return "eye.slash"
+        }
+    }
+
+    private var label: String {
+        switch note.route {
+        case .direct:
+            return "Image sent to the model"
+        case .bridged:
+            return "Described by the vision bridge\(note.bridgeModel.map { " (\($0))" } ?? ""). The model did not receive the image."
+        case .withheld:
+            return "Sent without the attachment"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 10))
+            Text(label).font(.system(size: 11))
+            if note.route == .bridged, note.disclosure != nil {
+                Button(showDisclosure ? "Hide description" : "Show description") {
+                    showDisclosure.toggle()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.accent)
+            }
+        }
+        .foregroundStyle(Theme.textSecondary)
+        if showDisclosure, let disclosure = note.disclosure {
+            Text(disclosure)
+                .font(.system(size: 11, design: .monospaced))
+                .textSelection(.enabled)
+                .foregroundStyle(Theme.textSecondary)
+                .padding(10).frame(maxWidth: 480, alignment: .leading)
+                .background(Theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Theme.hairline, lineWidth: 1))
         }
     }
 }
@@ -587,6 +641,20 @@ struct ComposerField: View {
         }
         .onDisappear { removePasteMonitor() }
         .onChange(of: store.focusTick) { _, _ in focused = true }
+        .confirmationDialog(
+            "This model can't take images",
+            isPresented: Binding(
+                get: { store.pendingSendDecision != nil },
+                set: { if !$0 { store.cancelPendingSend() } }),
+            titleVisibility: .visible
+        ) {
+            Button("Send without the attachment") { store.confirmSendWithoutAttachments() }
+            Button("Cancel", role: .cancel) { store.cancelPendingSend() }
+        } message: {
+            if let decision = store.pendingSendDecision {
+                Text("\(decision.modelID) does not accept image input and no vision bridge is configured. Send the message without \(decision.imageCount == 1 ? "its image" : "its \(decision.imageCount) images"), or cancel and keep editing. You can set up a bridge or adjust this model's capabilities in Settings.")
+            }
+        }
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
             guard !files.isEmpty else { return false }

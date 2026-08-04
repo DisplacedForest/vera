@@ -24,6 +24,7 @@ struct Message: Identifiable, Hashable {
     var sources: [PulseSource] = []  // cited sources for this reply — drives the citation chips
     var toolActivities: [NativeToolActivity] = []
     var contentType: MessageContentType = .text
+    var routeNote: MessageRouteNote? = nil
 
     /// Build an assistant message from raw reply text, splitting out artifacts then any `vera:ask` block.
     static func assistant(from raw: String, sources: [PulseSource] = []) -> Message {

@@ -161,6 +161,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 table.add(column: "attachments_json", .text)
             }
         }
+        migrator.registerMigration("attachmentRoutingV7") { db in
+            try db.alter(table: "messages") { table in
+                table.add(column: "route_json", .text)
+            }
+        }
         try migrator.migrate(database)
     }
 
@@ -234,8 +239,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
             try db.execute(sql: """
                 INSERT INTO messages
                     (id, conversation_id, ordinal, role, content, created_at, state,
-                     failure, model_id, tool_activity_json, content_type, metadata_json, attachments_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     failure, model_id, tool_activity_json, content_type, metadata_json,
+                     attachments_json, route_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, arguments: [
                     seed.id.uuidString,
                     conversation.id,
@@ -250,6 +256,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     seed.contentType.rawValue,
                     metadata,
                     Self.attachmentsJSON(for: seed),
+                    Self.routeJSON(for: seed),
                 ])
         }
     }
@@ -258,7 +265,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         try database.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT id, role, content, created_at, state, failure, model_id,
-                       tool_activity_json, content_type, metadata_json, attachments_json
+                       tool_activity_json, content_type, metadata_json, attachments_json, route_json
                 FROM messages
                 WHERE conversation_id = ?
                 ORDER BY ordinal ASC
@@ -272,10 +279,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         return try database.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT id, role, content, created_at, state, failure, model_id,
-                       tool_activity_json, content_type, metadata_json, attachments_json
+                       tool_activity_json, content_type, metadata_json, attachments_json, route_json
                 FROM (
                     SELECT id, role, content, created_at, state, failure, model_id,
-                           tool_activity_json, content_type, metadata_json, attachments_json, ordinal
+                           tool_activity_json, content_type, metadata_json, attachments_json,
+                           route_json, ordinal
                     FROM messages
                     WHERE conversation_id = ?
                     ORDER BY ordinal DESC
@@ -323,8 +331,9 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
             try db.execute(sql: """
                 INSERT INTO messages
                     (id, conversation_id, ordinal, role, content, created_at, state,
-                     failure, model_id, tool_activity_json, content_type, metadata_json, attachments_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     failure, model_id, tool_activity_json, content_type, metadata_json,
+                     attachments_json, route_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     content = excluded.content,
                     state = excluded.state,
@@ -333,7 +342,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     tool_activity_json = excluded.tool_activity_json,
                     content_type = excluded.content_type,
                     metadata_json = excluded.metadata_json,
-                    attachments_json = excluded.attachments_json
+                    attachments_json = excluded.attachments_json,
+                    route_json = excluded.route_json
                 """, arguments: [
                     message.id.uuidString,
                     conversationID,
@@ -348,6 +358,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     message.contentType.rawValue,
                     metadata,
                     Self.attachmentsJSON(for: message),
+                    Self.routeJSON(for: message),
                 ])
         }
     }
@@ -558,7 +569,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 id: id, role: role, text: row["content"],
                 createdAt: Date(timeIntervalSince1970: row["created_at"]),
                 state: state, failure: row["failure"], modelID: row["model_id"],
-                attachments: attachments, toolActivities: activities, contentType: contentType)
+                attachments: attachments, toolActivities: activities, contentType: contentType,
+                routeNote: decode(row["route_json"] as String?, as: MessageRouteNote.self))
             if contentType == .pulseCard,
                let raw: String = row["metadata_json"],
                let snapshot = PulseCardSnapshot.decode(raw) {
@@ -579,6 +591,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         let persistable = message.attachments.filter { $0.fileName != nil }
         guard !persistable.isEmpty else { return nil }
         return try? encode(persistable)
+    }
+
+    private static func routeJSON(for message: Message) -> String? {
+        guard let note = message.routeNote else { return nil }
+        return try? encode(note)
     }
 
     private static func decodeConversation(_ row: Row) -> Conversation {

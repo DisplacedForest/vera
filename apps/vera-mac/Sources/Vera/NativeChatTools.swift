@@ -376,11 +376,22 @@ enum NativeChatHistoryBuilder {
         if !prompt.isEmpty { history.append(NativeChatMessage(role: "system", content: prompt)) }
         for message in messages where message.state == .complete {
             if message.role == .user {
-                let images = imageLoader.map { load in
-                    message.attachments.filter(\.isImage).compactMap(load)
-                } ?? []
-                if !message.text.isEmpty || !images.isEmpty {
-                    history.append(NativeChatMessage(role: "user", content: message.text, images: images))
+                let route = message.routeNote?.route
+                let images: [String]
+                if route == nil || route == .direct {
+                    images = imageLoader.map { load in
+                        message.attachments.filter(\.isImage).compactMap(load)
+                    } ?? []
+                } else {
+                    images = []
+                }
+                var content = message.text
+                if route == .bridged, let disclosure = message.routeNote?.disclosure,
+                   !disclosure.isEmpty {
+                    content = content.isEmpty ? disclosure : content + "\n\n" + disclosure
+                }
+                if !content.isEmpty || !images.isEmpty {
+                    history.append(NativeChatMessage(role: "user", content: content, images: images))
                 }
                 continue
             }

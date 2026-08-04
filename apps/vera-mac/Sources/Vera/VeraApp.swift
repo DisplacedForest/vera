@@ -56,6 +56,8 @@ struct VeraApp: App {
             hasLegacyOWUI: legacy != nil,
             nativeSystemPrompt: configInstance.nativeSettings.systemPrompt,
             nativeEnabledToolIDs: configInstance.nativeSettings.enabledToolIDs,
+            nativeCapabilityOverrides: configInstance.nativeSettings.capabilityOverrides,
+            visionBridgeConfig: configInstance.visionBridgeResolved,
             nativeMemorySettings: configInstance.nativeSettings.memory,
             nativeMemoryService: configInstance.nativeMemoryService,
             sweepOrphanedAttachments: true)

@@ -33,6 +33,7 @@ final class ChatStore: ObservableObject {
     @Published var focusTick: Int = 0         // bump to move the cursor into the composer
     @Published var attachments: [Attachment] = []   // pending composer attachments (images/docs)
     @Published var attachmentError: String?
+    @Published var pendingSendDecision: PendingSendDecision?
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
     @Published var showCanvas: Bool = false
     @Published var artifactLibrary: [Artifact] = []   // persisted across sessions
@@ -45,6 +46,9 @@ final class ChatStore: ObservableObject {
     private var nativeTransport: (any NativeChatTransport)?
     private var nativeSystemPrompt: String
     private var nativeEnabledToolIDs: Set<String>
+    private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]
+    private var visionBridgeConfig: VisionBridgeConfig?
+    private let visionBridgeTransportFactory: ((VisionBridgeConfig) -> any NativeChatTransport)?
     private var nativeMemorySettings: NativeMemorySettings
     private var nativeMemoryService: (any NativeMemoryServing)?
     private let nativeToolRegistry: NativeToolRegistry
@@ -67,6 +71,9 @@ final class ChatStore: ObservableObject {
          repository: (any ChatRepository)?, repositoryError: String? = nil, hasLegacyOWUI: Bool,
          nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt,
          nativeEnabledToolIDs: Set<String> = [],
+         nativeCapabilityOverrides: [String: ModelCapabilityProfile] = [:],
+         visionBridgeConfig: VisionBridgeConfig? = nil,
+         visionBridgeTransportFactory: ((VisionBridgeConfig) -> any NativeChatTransport)? = nil,
          nativeMemorySettings: NativeMemorySettings = .fresh,
          nativeMemoryService: (any NativeMemoryServing)? = nil,
          nativeToolRegistry: NativeToolRegistry? = nil,
@@ -80,6 +87,9 @@ final class ChatStore: ObservableObject {
         self.nativeTransport = nativeTransport
         self.nativeSystemPrompt = nativeSystemPrompt
         self.nativeEnabledToolIDs = nativeEnabledToolIDs
+        self.nativeCapabilityOverrides = nativeCapabilityOverrides
+        self.visionBridgeConfig = visionBridgeConfig
+        self.visionBridgeTransportFactory = visionBridgeTransportFactory
         self.nativeMemorySettings = nativeMemorySettings
         self.nativeMemoryService = nativeMemoryService
         self.nativeToolRegistry = nativeToolRegistry ?? NativeToolRegistry(
@@ -178,6 +188,8 @@ final class ChatStore: ObservableObject {
         _ cfg: NativeChatConfig,
         systemPrompt: String = NativeChatSettings.defaultSystemPrompt,
         enabledToolIDs: Set<String>? = nil,
+        capabilityOverrides: [String: ModelCapabilityProfile]? = nil,
+        visionBridge: VisionBridgeConfig? = nil,
         memorySettings: NativeMemorySettings? = nil,
         memoryService: (any NativeMemoryServing)? = nil
     ) {
@@ -185,6 +197,8 @@ final class ChatStore: ObservableObject {
         nativeTransport = NativeChatClient(config: cfg)
         nativeSystemPrompt = systemPrompt
         if let enabledToolIDs { nativeEnabledToolIDs = enabledToolIDs }
+        if let capabilityOverrides { nativeCapabilityOverrides = capabilityOverrides }
+        visionBridgeConfig = visionBridge
         if let memorySettings { nativeMemorySettings = memorySettings }
         nativeMemoryService = memoryService
         let ambient = OWUIConfig.load() ?? OWUIConfig.ambientOnly(native: cfg)
@@ -1067,6 +1081,27 @@ final class ChatStore: ObservableObject {
         attachments.removeAll { $0.id == id }
     }
 
+    struct PendingSendDecision: Identifiable, Equatable {
+        let id = UUID()
+        let text: String
+        let modelID: String
+        let imageCount: Int
+    }
+
+    var activeCapabilityResolution: ModelCapabilityCatalog.Resolution? {
+        guard let nativeConfig else { return nil }
+        return ModelCapabilityCatalog.resolve(
+            model: nativeConfig.model, overrides: nativeCapabilityOverrides)
+    }
+
+    func attachmentRoute(imageCount: Int) -> AttachmentRoute? {
+        guard imageCount > 0 else { return nil }
+        guard let resolution = activeCapabilityResolution else { return nil }
+        return AttachmentPreflight.route(
+            profile: resolution.profile, imageCount: imageCount,
+            bridgeConfigured: visionBridgeConfig != nil)
+    }
+
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let atts = attachments
@@ -1076,9 +1111,37 @@ final class ChatStore: ObservableObject {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
             return
         }
+        let imageCount = atts.filter { $0.nativeRecord?.isImage == true }.count
+        let route = attachmentRoute(imageCount: imageCount)
+        if route == .needsDecision, let model = nativeConfig?.model {
+            pendingSendDecision = PendingSendDecision(
+                text: text, modelID: model, imageCount: imageCount)
+            return
+        }
         draft = ""
         attachments = []
-        sendText(text, attachments: atts)
+        let note: MessageRouteNote?
+        switch route {
+        case .direct: note = MessageRouteNote(route: .direct)
+        case .bridged: note = MessageRouteNote(route: .bridged, bridgeModel: visionBridgeConfig?.model)
+        default: note = nil
+        }
+        sendText(text, attachments: atts, routeNote: note)
+    }
+
+    func confirmSendWithoutAttachments() {
+        guard pendingSendDecision != nil else { return }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let atts = attachments
+        pendingSendDecision = nil
+        guard !text.isEmpty || !atts.isEmpty else { return }
+        draft = ""
+        attachments = []
+        sendText(text, attachments: atts, routeNote: MessageRouteNote(route: .withheld))
+    }
+
+    func cancelPendingSend() {
+        pendingSendDecision = nil
     }
 
     /// Record the user's answer to a Vera structured question and send it as their next turn.
@@ -1101,7 +1164,9 @@ final class ChatStore: ObservableObject {
         sendText(answer)
     }
 
-    func sendText(_ text: String, attachments atts: [Attachment] = []) {
+    func sendText(
+        _ text: String, attachments atts: [Attachment] = [], routeNote: MessageRouteNote? = nil
+    ) {
         guard !generating else { return }
         guard let repository else {
             chatConfigurationError = repositoryInitializationError ?? "Local history couldn't open"
@@ -1110,7 +1175,7 @@ final class ChatStore: ObservableObject {
         guard let id = selectedID,
               let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
         let records = atts.compactMap(\.nativeRecord)
-        let user = Message(role: .user, text: text, attachments: records)
+        let user = Message(role: .user, text: text, attachments: records, routeNote: routeNote)
         conversations[idx].messages.append(user)
         if conversations[idx].title == "New chat" {
             let title = text.isEmpty ? (records.first?.name ?? "New chat") : String(text.prefix(40))
@@ -1140,12 +1205,16 @@ final class ChatStore: ObservableObject {
         let reply = Message(role: .assistant, text: "", state: .streaming, modelID: nativeConfig.model)
         conversations[idx].messages.append(reply)
         let replyIndex = conversations[idx].messages.count - 1
-        let turnMessages = conversations[idx].messages
+        let userIndex = conversations[idx].messages.count - 2
         try? repository.saveMessage(reply, conversationID: id, ordinal: replyIndex)
         streamStatus = "Thinking…"
         generating = true
         let toolLoop = NativeToolLoop(transport: nativeTransport, registry: nativeToolRegistry)
-        let enabledToolIDs = nativeEnabledToolIDs
+        let capabilityProfile = ModelCapabilityCatalog.resolve(
+            model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
+        let enabledToolIDs = capabilityProfile.supportsTools ? nativeEnabledToolIDs : []
+        let bridgeConfig = visionBridgeConfig
+        let bridgeTransportFactory = visionBridgeTransportFactory
         let memorySettings = nativeMemorySettings
         let memoryService = nativeMemoryService
         Task {
@@ -1156,6 +1225,41 @@ final class ChatStore: ObservableObject {
                 let imageLoader: (MessageAttachment) -> String? = {
                     attachmentStore.requestDataURL(for: $0)
                 }
+                if routeNote?.route == .bridged {
+                    guard let bridgeConfig else {
+                        throw NativeChatClient.ClientError.server(
+                            "The vision bridge is no longer configured. Your message and attachment are saved; nothing was sent.")
+                    }
+                    streamStatus = "Describing the attachment…"
+                    let bridge = VisionBridge(
+                        config: bridgeConfig,
+                        transport: bridgeTransportFactory.map { $0(bridgeConfig) })
+                    var descriptions: [(name: String, text: String)] = []
+                    do {
+                        for record in records where record.isImage {
+                            guard let dataURL = attachmentStore.requestDataURL(for: record) else {
+                                throw VisionBridgeError.emptyDescription(record.name)
+                            }
+                            descriptions.append(
+                                (record.name, try await bridge.describe(name: record.name, dataURL: dataURL)))
+                        }
+                    } catch {
+                        throw NativeChatClient.ClientError.server(
+                            "The vision bridge couldn't describe the attachment: \(error.localizedDescription). Your message and attachment are saved locally; nothing was sent to the model.")
+                    }
+                    let disclosure = VisionBridgeDisclosure.block(
+                        descriptions: descriptions, bridgeModel: bridgeConfig.model)
+                    if let i = conversations.firstIndex(where: { $0.id == id }),
+                       userIndex >= 0, userIndex < conversations[i].messages.count {
+                        conversations[i].messages[userIndex].routeNote = MessageRouteNote(
+                            route: .bridged, bridgeModel: bridgeConfig.model, disclosure: disclosure)
+                        try? repository.saveMessage(
+                            conversations[i].messages[userIndex], conversationID: id, ordinal: userIndex)
+                    }
+                    streamStatus = "Thinking…"
+                }
+                let turnMessages = conversations.first(where: { $0.id == id })?.messages
+                    ?? []
                 var history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: nativeSystemPrompt,
                     imageLoader: imageLoader)

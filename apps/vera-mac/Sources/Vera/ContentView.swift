@@ -234,7 +234,8 @@ private struct ChatPane: View {
                             ForEach(convo.messages) { msg in
                                 MessageRow(message: msg,
                                            onAnswer: { id, sel, other in store.submitAsk(messageID: id, selections: sel, other: other) },
-                                           onOpenArtifact: { store.openArtifact($0) })
+                                           onOpenArtifact: { store.openArtifact($0) },
+                                           attachmentStore: store.attachmentStore)
                             }
                             // One mark per chat at the leading edge — below the last response; animates
                             // while Vera works, sits still when idle. (Like Claude's single mark.)
@@ -373,6 +374,7 @@ struct MessageRow: View {
     let message: Message
     var onAnswer: ((UUID, [String], String) -> Void)? = nil
     var onOpenArtifact: ((Artifact) -> Void)? = nil
+    var attachmentStore: NativeAttachmentStore? = nil
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             if message.role == .assistant {
@@ -390,7 +392,7 @@ struct MessageRow: View {
                 Spacer(minLength: 60)
                 VStack(alignment: .trailing, spacing: 8) {
                     if !message.attachments.isEmpty {
-                        SentAttachmentsBar(attachments: message.attachments)
+                        SentAttachmentsBar(attachments: message.attachments, store: attachmentStore)
                     }
                     if !message.text.isEmpty {
                         Text(message.text)
@@ -498,6 +500,7 @@ struct ComposerField: View {
     @EnvironmentObject var voice: VoiceSession
     @FocusState private var focused: Bool
     @State private var dropTargeted = false
+    @State private var pasteMonitor: Any?
 
     private var canSend: Bool {
         store.canSubmitChat &&
@@ -506,6 +509,20 @@ struct ComposerField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let error = store.attachmentError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 11))
+                    Text(error).font(.system(size: 11))
+                    Button {
+                        store.attachmentError = nil
+                    } label: {
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .foregroundStyle(Theme.textSecondary)
+            }
             if !store.attachments.isEmpty {
                 AttachmentsBar(attachments: store.attachments, onRemove: { store.removeAttachment($0) })
             }
@@ -535,8 +552,7 @@ struct ComposerField: View {
                         .background(.quaternary, in: Circle())
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .disabled(true)
-                .help("Attachments are not available in native chat yet")
+                .help("Add images to this message")
                 Spacer()
                 Button(action: {}) {
                     Image(systemName: "waveform")
@@ -558,21 +574,58 @@ struct ComposerField: View {
                 .disabled(!canSend)
             }
             // Hidden ⌘U shortcut for the file picker.
-            Button("", action: {}).keyboardShortcut("u", modifiers: .command)
+            Button("", action: pickFiles).keyboardShortcut("u", modifiers: .command)
                 .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
             .stroke(dropTargeted ? Theme.accent : .clear, lineWidth: 2))
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            installPasteMonitor()
+        }
+        .onDisappear { removePasteMonitor() }
         .onChange(of: store.focusTick) { _, _ in focused = true }
         .dropDestination(for: URL.self) { urls, _ in
-            return false
+            let files = urls.filter(\.isFileURL)
+            guard !files.isEmpty else { return false }
+            store.addFiles(files)
+            return true
         } isTargeted: { dropTargeted = $0 }
     }
 
     private func pickFiles() {
         FilePicker.pick { urls in if !urls.isEmpty { store.addFiles(urls) } }
+    }
+
+    private func installPasteMonitor() {
+        guard pasteMonitor == nil else { return }
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+                  event.charactersIgnoringModifiers == "v" else { return event }
+            let pasteboard = NSPasteboard.general
+            if pasteboard.string(forType: .string) != nil { return event }
+            let fileURLs = (pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL])?
+                .filter(\.isFileURL) ?? []
+            if !fileURLs.isEmpty {
+                store.addFiles(fileURLs)
+                return nil
+            }
+            if let images = pasteboard.readObjects(forClasses: [NSImage.self]) as? [NSImage],
+               !images.isEmpty {
+                let datas = images.compactMap(\.pngData)
+                if !datas.isEmpty {
+                    store.addPastedImages(datas)
+                    return nil
+                }
+            }
+            return event
+        }
+    }
+
+    private func removePasteMonitor() {
+        if let pasteMonitor { NSEvent.removeMonitor(pasteMonitor) }
+        pasteMonitor = nil
     }
 }

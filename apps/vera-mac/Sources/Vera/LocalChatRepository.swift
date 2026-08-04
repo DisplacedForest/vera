@@ -155,6 +155,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 table.add(column: "metadata_json", .text)
             }
         }
+        migrator.registerMigration("nativeAttachmentsV6") { db in
+            try db.alter(table: "messages") { table in
+                table.add(column: "attachments_json", .text)
+            }
+        }
         try migrator.migrate(database)
     }
 
@@ -228,8 +233,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
             try db.execute(sql: """
                 INSERT INTO messages
                     (id, conversation_id, ordinal, role, content, created_at, state,
-                     failure, model_id, tool_activity_json, content_type, metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     failure, model_id, tool_activity_json, content_type, metadata_json, attachments_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, arguments: [
                     seed.id.uuidString,
                     conversation.id,
@@ -243,6 +248,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     nil,
                     seed.contentType.rawValue,
                     metadata,
+                    Self.attachmentsJSON(for: seed),
                 ])
         }
     }
@@ -251,7 +257,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         try database.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT id, role, content, created_at, state, failure, model_id,
-                       tool_activity_json, content_type, metadata_json
+                       tool_activity_json, content_type, metadata_json, attachments_json
                 FROM messages
                 WHERE conversation_id = ?
                 ORDER BY ordinal ASC
@@ -265,10 +271,10 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
         return try database.read { db in
             let rows = try Row.fetchAll(db, sql: """
                 SELECT id, role, content, created_at, state, failure, model_id,
-                       tool_activity_json, content_type, metadata_json
+                       tool_activity_json, content_type, metadata_json, attachments_json
                 FROM (
                     SELECT id, role, content, created_at, state, failure, model_id,
-                           tool_activity_json, content_type, metadata_json, ordinal
+                           tool_activity_json, content_type, metadata_json, attachments_json, ordinal
                     FROM messages
                     WHERE conversation_id = ?
                     ORDER BY ordinal DESC
@@ -316,8 +322,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
             try db.execute(sql: """
                 INSERT INTO messages
                     (id, conversation_id, ordinal, role, content, created_at, state,
-                     failure, model_id, tool_activity_json, content_type, metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     failure, model_id, tool_activity_json, content_type, metadata_json, attachments_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     content = excluded.content,
                     state = excluded.state,
@@ -325,7 +331,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     model_id = excluded.model_id,
                     tool_activity_json = excluded.tool_activity_json,
                     content_type = excluded.content_type,
-                    metadata_json = excluded.metadata_json
+                    metadata_json = excluded.metadata_json,
+                    attachments_json = excluded.attachments_json
                 """, arguments: [
                     message.id.uuidString,
                     conversationID,
@@ -339,6 +346,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                     activityJSON,
                     message.contentType.rawValue,
                     metadata,
+                    Self.attachmentsJSON(for: message),
                 ])
         }
     }
@@ -528,11 +536,12 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
                 try? JSONDecoder().decode([NativeToolActivity].self, from: $0)
             } ?? []
             let contentType = MessageContentType(rawValue: (row["content_type"] as String?) ?? "text") ?? .text
+            let attachments = decode(row["attachments_json"] as String?, as: [MessageAttachment].self) ?? []
             var message = Message(
                 id: id, role: role, text: row["content"],
                 createdAt: Date(timeIntervalSince1970: row["created_at"]),
                 state: state, failure: row["failure"], modelID: row["model_id"],
-                toolActivities: activities, contentType: contentType)
+                attachments: attachments, toolActivities: activities, contentType: contentType)
             if contentType == .pulseCard,
                let raw: String = row["metadata_json"],
                let snapshot = PulseCardSnapshot.decode(raw) {
@@ -547,6 +556,12 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, @unchec
     private static func metadataJSON(for message: Message) -> String? {
         guard message.contentType == .pulseCard, let card = message.pulse else { return nil }
         return PulseCardSnapshot(card: card, capturedAt: message.createdAt).encodedJSON()
+    }
+
+    private static func attachmentsJSON(for message: Message) -> String? {
+        let persistable = message.attachments.filter { $0.fileName != nil }
+        guard !persistable.isEmpty else { return nil }
+        return try? encode(persistable)
     }
 
     private static func decodeConversation(_ row: Row) -> Conversation {

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import AVFoundation
 
@@ -255,6 +256,7 @@ enum SelfTest {
         await runNativeTools()
         await runNativeMemory()
         await runNativeStore()
+        runNativeMedia()
         await runPulseContinuation()
         guard let cfg = OWUIConfig.load() else {
             print("SELFTEST OK (offline). No OWUI config (~/.vera/config.json), live checks skipped")
@@ -887,6 +889,115 @@ enum SelfTest {
             print("  native memory OK (opt-in, review, CRUD, recall, expiry, budgets, prompt, relaunch)")
         } catch {
             print("SELFTEST ERROR: native memory \(error)"); exit(1)
+        }
+    }
+
+    private static func runNativeMedia() {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vera-selftest-attachments-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        do {
+            let store = NativeAttachmentStore(directory: directory)
+            let source = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { rect in
+                NSColor.systemOrange.setFill()
+                rect.fill()
+                return true
+            }
+            guard let pngData = source.pngData else {
+                print("SELFTEST ERROR: native media fixture image"); exit(1)
+            }
+            let record = try store.save(data: pngData, preferredName: "swatch.png")
+            guard record.isImage, record.ext == "PNG", record.mime == "image/png",
+                  record.byteSize == pngData.count,
+                  let fileName = record.fileName,
+                  store.image(for: fileName) != nil,
+                  store.requestDataURL(for: record)?.hasPrefix("data:image/jpeg;base64,") == true else {
+                print("SELFTEST ERROR: native media store round trip"); exit(1)
+            }
+            let reopened = NativeAttachmentStore(directory: directory)
+            guard reopened.image(for: fileName) != nil else {
+                print("SELFTEST ERROR: native media persistence across store instances"); exit(1)
+            }
+            do {
+                _ = try store.save(data: Data("plain text".utf8), preferredName: "notes.txt")
+                print("SELFTEST ERROR: native media accepted an unsupported type"); exit(1)
+            } catch let error as NativeAttachmentError {
+                guard error == .unsupportedType("notes.txt") else {
+                    print("SELFTEST ERROR: native media unsupported-type error shape"); exit(1)
+                }
+            } catch {
+                print("SELFTEST ERROR: native media unsupported-type error type"); exit(1)
+            }
+            var oversized = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0])
+            oversized.append(Data(count: NativeAttachmentStore.maxBytes))
+            do {
+                _ = try store.save(data: oversized, preferredName: "huge.png")
+                print("SELFTEST ERROR: native media accepted an over-limit file"); exit(1)
+            } catch let error as NativeAttachmentError {
+                guard error == .overLimit("huge.png") else {
+                    print("SELFTEST ERROR: native media over-limit error shape"); exit(1)
+                }
+            } catch {
+                print("SELFTEST ERROR: native media over-limit error type"); exit(1)
+            }
+
+            let repository = try LocalChatRepository(inMemory: true)
+            let conversation = Conversation(
+                id: "media-convo", title: "Media", messages: [], updatedAt: Date())
+            try repository.saveConversation(conversation)
+            let sent = Message(role: .user, text: "Look at this", attachments: [record])
+            try repository.saveMessage(sent, conversationID: conversation.id, ordinal: 0)
+            let loaded = try repository.messages(conversationID: conversation.id)
+            guard let restored = loaded.first?.attachments.first,
+                  restored.id == record.id,
+                  restored.fileName == record.fileName,
+                  restored.mime == record.mime,
+                  restored.name == record.name else {
+                print("SELFTEST ERROR: native media attachment persistence in chat history"); exit(1)
+            }
+
+            let loader: (MessageAttachment) -> String? = { store.requestDataURL(for: $0) }
+            let history = NativeChatHistoryBuilder.build(
+                messages: [Message(role: .user, text: "", attachments: [record])],
+                systemPrompt: "", imageLoader: loader)
+            guard history.count == 1, history[0].images.count == 1,
+                  history[0].images[0].hasPrefix("data:image/jpeg;base64,") else {
+                print("SELFTEST ERROR: native media history builder image threading"); exit(1)
+            }
+            let withoutLoader = NativeChatHistoryBuilder.build(
+                messages: [Message(role: .user, text: "", attachments: [record])],
+                systemPrompt: "")
+            guard withoutLoader.isEmpty else {
+                print("SELFTEST ERROR: native media history builder loaderless behavior"); exit(1)
+            }
+
+            let textOnly = NativeChatClient.messageObject(
+                NativeChatMessage(role: "user", content: "hello"))
+            guard textOnly["content"] as? String == "hello" else {
+                print("SELFTEST ERROR: native media text-only content shape"); exit(1)
+            }
+            let mixed = NativeChatClient.messageObject(NativeChatMessage(
+                role: "user", content: "look",
+                images: ["data:image/jpeg;base64,AAAA"]))
+            guard let parts = mixed["content"] as? [[String: Any]],
+                  parts.count == 2,
+                  parts[0]["type"] as? String == "text",
+                  parts[0]["text"] as? String == "look",
+                  parts[1]["type"] as? String == "image_url",
+                  (parts[1]["image_url"] as? [String: Any])?["url"] as? String == "data:image/jpeg;base64,AAAA" else {
+                print("SELFTEST ERROR: native media image content parts shape"); exit(1)
+            }
+            let imageOnly = NativeChatClient.messageObject(NativeChatMessage(
+                role: "user", content: "",
+                images: ["data:image/jpeg;base64,BBBB"]))
+            guard let onlyParts = imageOnly["content"] as? [[String: Any]],
+                  onlyParts.count == 1,
+                  onlyParts[0]["type"] as? String == "image_url" else {
+                print("SELFTEST ERROR: native media image-only content parts shape"); exit(1)
+            }
+            print("selftest: native media OK")
+        } catch {
+            print("SELFTEST ERROR: native media \(error)"); exit(1)
         }
     }
 

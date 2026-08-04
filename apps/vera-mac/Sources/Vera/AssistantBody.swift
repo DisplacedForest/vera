@@ -13,7 +13,7 @@ struct AssistantBody: View {
     var body: some View {
         // A continued Pulse briefing renders as the full rich article (hero, cited paragraphs, photos).
         if let card = message.pulse {
-            PulseArticleView(card: card, token: store.apiToken)
+            PulseArticleView(card: card, token: store.apiToken, apiBase: store.mediaBase)
         } else {
             prose
         }

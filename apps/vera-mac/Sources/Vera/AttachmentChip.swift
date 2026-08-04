@@ -94,14 +94,12 @@ struct AttachmentChipView: View {
 /// Read-only attachment chips shown in a sent user bubble.
 struct SentAttachmentsBar: View {
     let attachments: [MessageAttachment]
+    var store: NativeAttachmentStore? = nil
     var body: some View {
         HStack(spacing: 8) {
             ForEach(attachments) { a in
-                if a.isImage, let d = a.thumbnailData, let img = NSImage(data: d) {
-                    Image(nsImage: img).resizable().aspectRatio(contentMode: .fill)
-                        .frame(width: 64, height: 64)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+                if a.isImage {
+                    SentImageThumb(attachment: a, store: store)
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(a.name).font(.system(size: 11, weight: .medium))
@@ -115,6 +113,42 @@ struct SentAttachmentsBar: View {
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
                 }
             }
+        }
+    }
+}
+
+struct SentImageThumb: View {
+    let attachment: MessageAttachment
+    var store: NativeAttachmentStore? = nil
+    @State private var image: NSImage?
+    @State private var failed = false
+
+    var body: some View {
+        ZStack {
+            if let image {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+            } else if failed {
+                Theme.surface
+                Image(systemName: "photo")
+                    .font(.system(size: 18))
+                    .foregroundStyle(Theme.textSecondary)
+            } else {
+                Skeleton()
+            }
+        }
+        .frame(width: 64, height: 64)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline, lineWidth: 1))
+        .task(id: attachment.id) {
+            if let data = attachment.thumbnailData, let img = NSImage(data: data) {
+                image = img
+                return
+            }
+            if let store, let fileName = attachment.fileName, let img = store.image(for: fileName) {
+                image = ImageEncoder.downscale(img, maxDim: 192)
+                return
+            }
+            failed = true
         }
     }
 }

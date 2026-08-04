@@ -39,6 +39,7 @@ final class ChatStore: ObservableObject {
     @Published var showCanvas: Bool = false
     @Published var artifactLibrary: [Artifact] = []   // persisted across sessions
     @Published var chatConfigurationError: String?
+    @Published private(set) var pendingToolConfirmation: NativeToolConfirmationRequest?
 
     private var config: OWUIConfig?
     private var client: OWUIClient?
@@ -53,7 +54,10 @@ final class ChatStore: ObservableObject {
     private let visionBridgeTransportFactory: ((VisionBridgeConfig) -> any NativeChatTransport)?
     private var nativeMemorySettings: NativeMemorySettings
     private var nativeMemoryService: (any NativeMemoryServing)?
-    private let nativeToolRegistry: NativeToolRegistry
+    private var nativeToolRegistry: NativeToolRegistry
+    private let usesInjectedToolRegistry: Bool
+    private var capabilityDeclarations: [NativeToolDeclaration]
+    private var toolConfirmationContinuation: CheckedContinuation<Bool, Never>?
     private let repository: (any ChatRepository)?
     private let repositoryInitializationError: String?
     private let hasLegacyOWUI: Bool
@@ -80,6 +84,7 @@ final class ChatStore: ObservableObject {
          nativeMemorySettings: NativeMemorySettings = .fresh,
          nativeMemoryService: (any NativeMemoryServing)? = nil,
          nativeToolRegistry: NativeToolRegistry? = nil,
+         capabilityDeclarations: [NativeToolDeclaration] = [],
          pulseFeed: (any PulseFeedProviding)? = nil,
          attachmentStore: NativeAttachmentStore = NativeAttachmentStore(),
          sweepOrphanedAttachments: Bool = false) {
@@ -96,9 +101,10 @@ final class ChatStore: ObservableObject {
         self.visionBridgeTransportFactory = visionBridgeTransportFactory
         self.nativeMemorySettings = nativeMemorySettings
         self.nativeMemoryService = nativeMemoryService
-        self.nativeToolRegistry = nativeToolRegistry ?? NativeToolRegistry(
-            definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared)
-                + NativeWebTools.definitions(base: { OWUIConfig.resolvedVeraAPIBase() }))
+        self.capabilityDeclarations = capabilityDeclarations
+        self.nativeToolRegistry = nativeToolRegistry
+            ?? ChatStore.buildToolRegistry(capabilityDeclarations)
+        usesInjectedToolRegistry = nativeToolRegistry != nil
         self.repository = repository
         self.repositoryInitializationError = repositoryError
         self.hasLegacyOWUI = hasLegacyOWUI
@@ -191,6 +197,47 @@ final class ChatStore: ObservableObject {
         client = OWUIClient(config: cfg)
     }
 
+    static func buildToolRegistry(_ declarations: [NativeToolDeclaration]) -> NativeToolRegistry {
+        let base: @Sendable () -> URL? = { OWUIConfig.resolvedVeraAPIBase() }
+        return NativeToolRegistry(
+            definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared)
+                + NativeWebTools.definitions(base: base)
+                + NativeCapabilityTools.definitions(declarations, base: base))
+    }
+
+    static var builtInToolNames: Set<String> {
+        Set(buildToolRegistry([]).definitions.map(\.name))
+    }
+
+    func reloadCapabilityTools(_ declarations: [NativeToolDeclaration]) {
+        capabilityDeclarations = declarations
+        guard !usesInjectedToolRegistry else { return }
+        nativeToolRegistry = ChatStore.buildToolRegistry(declarations)
+    }
+
+    func awaitToolConfirmation(_ activity: NativeToolActivity) async -> Bool {
+        resolveToolConfirmation(false)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                toolConfirmationContinuation = continuation
+                pendingToolConfirmation = NativeToolConfirmationRequest(activity: activity)
+            }
+        } onCancel: {
+            Task { @MainActor in self.resolveToolConfirmation(false) }
+        }
+    }
+
+    func resolveToolConfirmation(_ approved: Bool) {
+        guard let continuation = toolConfirmationContinuation else { return }
+        toolConfirmationContinuation = nil
+        pendingToolConfirmation = nil
+        continuation.resume(returning: approved)
+    }
+
     func adoptNative(
         _ cfg: NativeChatConfig,
         systemPrompt: String = NativeChatSettings.defaultSystemPrompt,
@@ -199,7 +246,8 @@ final class ChatStore: ObservableObject {
         capabilityOverrides: [String: ModelCapabilityProfile]? = nil,
         visionBridge: VisionBridgeConfig? = nil,
         memorySettings: NativeMemorySettings? = nil,
-        memoryService: (any NativeMemoryServing)? = nil
+        memoryService: (any NativeMemoryServing)? = nil,
+        capabilityDeclarations: [NativeToolDeclaration]? = nil
     ) {
         nativeConfig = cfg
         nativeTransport = NativeChatClient(config: cfg)
@@ -210,6 +258,7 @@ final class ChatStore: ObservableObject {
         visionBridgeConfig = visionBridge
         if let memorySettings { nativeMemorySettings = memorySettings }
         nativeMemoryService = memoryService
+        if let capabilityDeclarations { reloadCapabilityTools(capabilityDeclarations) }
         let ambient = OWUIConfig.load() ?? OWUIConfig.ambientOnly(native: cfg)
         config = ambient
         client = ambient.map { OWUIClient(config: $0) }
@@ -1312,7 +1361,12 @@ final class ChatStore: ObservableObject {
         try? repository.saveMessage(reply, conversationID: id, ordinal: replyIndex)
         streamStatus = "Thinking…"
         generating = true
-        let toolLoop = NativeToolLoop(transport: nativeTransport, registry: nativeToolRegistry)
+        let toolLoop = NativeToolLoop(
+            transport: nativeTransport, registry: nativeToolRegistry,
+            confirm: { [weak self] activity in
+                guard let self else { return false }
+                return await self.awaitToolConfirmation(activity)
+            })
         let capabilityProfile = ModelCapabilityCatalog.resolve(
             model: nativeConfig.model, overrides: nativeCapabilityOverrides).profile
         let enabledToolIDs = capabilityProfile.supportsTools ? nativeEnabledToolIDs : []
@@ -1324,7 +1378,10 @@ final class ChatStore: ObservableObject {
         let ownerName = nativeOwnerName ?? config?.ownerName
         let activeTools = nativeToolRegistry.active(enabledIDs: enabledToolIDs)
         Task {
-            defer { generating = false }
+            defer {
+                generating = false
+                resolveToolConfirmation(false)
+            }
             var lastCheckpoint = Date.distantPast
             do {
                 let attachmentStore = self.attachmentStore

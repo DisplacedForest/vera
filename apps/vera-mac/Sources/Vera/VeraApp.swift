@@ -61,6 +61,7 @@ struct VeraApp: App {
             visionBridgeConfig: configInstance.visionBridgeResolved,
             nativeMemorySettings: configInstance.nativeSettings.memory,
             nativeMemoryService: configInstance.nativeMemoryService,
+            capabilityDeclarations: configInstance.capabilityTools.declarations,
             sweepOrphanedAttachments: true)
         _store = StateObject(wrappedValue: storeInstance)
         _config = StateObject(wrappedValue: configInstance)

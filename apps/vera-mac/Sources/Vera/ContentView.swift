@@ -235,7 +235,9 @@ private struct ChatPane: View {
                                 MessageRow(message: msg,
                                            onAnswer: { id, sel, other in store.submitAsk(messageID: id, selections: sel, other: other) },
                                            onOpenArtifact: { store.openArtifact($0) },
-                                           attachmentStore: store.attachmentStore)
+                                           attachmentStore: store.attachmentStore,
+                                           pendingConfirmation: store.pendingToolConfirmation,
+                                           onToolDecision: { store.resolveToolConfirmation($0) })
                             }
                             // One mark per chat at the leading edge — below the last response; animates
                             // while Vera works, sits still when idle. (Like Claude's single mark.)
@@ -375,12 +377,19 @@ struct MessageRow: View {
     var onAnswer: ((UUID, [String], String) -> Void)? = nil
     var onOpenArtifact: ((Artifact) -> Void)? = nil
     var attachmentStore: NativeAttachmentStore? = nil
+    var pendingConfirmation: NativeToolConfirmationRequest? = nil
+    var onToolDecision: ((Bool) -> Void)? = nil
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             if message.role == .assistant {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(message.toolActivities) { activity in
                         NativeToolActivityChip(activity: activity)
+                        if let pendingConfirmation, pendingConfirmation.id == activity.id {
+                            NativeToolConfirmationBar(
+                                request: pendingConfirmation,
+                                onDecision: { onToolDecision?($0) })
+                        }
                     }
                     AssistantBody(message: message, onAnswer: onAnswer, onOpenArtifact: onOpenArtifact)
                     if message.state == .interrupted {
@@ -531,6 +540,33 @@ struct NativeToolActivityChip: View {
                 .textSelection(.enabled)
                 .foregroundStyle(Theme.textPrimary)
         }
+    }
+}
+
+struct NativeToolConfirmationBar: View {
+    let request: NativeToolConfirmationRequest
+    var onDecision: (Bool) -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "hand.raised")
+                .font(.system(size: 13)).foregroundStyle(Color.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Run \(request.title)?")
+                    .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                Text("Vera waits for your decision before this tool runs.")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+            Spacer(minLength: 8)
+            Button("Decline") { onDecision(false) }
+            Button("Approve") { onDecision(true) }.keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 11).padding(.vertical, 9)
+        .frame(maxWidth: 480, alignment: .leading)
+        .background(Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .stroke(Color.orange.opacity(0.5), lineWidth: 1))
     }
 }
 

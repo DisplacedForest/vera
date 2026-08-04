@@ -375,8 +375,14 @@ struct NativePersonaEditor: View {
 struct NativeToolEditor: View {
     @EnvironmentObject var config: ConfigStore
 
-    private var available: [NativeChatToolDescriptor] { NativeChatToolCatalog.tools.filter(\.available) }
-    private var unavailable: [NativeChatToolDescriptor] { NativeChatToolCatalog.tools.filter { !$0.available } }
+    private var catalog: [NativeChatToolDescriptor] {
+        NativeChatToolCatalog.tools(
+            veraAPIConfigured: config.veraAPIBase != nil,
+            declarations: config.capabilityTools.declarations)
+    }
+    private var available: [NativeChatToolDescriptor] { catalog.filter(\.available) }
+    private var unavailable: [NativeChatToolDescriptor] { catalog.filter { !$0.available } }
+    private var failures: [NativeToolDeclarationFailure] { config.capabilityTools.failures }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -408,6 +414,19 @@ struct NativeToolEditor: View {
                     .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
+            if !failures.isEmpty {
+                Text("Skipped declarations").font(.system(size: 12, weight: .semibold)).padding(.top, 4)
+                ForEach(failures) { failure in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label(failure.file, systemImage: "exclamationmark.triangle")
+                        Text(failure.reason).font(.system(size: 11)).foregroundStyle(.orange)
+                    }
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            Text("Tool declarations load from the \(NativeCapabilityTools.directoryName) folder next to your config file. Saving reloads them.")
+                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
         }
     }
 }
@@ -784,6 +803,7 @@ private struct SaveSection: View {
             return
         }
         guard let resolved = config.nativeResolved else {
+            store.reloadCapabilityTools(config.capabilityTools.declarations)
             status = "Saved. Add a /v1 model endpoint and model id to connect"
             return
         }
@@ -793,7 +813,8 @@ private struct SaveSection: View {
             ownerName: config.ownerName,
             enabledToolIDs: config.nativeSettings.enabledToolIDs,
             capabilityOverrides: config.nativeSettings.capabilityOverrides,
-            visionBridge: config.visionBridgeResolved)
+            visionBridge: config.visionBridgeResolved,
+            capabilityDeclarations: config.capabilityTools.declarations)
         status = "Saved"
     }
 }

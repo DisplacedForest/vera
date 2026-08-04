@@ -80,6 +80,22 @@ struct NativeToolActivity: Codable, Equatable, Hashable, Identifiable, Sendable 
     let confirmationRequired: Bool
 }
 
+struct NativeToolConfirmationRequest: Equatable, Hashable, Identifiable, Sendable {
+    let id: String
+    let toolID: String
+    let name: String
+    let title: String
+    let request: String
+
+    init(activity: NativeToolActivity) {
+        id = activity.id
+        toolID = activity.toolID
+        name = activity.name
+        title = activity.title
+        request = activity.request
+    }
+}
+
 enum NativeToolConfirmation: String, Equatable, Sendable {
     case none
     case required
@@ -494,8 +510,10 @@ struct NativeToolLoop: Sendable {
             let task = Task {
                 do {
                     let active = registry.active(enabledIDs: enabledToolIDs)
-                    let definitions = Dictionary(uniqueKeysWithValues: active.map { ($0.name, $0) })
-                    let schemas = active.map(\.schema)
+                    let definitions = Dictionary(
+                        active.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+                    var seen: Set<String> = []
+                    let schemas = active.filter { seen.insert($0.name).inserted }.map(\.schema)
                     var history = messages
                     var content = ""
                     var activities: [NativeToolActivity] = []
@@ -573,7 +591,7 @@ struct NativeToolLoop: Sendable {
                                 let value = try await Self.execute(
                                     definition, arguments: arguments,
                                     timeout: definition.timeout ?? executionTimeout)
-                                result = try Self.json(value)
+                                result = try Self.serializedResult(value)
                                 state = .succeeded
                             } catch {
                                 result = Self.errorJSON(error.localizedDescription)
@@ -644,7 +662,7 @@ struct NativeToolLoop: Sendable {
         }
     }
 
-    private static func json(_ value: NativeJSONValue) throws -> String {
+    static func serializedResult(_ value: NativeJSONValue) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: value.any, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
     }

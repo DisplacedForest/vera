@@ -258,6 +258,50 @@ struct SelfTestWebRequest: Sendable {
     let timeout: TimeInterval
 }
 
+final class SelfTestHTTPToolClient: @unchecked Sendable {
+    struct Call: Equatable {
+        let url: String
+        let method: String
+        let body: String
+    }
+
+    private let lock = NSLock()
+    private var recorded: [Call] = []
+    private var responses: [String: (Int, Data)] = [:]
+
+    var calls: [Call] { locked { recorded } }
+
+    func respond(_ path: String, status: Int, body: String) {
+        respond(path, status: status, data: Data(body.utf8))
+    }
+
+    func respond(_ path: String, status: Int, data: Data) {
+        locked { responses[path] = (status, data) }
+    }
+
+    var client: NativeHTTPToolClient {
+        NativeHTTPToolClient { [self] url, method, body, _ in
+            try handle(url, method, body)
+        }
+    }
+
+    private func handle(_ url: URL, _ method: String, _ body: Data?) throws -> (Data, Int) {
+        try locked {
+            recorded.append(Call(
+                url: url.absoluteString, method: method,
+                body: body.map { String(decoding: $0, as: UTF8.self) } ?? ""))
+            guard let response = responses[url.path] else { throw URLError(.unsupportedURL) }
+            return (response.1, response.0)
+        }
+    }
+
+    private func locked<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
+}
+
 final class SelfTestWebClient: @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [SelfTestWebRequest] = []
@@ -313,6 +357,7 @@ enum SelfTest {
         runNativeContext()
         await runNativeTools()
         await runNativeWebTools()
+        await runNativeCapabilityTools()
         await runNativeMemory()
         await runNativeMemoryGroom()
         await runNativeStore()
@@ -2024,6 +2069,521 @@ enum SelfTest {
         } catch {
             print("SELFTEST ERROR: capability routing \(error)"); exit(1)
         }
+    }
+
+    private static func capabilityFixtures(_ root: URL) throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        func write(_ name: String, _ contents: String) throws {
+            try Data(contents.utf8).write(to: root.appendingPathComponent(name))
+        }
+        try write("a-inventory.json", """
+        {
+          "name": "inventory_lookup",
+          "title": "Look up inventory",
+          "description": "Look up an item in a connected inventory service.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "item": {"type": "string", "description": "Item name"},
+              "include_archived": {"type": "boolean", "description": "Include archived items"}
+            },
+            "required": ["item"],
+            "additionalProperties": false
+          },
+          "endpoint": "https://example.test/inventory/lookup",
+          "method": "GET",
+          "confirmation": "none"
+        }
+        """)
+        try write("b-broken.json", "{\"name\": \"broken_tool\"")
+        try write("c-missing.json", """
+        {"name": "partial_tool", "title": "Partial", "method": "GET", "confirmation": "none"}
+        """)
+        try write("d-badtype.json", """
+        {
+          "name": "counting_tool",
+          "title": "Counting",
+          "description": "Uses an unsupported schema type.",
+          "parameters": {
+            "type": "object",
+            "properties": {"count": {"type": "integer"}},
+            "required": [],
+            "additionalProperties": false
+          },
+          "endpoint": "https://example.test/count",
+          "method": "GET",
+          "confirmation": "none"
+        }
+        """)
+        try write("e-record.json", """
+        {
+          "name": "inventory_record",
+          "title": "Record an inventory change",
+          "description": "Record a change against the inventory service.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "item": {"type": "string", "description": "Item name"},
+              "note": {"type": "string", "description": "Why the change happened"}
+            },
+            "required": ["item"],
+            "additionalProperties": false
+          },
+          "endpoint": "/inventory/record",
+          "method": "POST",
+          "confirmation": "required",
+          "timeout_s": 12
+        }
+        """)
+        try write("f-disabled.json", """
+        {
+          "name": "archived_tool",
+          "title": "Archived",
+          "description": "Declared but switched off.",
+          "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
+          "endpoint": "https://example.test/archived",
+          "method": "GET",
+          "confirmation": "none",
+          "enabled": false
+        }
+        """)
+        try write("g-reserved.json", """
+        {
+          "name": "web_search",
+          "title": "Shadow search",
+          "description": "Claims a name a built-in tool already uses.",
+          "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
+          "endpoint": "https://example.test/search",
+          "method": "GET",
+          "confirmation": "none"
+        }
+        """)
+        try write("h-overwrite.json", """
+        {
+          "name": "overwriting_tool",
+          "title": "Overwriting",
+          "description": "Sends one field under the name of another declared property.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "payload_json": {"type": "string", "description": "A JSON object string"},
+              "note": {"type": "string", "description": "A note"}
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "json_fields": {"payload_json": "note"},
+          "endpoint": "/overwrite",
+          "method": "POST",
+          "confirmation": "none"
+        }
+        """)
+        try write("i-collide.json", """
+        {
+          "name": "colliding_tool",
+          "title": "Colliding",
+          "description": "Maps two fields onto the same request body field.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "first_json": {"type": "string", "description": "A JSON object string"},
+              "second_json": {"type": "string", "description": "Another JSON object string"}
+            },
+            "required": [],
+            "additionalProperties": false
+          },
+          "json_fields": {"first_json": "args", "second_json": "args"},
+          "endpoint": "/collide",
+          "method": "POST",
+          "confirmation": "none"
+        }
+        """)
+        try write("z-duplicate.json", """
+        {
+          "name": "inventory_lookup",
+          "title": "Duplicate lookup",
+          "description": "Claims a name that is already loaded.",
+          "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
+          "endpoint": "https://example.test/duplicate",
+          "method": "GET",
+          "confirmation": "none"
+        }
+        """)
+    }
+
+    private static func runNativeCapabilityTools() async {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vera-tools-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        do {
+            try capabilityFixtures(root)
+            let reserved = ChatStore.builtInToolNames
+            guard reserved.contains("web_search"), reserved.contains("apple_reminders_list"),
+                  reserved.isDisjoint(with: NativeCapabilityTools.bundled.map(\.name)) else {
+                print("SELFTEST ERROR: built-in tool name source of truth"); exit(1)
+            }
+            let catalog = NativeCapabilityTools.catalog(directory: root, reservedNames: reserved)
+            let names = catalog.declarations.map(\.name)
+            guard names.prefix(6) == [
+                "actions_registry", "propose_action", "author_skill",
+                "author_heartbeat", "journal_read", "journal_commit",
+            ], names.dropFirst(6) == ["inventory_lookup", "inventory_record", "archived_tool"] else {
+                print("SELFTEST ERROR: capability tool declaration order \(names)"); exit(1)
+            }
+            let failures = Dictionary(
+                uniqueKeysWithValues: catalog.failures.map { ($0.file, $0.reason) })
+            guard catalog.failures.count == 7,
+                  failures["b-broken.json"]?.contains("not a JSON object") == true,
+                  failures["c-missing.json"]?.contains("'description'") == true,
+                  failures["d-badtype.json"]?.contains("unsupported type 'integer'") == true,
+                  failures["g-reserved.json"]?.contains("reserved by a built-in tool") == true,
+                  failures["h-overwrite.json"]?.contains("overwrite the declared property 'note'") == true,
+                  failures["i-collide.json"]?.contains("onto the request body field 'args'") == true,
+                  failures["z-duplicate.json"]?.contains("already loaded") == true,
+                  !names.contains("web_search"), !names.contains("overwriting_tool"),
+                  !names.contains("colliding_tool") else {
+                print("SELFTEST ERROR: capability tool loader failures \(catalog.failures)"); exit(1)
+            }
+
+            let bundled = NativeCapabilityTools.bundled
+            let propose = bundled.first { $0.name == "propose_action" }
+            let journalRead = bundled.first { $0.name == "journal_read" }
+            guard bundled.count == 6,
+                  bundled.first(where: { $0.name == "actions_registry" })?.method == .get,
+                  bundled.first(where: { $0.name == "actions_registry" })?.properties.isEmpty == true,
+                  propose?.method == .post,
+                  propose?.confirmation == NativeToolConfirmation.none,
+                  propose?.jsonFields == ["args_json": "args"],
+                  propose?.required == ["body", "title", "verb"],
+                  journalRead?.method == .get,
+                  journalRead?.properties.map(\.name) == ["months"],
+                  journalRead?.properties.first?.type == .string,
+                  journalRead?.required.isEmpty == true,
+                  bundled.first(where: { $0.name == "author_skill" })?.confirmation == .required,
+                  bundled.first(where: { $0.name == "author_heartbeat" })?.confirmation == .required,
+                  bundled.first(where: { $0.name == "journal_commit" })?.confirmation == .required,
+                  bundled.allSatisfy(\.needsAPIBase) else {
+                print("SELFTEST ERROR: bundled capability tool shapes"); exit(1)
+            }
+
+            let client = SelfTestHTTPToolClient()
+            let base: @Sendable () -> URL? = { URL(string: "https://api.example") }
+            let definitions = NativeCapabilityTools.definitions(
+                catalog.declarations, base: base, client: client.client)
+            guard definitions.count == catalog.declarations.count - 1,
+                  !definitions.contains(where: { $0.name == "archived_tool" }),
+                  definitions.first(where: { $0.name == "inventory_record" })?.timeout == .seconds(12) else {
+                print("SELFTEST ERROR: capability definitions from declarations"); exit(1)
+            }
+            let byName = Dictionary(uniqueKeysWithValues: definitions.map { ($0.name, $0) })
+
+            client.respond("/inventory/lookup", status: 200, body: "{\"items\":[\"widget\"]}")
+            guard let lookup = byName["inventory_lookup"] else {
+                print("SELFTEST ERROR: declared capability tool missing"); exit(1)
+            }
+            let lookupResult = try await lookup.execute(
+                lookup.validatedArguments("{\"item\":\"widget\",\"include_archived\":true}"))
+            guard client.calls.last?.method == "GET",
+                  client.calls.last?.url
+                      == "https://example.test/inventory/lookup?include_archived=true&item=widget",
+                  client.calls.last?.body.isEmpty == true,
+                  lookupResult == .object(["items": .array([.string("widget")])]) else {
+                print("SELFTEST ERROR: capability GET query mapping \(client.calls.last as Any)"); exit(1)
+            }
+
+            client.respond("/actions/propose_card", status: 200, body: "{\"ok\":true}")
+            guard let proposeAction = byName["propose_action"] else {
+                print("SELFTEST ERROR: bundled propose action missing"); exit(1)
+            }
+            _ = try await proposeAction.execute(proposeAction.validatedArguments(
+                "{\"verb\":\"note\",\"title\":\"A note\",\"body\":\"Worth doing.\",\"args_json\":\"{\\\"minutes\\\":\\\"5\\\"}\"}"))
+            guard client.calls.last?.method == "POST",
+                  client.calls.last?.url == "https://api.example/actions/propose_card",
+                  client.calls.last?.body
+                      == "{\"args\":{\"minutes\":\"5\"},\"body\":\"Worth doing.\",\"title\":\"A note\",\"verb\":\"note\"}" else {
+                print("SELFTEST ERROR: capability POST body mapping \(client.calls.last as Any)"); exit(1)
+            }
+            do {
+                _ = try await proposeAction.execute(
+                    proposeAction.validatedArguments("{\"verb\":\"note\"}"))
+                print("SELFTEST ERROR: propose action accepted a missing required field"); exit(1)
+            } catch NativeToolError.invalidArguments(let detail) {
+                guard detail.contains("title") || detail.contains("body") else {
+                    print("SELFTEST ERROR: propose action required field detail"); exit(1)
+                }
+            }
+            do {
+                _ = try await proposeAction.execute(proposeAction.validatedArguments(
+                    "{\"verb\":\"note\",\"title\":\"A note\",\"body\":\"Worth doing.\",\"args_json\":\"not json\"}"))
+                print("SELFTEST ERROR: capability json field accepted invalid JSON"); exit(1)
+            } catch NativeToolError.invalidArguments(let detail) {
+                guard detail.contains("args_json") else {
+                    print("SELFTEST ERROR: capability json field error detail"); exit(1)
+                }
+            }
+
+            let oversized = String(repeating: "a", count: 40_000)
+            client.respond("/journal", status: 200, body: oversized)
+            guard let journal = byName["journal_read"] else {
+                print("SELFTEST ERROR: bundled journal read missing"); exit(1)
+            }
+            let capped = try await journal.execute(journal.validatedArguments("{\"months\":\"3\"}"))
+            guard case .object(let cappedFields) = capped,
+                  cappedFields["text"] != nil,
+                  cappedFields["truncated"] == .bool(true),
+                  try NativeToolLoop.serializedResult(capped).utf8.count
+                      <= NativeCapabilityTools.responseByteCap,
+                  client.calls.last?.url == "https://api.example/journal?months=3" else {
+                print("SELFTEST ERROR: capability response size cap"); exit(1)
+            }
+
+            let escapable = String(repeating: "\"\n", count: 16_000)
+            guard escapable.utf8.count < NativeCapabilityTools.responseByteCap else {
+                print("SELFTEST ERROR: escapable fixture is not under the raw cap"); exit(1)
+            }
+            client.respond("/journal", status: 200, body: escapable)
+            let escaped = try await journal.execute(journal.validatedArguments("{\"months\":\"1\"}"))
+            let escapedPayload = try NativeToolLoop.serializedResult(escaped)
+            guard case .object(let escapedFields) = escaped,
+                  case .string(let escapedText)? = escapedFields["text"],
+                  escapedFields["truncated"] == .bool(true),
+                  escapedPayload.utf8.count <= NativeCapabilityTools.responseByteCap,
+                  escapedText.count < escapable.count, !escapedText.isEmpty else {
+                print("SELFTEST ERROR: serialized cap on escapable content"); exit(1)
+            }
+
+            let nearCap = "{\"items\":\"" + String(repeating: "a", count: 32_000) + "\"}"
+            guard nearCap.utf8.count < NativeCapabilityTools.responseByteCap else {
+                print("SELFTEST ERROR: near-cap fixture is not under the raw cap"); exit(1)
+            }
+            client.respond("/actions/registry", status: 200, body: nearCap)
+            guard let registryTool = byName["actions_registry"] else {
+                print("SELFTEST ERROR: bundled actions registry missing"); exit(1)
+            }
+            let nearCapValue = try await registryTool.execute(registryTool.validatedArguments("{}"))
+            guard case .object(let nearCapFields) = nearCapValue,
+                  nearCapFields["items"] != nil, nearCapFields["text"] == nil,
+                  try NativeToolLoop.serializedResult(nearCapValue).utf8.count
+                      <= NativeCapabilityTools.responseByteCap else {
+                print("SELFTEST ERROR: near-cap JSON object result"); exit(1)
+            }
+
+            client.respond("/authoring/heartbeat", status: 503, body: "{\"detail\":\"the service is down\"}")
+            guard let heartbeat = byName["author_heartbeat"] else {
+                print("SELFTEST ERROR: bundled heartbeat author missing"); exit(1)
+            }
+            do {
+                _ = try await heartbeat.execute(
+                    heartbeat.validatedArguments("{\"content\":\"Keep going.\"}"))
+                print("SELFTEST ERROR: capability non-2xx treated as success"); exit(1)
+            } catch NativeToolError.failed(let detail) {
+                guard detail.contains("503"), detail.contains("the service is down") else {
+                    print("SELFTEST ERROR: capability HTTP failure detail \(detail)"); exit(1)
+                }
+            }
+
+            let unconfigured = NativeToolRegistry(definitions: NativeCapabilityTools.definitions(
+                catalog.declarations, base: { nil }, client: client.client))
+            let allIDs = Set(catalog.declarations.map(\.id))
+            guard unconfigured.active(enabledIDs: allIDs).map(\.name) == ["inventory_lookup"],
+                  NativeToolRegistry(definitions: definitions).active(enabledIDs: allIDs).count
+                      == definitions.count else {
+                print("SELFTEST ERROR: capability availability gating"); exit(1)
+            }
+
+            let descriptors = NativeChatToolCatalog.tools(
+                veraAPIConfigured: false, declarations: catalog.declarations)
+            guard descriptors.first(where: { $0.id == lookup.id })?.available == true,
+                  descriptors.first(where: { $0.id == journal.id })?.available == false,
+                  descriptors.first(where: { $0.name == "Archived" }) == nil,
+                  NativeChatToolCatalog.tools(
+                    veraAPIConfigured: true, declarations: catalog.declarations)
+                      .first(where: { $0.id == journal.id })?.available == true else {
+                print("SELFTEST ERROR: capability settings descriptors"); exit(1)
+            }
+
+            client.respond("/inventory/record", status: 200, body: "{\"recorded\":true}")
+            guard let record = byName["inventory_record"] else {
+                print("SELFTEST ERROR: declared confirmation tool missing"); exit(1)
+            }
+            let confirmRegistry = NativeToolRegistry(definitions: [record])
+            func recordTransport(_ id: String) -> ScriptedNativeToolTransport {
+                ScriptedNativeToolTransport(rounds: [
+                    [NativeChatStreamSnapshot(content: "", toolCalls: [
+                        NativeChatToolCall(id: id, name: "inventory_record",
+                                           arguments: "{\"item\":\"widget\"}"),
+                    ], finishReason: "tool_calls")],
+                    [NativeChatStreamSnapshot(content: "Noted.", toolCalls: [], finishReason: "stop")],
+                ])
+            }
+            let callsBefore = client.calls.count
+            var declined: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: recordTransport("declined"), registry: confirmRegistry,
+                confirm: { _ in false }
+            ).stream(
+                messages: [NativeChatMessage(role: "user", content: "Record it")],
+                model: "local-model", enabledToolIDs: [record.id]
+            ) {
+                declined = snapshot
+            }
+            guard declined?.activities.first?.state == .failed,
+                  declined?.activities.first?.result?.contains("not confirmed") == true,
+                  declined?.content == "Noted.",
+                  client.calls.count == callsBefore else {
+                print("SELFTEST ERROR: declined capability tool still ran"); exit(1)
+            }
+            var approved: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: recordTransport("approved"), registry: confirmRegistry,
+                confirm: { _ in true }
+            ).stream(
+                messages: [NativeChatMessage(role: "user", content: "Record it")],
+                model: "local-model", enabledToolIDs: [record.id]
+            ) {
+                approved = snapshot
+            }
+            guard approved?.activities.first?.state == .succeeded,
+                  approved?.content == "Noted.",
+                  client.calls.count == callsBefore + 1,
+                  client.calls.last?.body == "{\"item\":\"widget\"}" else {
+                print("SELFTEST ERROR: approved capability tool did not run"); exit(1)
+            }
+
+            let registry = NativeToolRegistry(definitions: definitions)
+            func prompt(_ enabled: Set<String>) -> String {
+                NativeContextAssembler.assemble(NativeContextInput(
+                    persona: "You are Vera.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
+                    timeZone: TimeZone(identifier: "America/Chicago")!, ownerName: nil,
+                    memories: [], capabilities: .vision,
+                    tools: registry.active(enabledIDs: enabled))).prompt
+            }
+            guard prompt([lookup.id]).contains("inventory_lookup"),
+                  !prompt([lookup.id]).contains("journal_read"),
+                  !prompt([]).contains("inventory_lookup"),
+                  registry.active(enabledIDs: [lookup.id]).map(\.schema.name) == ["inventory_lookup"] else {
+                print("SELFTEST ERROR: capability registry and assembler integration"); exit(1)
+            }
+
+            for name in ["a-inventory.json", "z-duplicate.json"] {
+                try FileManager.default.removeItem(at: root.appendingPathComponent(name))
+            }
+            let reloaded = NativeCapabilityTools.catalog(directory: root, reservedNames: reserved)
+            let reloadedRegistry = NativeToolRegistry(definitions: NativeCapabilityTools.definitions(
+                reloaded.declarations, base: base, client: client.client))
+            let reloadedPrompt = NativeContextAssembler.assemble(NativeContextInput(
+                persona: "You are Vera.", timestamp: Date(timeIntervalSince1970: 1_786_000_000),
+                timeZone: TimeZone(identifier: "America/Chicago")!, ownerName: nil,
+                memories: [], capabilities: .vision,
+                tools: reloadedRegistry.active(enabledIDs: allIDs))).prompt
+            guard !reloaded.declarations.contains(where: { $0.name == "inventory_lookup" }),
+                  reloaded.failures.count == 6,
+                  !reloadedPrompt.contains("inventory_lookup") else {
+                print("SELFTEST ERROR: removed declaration still exposed"); exit(1)
+            }
+
+            func collidingDefinition(_ id: String, marker: String) -> NativeToolDefinition {
+                NativeToolDefinition(
+                    id: id, name: "duplicated_tool", title: "Duplicate \(marker)",
+                    description: "Exercise a name collision the loader would normally reject.",
+                    parameters: .object([
+                        "type": .string("object"), "properties": .object([:]),
+                        "required": .array([]), "additionalProperties": .bool(false),
+                    ]),
+                    confirmation: .none,
+                    isAvailable: { true },
+                    execute: { _ in .object(["marker": .string(marker)]) })
+            }
+            let collidingRegistry = NativeToolRegistry(definitions: [
+                collidingDefinition("dup-first", marker: "first"),
+                collidingDefinition("dup-second", marker: "second"),
+            ])
+            let collidingTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "dup-call", name: "duplicated_tool", arguments: "{}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "Done.", toolCalls: [], finishReason: "stop")],
+            ])
+            var collided: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(
+                transport: collidingTransport, registry: collidingRegistry
+            ).stream(
+                messages: [NativeChatMessage(role: "user", content: "Run it")],
+                model: "local-model", enabledToolIDs: ["dup-first", "dup-second"]
+            ) {
+                collided = snapshot
+            }
+            guard collided?.activities.first?.state == .succeeded,
+                  collided?.activities.first?.result?.contains("first") == true,
+                  collided?.content == "Done.",
+                  collidingTransport.schemas.first?.filter({ $0.name == "duplicated_tool" }).count == 1 else {
+                print("SELFTEST ERROR: duplicate tool name in the loop"); exit(1)
+            }
+
+            await runCapabilityConfirmationStore(record: record, client: client)
+            print("  native capability tools OK (loader, transport, cap, failures, confirmation, gating, assembler)")
+        } catch {
+            print("SELFTEST ERROR: native capability tools threw \(error)"); exit(1)
+        }
+    }
+
+    private static func runCapabilityConfirmationStore(
+        record: NativeToolDefinition, client: SelfTestHTTPToolClient
+    ) async {
+        do {
+            let config = NativeChatConfig(
+                baseURL: URL(string: "https://model.example/v1")!,
+                apiKey: nil,
+                model: "local-model",
+                chatTemplateKwargs: nil)
+            let transport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "store-confirm", name: "inventory_record",
+                                       arguments: "{\"item\":\"widget\"}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "Recorded.", toolCalls: [], finishReason: "stop")],
+            ])
+            let store = ChatStore(
+                config: nil,
+                client: nil,
+                socket: nil,
+                nativeConfig: config,
+                nativeTransport: transport,
+                repository: try LocalChatRepository(inMemory: true),
+                hasLegacyOWUI: false,
+                nativeEnabledToolIDs: [record.id],
+                nativeToolRegistry: NativeToolRegistry(definitions: [record]))
+            await store.connect()
+            let callsBefore = client.calls.count
+            store.sendText("Record the widget")
+            guard await waitForToolConfirmation(store) else {
+                print("SELFTEST ERROR: store never surfaced a tool confirmation"); exit(1)
+            }
+            guard store.pendingToolConfirmation?.id == "store-confirm",
+                  store.pendingToolConfirmation?.title == record.title,
+                  store.pendingToolConfirmation?.request == "{\"item\":\"widget\"}" else {
+                print("SELFTEST ERROR: store confirmation request contents"); exit(1)
+            }
+            store.resolveToolConfirmation(true)
+            await waitForGeneration(store)
+            guard let reply = store.selected?.messages.last,
+                  reply.text == "Recorded.",
+                  reply.toolActivities.first?.state == .succeeded,
+                  store.pendingToolConfirmation == nil,
+                  client.calls.count == callsBefore + 1 else {
+                print("SELFTEST ERROR: approved store confirmation did not complete the turn"); exit(1)
+            }
+        } catch {
+            print("SELFTEST ERROR: store confirmation flow threw \(error)"); exit(1)
+        }
+    }
+
+    private static func waitForToolConfirmation(_ store: ChatStore) async -> Bool {
+        for _ in 0..<300 {
+            if store.pendingToolConfirmation != nil { return true }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return false
     }
 
     private static func runNativeStore() async {

@@ -32,6 +32,7 @@ final class ChatStore: ObservableObject {
     @Published var pulseVeinDetail: PulseVein? = nil // open vein overlay (ditto)
     @Published var focusTick: Int = 0         // bump to move the cursor into the composer
     @Published var attachments: [Attachment] = []   // pending composer attachments (images/docs)
+    @Published var attachmentError: String?
     @Published var activeArtifact: Artifact?  // the artifact shown in the Canvas panel
     @Published var showCanvas: Bool = false
     @Published var artifactLibrary: [Artifact] = []   // persisted across sessions
@@ -50,12 +51,14 @@ final class ChatStore: ObservableObject {
     private let repository: (any ChatRepository)?
     private let repositoryInitializationError: String?
     private let hasLegacyOWUI: Bool
+    let attachmentStore: NativeAttachmentStore
     private let pulseFeedProvider: (any PulseFeedProviding)?
     var isLive: Bool { nativeTransport != nil && repository != nil }
     var canSubmitChat: Bool { !generating && repository != nil }
     var isPulseConfigured: Bool { config?.veraAPIBase != nil }
     var isLegacyConfigured: Bool { hasLegacyOWUI }
     var apiToken: String? { hasLegacyOWUI ? config?.apiKey : nil }   // for authed OWUI image loads (Pulse cover art)
+    var mediaBase: String? { config?.veraAPIBase?.absoluteString }
     var currentConfig: OWUIConfig? { config }  // for Settings to diff against saved edits
     var currentNativeConfig: NativeChatConfig? { nativeConfig }
 
@@ -67,7 +70,9 @@ final class ChatStore: ObservableObject {
          nativeMemorySettings: NativeMemorySettings = .fresh,
          nativeMemoryService: (any NativeMemoryServing)? = nil,
          nativeToolRegistry: NativeToolRegistry? = nil,
-         pulseFeed: (any PulseFeedProviding)? = nil) {
+         pulseFeed: (any PulseFeedProviding)? = nil,
+         attachmentStore: NativeAttachmentStore = NativeAttachmentStore(),
+         sweepOrphanedAttachments: Bool = false) {
         self.config = config
         self.client = client
         self.socket = socket
@@ -83,9 +88,18 @@ final class ChatStore: ObservableObject {
         self.repositoryInitializationError = repositoryError
         self.hasLegacyOWUI = hasLegacyOWUI
         self.pulseFeedProvider = pulseFeed
+        self.attachmentStore = attachmentStore
         chatConfigurationError = repositoryError
         selectedID = conversations.first?.id
         loadArtifacts()
+        if sweepOrphanedAttachments, let repository,
+           let referenced = try? repository.referencedAttachmentFileNames() {
+            let store = attachmentStore
+            let candidates = store.orphanCandidates(keeping: referenced)
+            if !candidates.isEmpty {
+                Task.detached(priority: .utility) { store.removeOrphans(candidates) }
+            }
+        }
     }
 
     // MARK: - Canvas / artifacts
@@ -852,13 +866,20 @@ final class ChatStore: ObservableObject {
 
     func deleteConversation(_ id: String) {
         let idx = conversations.firstIndex { $0.id == id }
+        let stored = (try? repository?.messages(conversationID: id)) ?? []
         conversations.removeAll { $0.id == id }
         if selectedID == id {
             let next = idx.flatMap { conversations.indices.contains($0) ? conversations[$0] : conversations.last }
             selectedID = next?.id ?? conversations.first?.id
         }
-        do { try repository?.deleteConversation(id) }
-        catch { chatConfigurationError = "The conversation couldn't be deleted: \(error.localizedDescription)" }
+        do {
+            try repository?.deleteConversation(id)
+            for message in stored {
+                for attachment in message.attachments { attachmentStore.remove(attachment) }
+            }
+        } catch {
+            chatConfigurationError = "The conversation couldn't be deleted: \(error.localizedDescription)"
+        }
         if selectedID == nil { newConversation() }
     }
 
@@ -987,7 +1008,38 @@ final class ChatStore: ObservableObject {
     // MARK: - Attachments (composer)
 
     func addFiles(_ urls: [URL]) {
-        attachments = []
+        attachmentError = nil
+        for url in urls {
+            do {
+                let record = try attachmentStore.save(url: url)
+                attachments.append(pendingAttachment(for: record, sourceURL: url))
+            } catch {
+                attachmentError = error.localizedDescription
+            }
+        }
+    }
+
+    func addPastedImages(_ images: [Data]) {
+        attachmentError = nil
+        for data in images {
+            do {
+                let record = try attachmentStore.save(data: data, preferredName: "Pasted image")
+                attachments.append(pendingAttachment(for: record, sourceURL: nil))
+            } catch {
+                attachmentError = error.localizedDescription
+            }
+        }
+    }
+
+    private func pendingAttachment(for record: MessageAttachment, sourceURL: URL?) -> Attachment {
+        let fileURL = record.fileName.flatMap { attachmentStore.url(for: $0) }
+        let att = Attachment(url: sourceURL ?? fileURL ?? URL(fileURLWithPath: record.name))
+        att.nativeRecord = record
+        if let fileURL, let image = NSImage(contentsOf: fileURL) {
+            att.thumbnail = ImageEncoder.downscale(image, maxDim: 96)
+        }
+        att.status = .ready
+        return att
     }
 
     private func process(_ att: Attachment) async {
@@ -1007,7 +1059,13 @@ final class ChatStore: ObservableObject {
         } else { att.status = .failed }
     }
 
-    func removeAttachment(_ id: UUID) { attachments.removeAll { $0.id == id } }
+    func removeAttachment(_ id: UUID) {
+        attachmentError = nil
+        for att in attachments where att.id == id {
+            if let record = att.nativeRecord { attachmentStore.remove(record) }
+        }
+        attachments.removeAll { $0.id == id }
+    }
 
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1051,10 +1109,12 @@ final class ChatStore: ObservableObject {
         }
         guard let id = selectedID,
               let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
-        let user = Message(role: .user, text: text)
+        let records = atts.compactMap(\.nativeRecord)
+        let user = Message(role: .user, text: text, attachments: records)
         conversations[idx].messages.append(user)
         if conversations[idx].title == "New chat" {
-            conversations[idx].title = String(text.prefix(40))
+            let title = text.isEmpty ? (records.first?.name ?? "New chat") : String(text.prefix(40))
+            conversations[idx].title = title
         }
         conversations[idx].updatedAt = Date()
         conversations[idx].isPersisted = true
@@ -1063,6 +1123,8 @@ final class ChatStore: ObservableObject {
             try repository.saveConversation(conversations[idx])
             try repository.saveMessage(user, conversationID: id, ordinal: conversations[idx].messages.count - 1)
         } catch {
+            conversations[idx].messages.removeLast()
+            for record in records { attachmentStore.remove(record) }
             chatConfigurationError = "The message couldn't save: \(error.localizedDescription)"
             return
         }
@@ -1090,8 +1152,13 @@ final class ChatStore: ObservableObject {
             defer { generating = false }
             var lastCheckpoint = Date.distantPast
             do {
+                let attachmentStore = self.attachmentStore
+                let imageLoader: (MessageAttachment) -> String? = {
+                    attachmentStore.requestDataURL(for: $0)
+                }
                 var history = NativeChatHistoryBuilder.build(
-                    messages: turnMessages, systemPrompt: nativeSystemPrompt)
+                    messages: turnMessages, systemPrompt: nativeSystemPrompt,
+                    imageLoader: imageLoader)
                 if memorySettings.enabled {
                     if memorySettings.embeddingsModel.isEmpty || memoryService == nil {
                         memoryServiceState = .setupRequired
@@ -1107,7 +1174,8 @@ final class ChatStore: ObservableObject {
                                 bankScope: memorySettings.bankScope)
                             history = NativeMemoryPromptAssembler.build(
                                 messages: turnMessages,
-                                systemPrompt: nativeSystemPrompt, selected: selected)
+                                systemPrompt: nativeSystemPrompt, selected: selected,
+                                imageLoader: imageLoader)
                             memoryServiceState = memoryProposals.isEmpty
                                 ? .ready : .pendingReview(memoryProposals.count)
                         } catch {

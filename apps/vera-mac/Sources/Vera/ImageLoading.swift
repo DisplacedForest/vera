@@ -26,10 +26,12 @@ final class RemoteImageCache {
 struct AuthedAsyncImage: View {
     let url: String?
     var token: String? = nil
+    var apiBase: String? = nil
     var contentMode: ContentMode = .fill
     var natural: Bool = false              // size to the image's aspect ratio, no crop
     var placeholderHeight: CGFloat = 200   // height reserved before load in natural mode
     @State private var image: NSImage?
+    @State private var failed = false
 
     var body: some View {
         ZStack {
@@ -38,20 +40,56 @@ struct AuthedAsyncImage: View {
                     .aspectRatio(contentMode: natural ? .fit : contentMode)
             } else if natural {
                 Theme.surface.frame(height: placeholderHeight)
+                if failed { failureMark }
             } else {
                 Theme.surface
+                if failed { failureMark }
             }
         }
-        .task(id: url) { await load() }
+        .task(id: "\(url ?? "")|\(apiBase ?? "")") { await load() }
+    }
+
+    private var failureMark: some View {
+        Image(systemName: "photo")
+            .font(.system(size: 18))
+            .foregroundStyle(Theme.textSecondary)
+    }
+
+    static func resolve(_ raw: String, apiBase: String?) -> URL? {
+        if let url = URL(string: raw), url.scheme != nil { return url }
+        guard raw.hasPrefix("/"), let apiBase else { return nil }
+        let base = apiBase.hasSuffix("/") ? String(apiBase.dropLast()) : apiBase
+        return URL(string: base + raw)
     }
 
     private func load() async {
-        guard let url, let u = URL(string: url) else { return }
-        if let cached = RemoteImageCache.shared.get(url) { image = cached; return }
+        failed = false
+        guard let url else { image = nil; return }
+        guard let u = Self.resolve(url, apiBase: apiBase) else {
+            image = nil
+            failed = true
+            return
+        }
+        let cacheKey = u.absoluteString
+        if let cached = RemoteImageCache.shared.get(cacheKey) { image = cached; return }
+        if u.isFileURL {
+            if let img = NSImage(contentsOf: u) {
+                RemoteImageCache.shared.set(cacheKey, img)
+                image = img
+            } else {
+                image = nil
+                failed = true
+            }
+            return
+        }
         var req = URLRequest(url: u)
         if let token, !token.isEmpty { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        guard let (data, _) = try? await URLSession.shared.data(for: req), let img = NSImage(data: data) else { return }
-        RemoteImageCache.shared.set(url, img)
+        guard let (data, _) = try? await URLSession.shared.data(for: req), let img = NSImage(data: data) else {
+            image = nil
+            failed = true
+            return
+        }
+        RemoteImageCache.shared.set(cacheKey, img)
         image = img
     }
 }

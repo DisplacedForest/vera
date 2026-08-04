@@ -367,13 +367,21 @@ private final class NativeToolExecutionRace: @unchecked Sendable {
 }
 
 enum NativeChatHistoryBuilder {
-    static func build(messages: [Message], systemPrompt: String) -> [NativeChatMessage] {
+    static func build(
+        messages: [Message], systemPrompt: String,
+        imageLoader: ((MessageAttachment) -> String?)? = nil
+    ) -> [NativeChatMessage] {
         var history: [NativeChatMessage] = []
         let prompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if !prompt.isEmpty { history.append(NativeChatMessage(role: "system", content: prompt)) }
         for message in messages where message.state == .complete {
             if message.role == .user {
-                if !message.text.isEmpty { history.append(NativeChatMessage(role: "user", content: message.text)) }
+                let images = imageLoader.map { load in
+                    message.attachments.filter(\.isImage).compactMap(load)
+                } ?? []
+                if !message.text.isEmpty || !images.isEmpty {
+                    history.append(NativeChatMessage(role: "user", content: message.text, images: images))
+                }
                 continue
             }
             let rounds = Dictionary(grouping: message.toolActivities, by: \.round)

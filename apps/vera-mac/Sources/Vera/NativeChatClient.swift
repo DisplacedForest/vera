@@ -47,15 +47,17 @@ struct NativeChatMessage: Sendable, Equatable {
     let content: String
     let toolCallID: String?
     let toolCalls: [NativeChatToolCall]
+    let images: [String]
 
     init(
         role: String, content: String, toolCallID: String? = nil,
-        toolCalls: [NativeChatToolCall] = []
+        toolCalls: [NativeChatToolCall] = [], images: [String] = []
     ) {
         self.role = role
         self.content = content
         self.toolCallID = toolCallID
         self.toolCalls = toolCalls
+        self.images = images
     }
 }
 
@@ -303,9 +305,20 @@ struct NativeChatClient: NativeChatTransport, Sendable {
         }
     }
 
-    private static func messageObject(_ message: NativeChatMessage) -> [String: Any] {
+    static func messageObject(_ message: NativeChatMessage) -> [String: Any] {
         var object: [String: Any] = ["role": message.role]
-        object["content"] = message.content.isEmpty ? NSNull() : message.content
+        if message.images.isEmpty {
+            object["content"] = message.content.isEmpty ? NSNull() : message.content
+        } else {
+            var parts: [[String: Any]] = []
+            if !message.content.isEmpty {
+                parts.append(["type": "text", "text": message.content])
+            }
+            parts.append(contentsOf: message.images.map {
+                ["type": "image_url", "image_url": ["url": $0]]
+            })
+            object["content"] = parts
+        }
         if let toolCallID = message.toolCallID { object["tool_call_id"] = toolCallID }
         if !message.toolCalls.isEmpty {
             object["tool_calls"] = message.toolCalls.map { call in

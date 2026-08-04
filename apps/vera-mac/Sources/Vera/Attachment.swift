@@ -17,6 +17,7 @@ final class Attachment: ObservableObject, Identifiable {
     @Published var thumbnail: NSImage? = nil      // small preview for image chips
     var dataURL: String? = nil                     // images: data:<mime>;base64,...  (downscaled)
     var owuiFile: [String: Any]? = nil             // documents: OWUI /api/v1/files/ response object
+    var nativeRecord: MessageAttachment? = nil
 
     init(url: URL) {
         self.url = url
@@ -28,12 +29,19 @@ final class Attachment: ObservableObject, Identifiable {
 }
 
 /// Lightweight, Hashable attachment snapshot stored on a sent Message for display in the bubble.
-struct MessageAttachment: Identifiable, Hashable {
-    let id = UUID()
+struct MessageAttachment: Identifiable, Hashable, Codable {
+    var id: UUID = UUID()
     var name: String
     var ext: String
     var isImage: Bool
     var thumbnailData: Data? = nil   // PNG of the thumbnail (Hashable; NSImage isn't)
+    var fileName: String? = nil
+    var mime: String? = nil
+    var byteSize: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, ext, isImage, fileName, mime, byteSize
+    }
 }
 
 extension NSImage {

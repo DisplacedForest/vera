@@ -96,6 +96,33 @@ enum Shot {
                 .padding(28).frame(width: size.width, height: size.height, alignment: .top)
                 .background(Theme.bg).environmentObject(store)
             )
+        } else if view == "chat-media" {
+            let swatch = NSImage(size: NSSize(width: 320, height: 240), flipped: false) { rect in
+                NSGradient(colors: [NSColor(calibratedRed: 0.72, green: 0.45, blue: 0.2, alpha: 1),
+                                    NSColor(calibratedRed: 0.13, green: 0.16, blue: 0.26, alpha: 1)])?
+                    .draw(in: rect, angle: 60)
+                return true
+            }
+            let sent = MessageAttachment(
+                name: "kitchen-shelf.png", ext: "PNG", isImage: true,
+                thumbnailData: swatch.pngData, fileName: "demo.png", mime: "image/png")
+            let missing = MessageAttachment(
+                name: "missing.heic", ext: "HEIC", isImage: true, fileName: "gone.heic", mime: "image/heic")
+            content = AnyView(
+                VStack(alignment: .leading, spacing: 16) {
+                    MessageRow(message: Message(
+                        role: .user, text: "What do you make of these shelves?",
+                        attachments: [sent, missing]))
+                    MessageRow(message: Message(
+                        role: .assistant,
+                        text: "The first photo shows a sturdy setup; the second image didn't come through, so I described what I could see."))
+                    AuthedAsyncImage(url: "/pulse/media/unreachable.jpg", natural: true, placeholderHeight: 160)
+                        .frame(width: 320)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .padding(24).frame(width: size.width, height: size.height, alignment: .topLeading)
+                .background(Theme.bg).environmentObject(store)
+            )
         } else if view == "pulse-chat" {
             let card = PulseCard.deepMock()
             content = AnyView(

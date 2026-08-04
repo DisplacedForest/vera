@@ -284,9 +284,11 @@ enum NativeMemoryRecall {
 
 enum NativeMemoryPromptAssembler {
     static func build(
-        messages: [Message], systemPrompt: String, selected: [NativeMemoryRanked]
+        messages: [Message], systemPrompt: String, selected: [NativeMemoryRanked],
+        imageLoader: ((MessageAttachment) -> String?)? = nil
     ) -> [NativeChatMessage] {
-        let base = NativeChatHistoryBuilder.build(messages: messages, systemPrompt: systemPrompt)
+        let base = NativeChatHistoryBuilder.build(
+            messages: messages, systemPrompt: systemPrompt, imageLoader: imageLoader)
         guard !selected.isEmpty else { return base }
         let facts = selected.map { item in
             let detail = item.record.details.joined(separator: "; ")

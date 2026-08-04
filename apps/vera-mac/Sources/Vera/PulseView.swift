@@ -69,7 +69,7 @@ struct PulseView: View {
                             .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                             .frame(maxWidth: .infinity).padding(.top, 48)
                     } else {
-                        PulseGrid(cards: store.feedCards, token: store.apiToken, onTap: { store.pulseDetail = $0 })
+                        PulseGrid(cards: store.feedCards, token: store.apiToken, apiBase: store.mediaBase, onTap: { store.pulseDetail = $0 })
                             .padding(.horizontal, 28).padding(.vertical, 12)
                     }
                 }
@@ -78,7 +78,7 @@ struct PulseView: View {
             .background(Theme.bg)
 
             if let c = detail {
-                PulseDetailView(card: c, token: store.apiToken,
+                PulseDetailView(card: c, token: store.apiToken, apiBase: store.mediaBase,
                                 onClose: { store.pulseDetail = nil },
                                 onContinue: { store.openPulseInChat(c) },
                                 canBookmark: false)
@@ -121,11 +121,12 @@ struct VeinsSheet: View {
 struct PulseGrid: View {
     let cards: [PulseCard]
     var token: String? = nil
+    var apiBase: String? = nil
     var onTap: ((PulseCard) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 18) {
-            ForEach(cards) { PulseCardTile(card: $0, token: token, onTap: onTap) }
+            ForEach(cards) { PulseCardTile(card: $0, token: token, apiBase: apiBase, onTap: onTap) }
         }
         .frame(maxWidth: pulseFeedWidth)
         .frame(maxWidth: .infinity)
@@ -136,6 +137,7 @@ struct PulseCardTile: View {
     @EnvironmentObject var store: ChatStore
     let card: PulseCard
     var token: String? = nil
+    var apiBase: String? = nil
     var onTap: ((PulseCard) -> Void)? = nil
 
     private var panel: Color { Color(hex: card.tint) ?? Theme.surface }
@@ -145,7 +147,7 @@ struct PulseCardTile: View {
     private var tile: some View {
         VStack(spacing: 0) {
             if let img = card.imageURL, !img.isEmpty {
-                AuthedAsyncImage(url: img, token: token)
+                AuthedAsyncImage(url: img, token: token, apiBase: apiBase)
                     .frame(height: 200).frame(maxWidth: .infinity).clipped()
             }
             VStack(alignment: .leading, spacing: 8) {
@@ -474,7 +476,7 @@ struct PulseVeinView: View {
             .buttonStyle(.plain).padding(.top, 16).padding(.horizontal, 16).padding(.bottom, 16)
 
             if let c = detail {
-                PulseDetailView(card: c, token: store.apiToken,
+                PulseDetailView(card: c, token: store.apiToken, apiBase: store.mediaBase,
                                 onClose: { detail = nil },
                                 onContinue: { store.openPulseInChat(c, onOpened: { detail = nil }) },
                                 canBookmark: false)

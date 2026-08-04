@@ -24,6 +24,8 @@ venv/
 
 # Internal reference docs — local only, never tracked, never shipped
 /internal/
+/scripts/leak-gate.sh
+/scripts/leak-allow.txt
 
 # Agent directives — local working files, never tracked, never published
 /AGENTS.md

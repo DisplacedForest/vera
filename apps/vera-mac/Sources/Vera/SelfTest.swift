@@ -1187,6 +1187,16 @@ enum SelfTest {
             guard attachmentStore.missingImageNames(in: [record, missingRecord]) == ["gone.png"] else {
                 print("SELFTEST ERROR: missing image detection for route badge"); exit(1)
             }
+            let corruptFileName = "corrupt-selftest.png"
+            try Data("not an image at all".utf8).write(
+                to: directory.appendingPathComponent(corruptFileName))
+            let corruptRecord = MessageAttachment(
+                name: "corrupt.png", ext: "PNG", isImage: true,
+                fileName: corruptFileName, mime: "image/png", byteSize: 18)
+            guard attachmentStore.requestDataURL(for: corruptRecord) == nil,
+                  attachmentStore.missingImageNames(in: [record, corruptRecord]) == ["corrupt.png"] else {
+                print("SELFTEST ERROR: undecodable image detection for route badge"); exit(1)
+            }
             let unloadableHistory = NativeChatHistoryBuilder.build(
                 messages: [Message(role: .user, text: "", attachments: [missingRecord],
                                    routeNote: MessageRouteNote(route: .direct))],

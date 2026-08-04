@@ -239,7 +239,7 @@ final class VeraSocket: @unchecked Sendable {
     }
 
     // OWUI does NOT auto-attach a model's toolIds/features to a raw completion — the
-    // web client adds them, so the app must too, or Vera has no tools/code-interpreter in-app.
+    // web client adds them, so the app must too, or Vera has no tools in-app.
     private var _toolIDs: [String] = []
     private var _featureIDs: [String] = []
     private var _capsLoaded = false

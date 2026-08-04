@@ -21,9 +21,9 @@ Trunk-based, deliberately simple:
 
 Enforced in review:
 
-1. **Everything is parameterized.** No hardcoded endpoints, IPs, hostnames, home-directory paths, model names, or personal data. Every external service is a URL in config. Every judgment call (taste, thresholds, region) is a config value with a neutral default. CI enforces this with a leak gate and fails the build on any hit.
+1. **Everything is parameterized.** No hardcoded endpoints, IPs, hostnames, home-directory paths, model names, or personal data. Every external service is a URL in config. Every judgment call (taste, thresholds, region) is a config value with a neutral default.
 2. **Degrade gracefully.** Every capability must behave sensibly when its endpoint or integration is unconfigured: report itself as off in the config report, refuse politely at runtime, and never affect the rest of the stack.
-3. **One capability = one router.** New server-side capabilities are a single `APIRouter` module in `services/vera-api/routers/` plus one `include_router` line in `main.py`. No new containers, no sidecars.
+3. **One capability = one router.** New server-side capabilities are a single `APIRouter` module in `services/vera-api/routers/` plus one entry in the `CAPABILITIES` table in `main.py`. No new containers, no sidecars.
 4. **Typed throughout.** Python is type-hinted, Swift is Swift 6 strict.
 
 ## Project layout
@@ -74,7 +74,7 @@ For UI work, render any view headlessly and inspect it:
 .build/debug/Vera --shot /tmp/view-light.png --view pulse --appearance light
 ```
 
-Run all of the above before opening a PR. CI runs the same suites on every PR and must be green to merge.
+Run all of the above before opening a PR. CI must be green to merge.
 
 ## Sending a change
 

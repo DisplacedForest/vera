@@ -46,14 +46,14 @@ def loop_budget(name: str, default: int) -> int:
 _TOOLS: dict[str, dict] = {}
 
 
-def register_tool(schema: dict, handler, available=None, last_resort: bool = False) -> None:
+def register_tool(schema: dict, handler, available=None) -> None:
     name = schema["function"]["name"]
     _TOOLS[name] = {"schema": schema, "handler": handler,
-                    "available": available, "last_resort": last_resort}
+                    "available": available}
 
 
 def tool_schemas() -> list[dict]:
-    entries = sorted(_TOOLS.values(), key=lambda e: e["last_resort"])
+    entries = list(_TOOLS.values())
     return [e["schema"] for e in entries if e["available"] is None or e["available"]()]
 
 

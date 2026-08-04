@@ -597,6 +597,14 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
 
     func savePromptProfile(_ profile: PromptProfile) throws {
         try NativePromptValidation.validate(name: profile.name, content: profile.content)
+        try writePromptProfile(profile)
+    }
+
+    func migratePromptProfile(_ profile: PromptProfile) throws {
+        try writePromptProfile(profile)
+    }
+
+    private func writePromptProfile(_ profile: PromptProfile) throws {
         try database.write { db in
             try db.execute(sql: """
                 INSERT INTO prompt_profiles (id, name, scope, content, created_at, updated_at)

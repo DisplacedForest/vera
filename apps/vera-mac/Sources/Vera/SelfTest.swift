@@ -2653,8 +2653,55 @@ enum SelfTest {
                       == NativeChatSettings.defaultSystemPrompt else {
                 print("SELFTEST ERROR: blank prompt migration fallback"); exit(1)
             }
+            let awkwardPrompts = [
+                String(repeating: "long legacy prompt ", count: 700),
+                "APP POLICY\nMy old prompt reused the header wording.",
+                "Old prompt with api_key: sk-abcdefghijkl inside.",
+            ]
+            for legacy in awkwardPrompts {
+                var awkward = NativeChatSettings.fresh
+                awkward.systemPrompt = legacy
+                let awkwardRepository = try LocalChatRepository(inMemory: true)
+                guard try NativePromptMigration.run(repository: awkwardRepository, settings: &awkward),
+                      let awkwardID = awkward.activePersonaID,
+                      try awkwardRepository.promptProfile(awkwardID)?.content == legacy else {
+                    print("SELFTEST ERROR: legacy prompt must migrate byte-exact"); exit(1)
+                }
+            }
         } catch {
             print("SELFTEST ERROR: prompt migration \(error)"); exit(1)
+        }
+
+        do {
+            let date = Date(timeIntervalSince1970: 1_785_000_000)
+            let personaA = PromptProfile(id: "p-a", name: "A", scope: .persona,
+                                         content: "PERSONA A", createdAt: date, updatedAt: date)
+            let personaB = PromptProfile(id: "p-b", name: "B", scope: .persona,
+                                         content: "PERSONA B", createdAt: date, updatedAt: date)
+            let userA = PromptProfile(id: "u-a", name: "UA", scope: .user,
+                                      content: "USER A", createdAt: date, updatedAt: date)
+            let userB = PromptProfile(id: "u-b", name: "UB", scope: .user,
+                                      content: "USER B", createdAt: date, updatedAt: date)
+            let profiles = [personaA, personaB, userA, userB]
+            let edited = PromptPreviewComposer.compose(
+                profiles: profiles, activePersonaID: "p-a",
+                selection: .profile("u-b"), draft: "USER B DRAFT")
+            guard edited.persona == "PERSONA A",
+                  edited.userScope == "USER A\n\nUSER B DRAFT" else {
+                print("SELFTEST ERROR: preview must compose all user profiles with the draft substituted"); exit(1)
+            }
+            let personaPreview = PromptPreviewComposer.compose(
+                profiles: profiles, activePersonaID: "p-a",
+                selection: .profile("p-b"), draft: "PERSONA B DRAFT")
+            guard personaPreview.persona == "PERSONA B DRAFT",
+                  personaPreview.userScope == "USER A\n\nUSER B" else {
+                print("SELFTEST ERROR: persona preview substitution"); exit(1)
+            }
+            let unselected = PromptPreviewComposer.compose(
+                profiles: profiles, activePersonaID: "p-b", selection: nil, draft: "")
+            guard unselected.persona == "PERSONA B" else {
+                print("SELFTEST ERROR: preview must follow the active persona"); exit(1)
+            }
         }
 
         do {
@@ -2801,6 +2848,11 @@ enum SelfTest {
                   scopes.userScope == "OWNER USER SCOPE CONTENT",
                   scopes.instructions.isEmpty else {
                 print("SELFTEST ERROR: prompt scope resolution"); exit(1)
+            }
+            try repository.deletePromptProfile(alternate.id)
+            let fallback = store.resolvePromptScopes(conversationID: conversationID)
+            guard fallback.persona == "LIBRARY PERSONA CONTENT" else {
+                print("SELFTEST ERROR: deleted active persona must fall back to the first persona"); exit(1)
             }
             print("  prompt library OK (CRUD, revisions, migration, import/export, validation, scope slots, request assembly)")
         } catch {

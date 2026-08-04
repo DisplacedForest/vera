@@ -59,6 +59,7 @@ protocol NativePromptLibraryRepository: Sendable {
     func promptProfiles() throws -> [PromptProfile]
     func promptProfile(_ id: String) throws -> PromptProfile?
     func savePromptProfile(_ profile: PromptProfile) throws
+    func migratePromptProfile(_ profile: PromptProfile) throws
     func deletePromptProfile(_ id: String) throws
     func reusablePrompts() throws -> [ReusablePrompt]
     func saveReusablePrompt(_ prompt: ReusablePrompt) throws
@@ -220,6 +221,29 @@ struct PromptDocument: Equatable, Sendable {
     }
 }
 
+enum PromptPreviewComposer {
+    static func compose(
+        profiles: [PromptProfile],
+        activePersonaID: String?,
+        selection: PromptLibrarySelection?,
+        draft: String
+    ) -> (persona: String, userScope: String) {
+        var selectedProfileID: String?
+        if case .profile(let id) = selection { selectedProfileID = id }
+        let personas = profiles.filter { $0.scope == .persona }
+        let persona: String
+        if let selectedProfileID, personas.contains(where: { $0.id == selectedProfileID }) {
+            persona = draft
+        } else {
+            persona = (personas.first { $0.id == activePersonaID } ?? personas.first)?.content ?? ""
+        }
+        let userScope = profiles.filter { $0.scope == .user }
+            .map { $0.id == selectedProfileID ? draft : $0.content }
+            .joined(separator: "\n\n")
+        return (persona, userScope)
+    }
+}
+
 enum NativePromptMigration {
     @discardableResult
     static func run(
@@ -234,17 +258,13 @@ enum NativePromptMigration {
             settings.activePersonaID = first.id
             return true
         }
-        let content = settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        var profile = PromptProfile.fresh(
+        let legacy = settings.systemPrompt
+        let profile = PromptProfile.fresh(
             name: "Vera",
             scope: .persona,
-            content: content.isEmpty ? NativeChatSettings.defaultSystemPrompt : content)
-        do {
-            try repository.savePromptProfile(profile)
-        } catch is PromptValidationError {
-            profile.content = NativeChatSettings.defaultSystemPrompt
-            try repository.savePromptProfile(profile)
-        }
+            content: legacy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? NativeChatSettings.defaultSystemPrompt : legacy)
+        try repository.migratePromptProfile(profile)
         settings.activePersonaID = profile.id
         return true
     }

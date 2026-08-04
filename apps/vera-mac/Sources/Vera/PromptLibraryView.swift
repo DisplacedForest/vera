@@ -170,23 +170,13 @@ struct PromptLibraryArea: View {
     }
 
     private var preview: some View {
-        let persona: String
-        switch selection {
-        case .profile(let id):
-            let profile = profiles.first { $0.id == id }
-            persona = profile?.scope == .persona ? editorContent
-                : (personas.first { $0.id == activePersonaID } ?? personas.first)?.content ?? ""
-        default:
-            persona = (personas.first { $0.id == activePersonaID } ?? personas.first)?.content ?? ""
-        }
-        let userScope: String
-        if case .profile(let id) = selection, profiles.first(where: { $0.id == id })?.scope == .user {
-            userScope = editorContent
-        } else {
-            userScope = userProfiles.map(\.content).joined(separator: "\n\n")
-        }
+        let composed = PromptPreviewComposer.compose(
+            profiles: profiles,
+            activePersonaID: activePersonaID,
+            selection: selection,
+            draft: editorContent)
         let assembled = NativeContextAssembler.assemble(NativeContextInput(
-            persona: persona, userScope: userScope,
+            persona: composed.persona, userScope: composed.userScope,
             timestamp: previewTimestamp, timeZone: .current, contracts: []))
         return PromptPreviewPane(sections: assembled.sections, onDone: { showPreview = false })
             .frame(width: 560, height: 520)
@@ -335,11 +325,17 @@ struct PromptLibraryArea: View {
     private func deleteSelected() {
         switch selection {
         case .profile(let id):
-            if personas.count == 1, profiles.first(where: { $0.id == id })?.scope == .persona {
+            let deletingPersona = profiles.first { $0.id == id }?.scope == .persona
+            if deletingPersona, personas.count == 1 {
                 note("Keep at least one persona.", isError: true)
                 return
             }
-            apply { try repository.deletePromptProfile(id) }
+            let replacement = personas.first { $0.id != id }
+            guard apply({ try repository.deletePromptProfile(id) }) else { break }
+            if deletingPersona, id == activePersonaID, let replacement {
+                onSelectActive(replacement.id)
+                note("Deleted the active persona. \(replacement.name) is now active.")
+            }
         case .reusable(let id):
             apply { try repository.deleteReusablePrompt(id) }
         case nil:

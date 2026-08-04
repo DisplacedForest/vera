@@ -11,6 +11,7 @@ swift run                       # dev build + launch
 swift build                     # compile check
 .build/debug/Vera --selftest    # headless: native transport, persistence, and optional live checks
 .build/debug/Vera --shot out.png --view chat|pulse|journal|memory|agentic|veins|settings-plugins|settings-mcp|settings|onboarding   # render a screenshot
+.build/debug/Vera --dump-context   # print the assembled per-request system context, section by section
 ```
 Config lives in `~/.vera/config.json`, editable in-app via Settings (⌘,): `model_base`,
 `model_api_key`, `model`, `voice_base`, `vera_api_base`, and `owner_name`. The model base must
@@ -24,6 +25,13 @@ URL is configured, and Continue in chat lands the card in the local database as 
 conversation: text, citations, and provenance persist locally and reopen offline, while
 remote card images stay uncached and use the normal failure placeholders if their source
 goes away.
+
+`NativeContextAssembler` builds each request's system context deterministically, in a fixed
+order: app policy, the editable persona, session facts (date, time, owner name), recalled
+memory, a world-model seam, and capability context (per-tool usage contracts plus the ask,
+artifact, and chart format contracts, injected only when the model and configuration support
+them). Every section has a character cap, identical inputs assemble byte-identical context,
+and `--dump-context` shows exactly what a request would contain.
 
 ## Package & install
 ```bash

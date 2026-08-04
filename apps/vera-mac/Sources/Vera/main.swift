@@ -22,6 +22,8 @@ if let idx = arguments.firstIndex(of: "--shot"), idx + 1 < arguments.count {
     await SelfTest.recoveryProbe()
 } else if arguments.contains("--selftest") {
     await SelfTest.run()
+} else if arguments.contains("--dump-context") {
+    await SelfTest.dumpContext()
 } else if arguments.contains("--install-conventions") || arguments.contains("--install-ask-convention") {
     await SelfTest.installConventions()
 } else {

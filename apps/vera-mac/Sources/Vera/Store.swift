@@ -1232,6 +1232,9 @@ final class ChatStore: ObservableObject {
         let bridgeTransportFactory = visionBridgeTransportFactory
         let memorySettings = nativeMemorySettings
         let memoryService = nativeMemoryService
+        let persona = nativeSystemPrompt
+        let ownerName = config?.ownerName
+        let activeTools = nativeToolRegistry.active(enabledIDs: enabledToolIDs)
         Task {
             defer { generating = false }
             var lastCheckpoint = Date.distantPast
@@ -1275,9 +1278,7 @@ final class ChatStore: ObservableObject {
                 }
                 let turnMessages = conversations.first(where: { $0.id == id })?.messages
                     ?? []
-                var history = NativeChatHistoryBuilder.build(
-                    messages: turnMessages, systemPrompt: nativeSystemPrompt,
-                    imageLoader: imageLoader, capabilities: capabilityProfile)
+                var selectedMemories: [NativeMemoryRanked] = []
                 if memorySettings.enabled {
                     if memorySettings.embeddingsModel.isEmpty || memoryService == nil {
                         memoryServiceState = .setupRequired
@@ -1288,13 +1289,9 @@ final class ChatStore: ObservableObject {
                               let memoryService {
                         do {
                             let query = try await memoryService.embed(text)
-                            let selected = NativeMemoryRecall.rank(
+                            selectedMemories = NativeMemoryRecall.rank(
                                 records: try memoryRepository.approvedMemories(), query: query,
                                 bankScope: memorySettings.bankScope)
-                            history = NativeMemoryPromptAssembler.build(
-                                messages: turnMessages,
-                                systemPrompt: nativeSystemPrompt, selected: selected,
-                                imageLoader: imageLoader, capabilities: capabilityProfile)
                             memoryServiceState = memoryProposals.isEmpty
                                 ? .ready : .pendingReview(memoryProposals.count)
                         } catch {
@@ -1302,6 +1299,13 @@ final class ChatStore: ObservableObject {
                         }
                     }
                 }
+                let assembled = NativeContextAssembler.assemble(NativeContextInput(
+                    persona: persona, timestamp: Date(), timeZone: .current,
+                    ownerName: ownerName, memories: selectedMemories,
+                    capabilities: capabilityProfile, tools: activeTools))
+                let history = NativeChatHistoryBuilder.build(
+                    messages: turnMessages, systemPrompt: assembled.prompt,
+                    imageLoader: imageLoader, capabilities: capabilityProfile)
                 for try await snapshot in toolLoop.stream(
                     messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
                 ) {

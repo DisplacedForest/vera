@@ -771,7 +771,7 @@ enum SelfTest {
             let tools = NativeWebTools.definitions(base: { base }, client: client.client)
             guard tools.map(\.name) == ["web_search", "deep_research"],
                   tools.map(\.id) == ["web-search", "deep-research"],
-                  tools[0].timeout == nil,
+                  tools[0].timeout == NativeWebTools.searchTimeout,
                   tools[1].timeout == NativeWebTools.researchTimeout else {
                 print("SELFTEST ERROR: web tool definitions"); exit(1)
             }
@@ -823,6 +823,24 @@ enum SelfTest {
                   client.requests.last?.query == "rain",
                   client.requests.last?.maxResults == 10 else {
                 print("SELFTEST ERROR: web search success path"); exit(1)
+            }
+            let overflowTransport = ScriptedNativeToolTransport(rounds: [
+                [NativeChatStreamSnapshot(content: "", toolCalls: [
+                    NativeChatToolCall(id: "search-overflow", name: "web_search",
+                                       arguments: "{\"query\":\"rain\",\"max_results\":1e100}"),
+                ], finishReason: "tool_calls")],
+                [NativeChatStreamSnapshot(content: "Still standing.", toolCalls: [], finishReason: "stop")],
+            ])
+            var overflowFinal: NativeToolTurnSnapshot?
+            for try await snapshot in NativeToolLoop(transport: overflowTransport, registry: registry)
+                .stream(messages: [NativeChatMessage(role: "user", content: "Rain?")],
+                        model: "local-model", enabledToolIDs: ["web-search"]) {
+                overflowFinal = snapshot
+            }
+            guard overflowFinal?.activities.first?.state == .succeeded,
+                  client.requests.last?.maxResults == nil,
+                  overflowFinal?.content == "Still standing." else {
+                print("SELFTEST ERROR: web search overflow argument handling"); exit(1)
             }
 
             client.respond("search", status: 503, json: """
@@ -1935,7 +1953,9 @@ enum SelfTest {
                 ], finishReason: "tool_calls")],
                 [NativeChatStreamSnapshot(content: "The river rose overnight. [1]", toolCalls: [], finishReason: "stop")],
             ])
-            let researchRepository = try LocalChatRepository(inMemory: true)
+            let researchURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("vera-research-\(UUID().uuidString)/vera.sqlite")
+            let researchRepository = try LocalChatRepository(url: researchURL)
             let researchStore = ChatStore(
                 config: nil,
                 client: nil,
@@ -1958,11 +1978,13 @@ enum SelfTest {
                   researchReply.sources.first?.url == "https://a.example/one" else {
                 print("SELFTEST ERROR: research sources not lifted onto the reply"); exit(1)
             }
-            guard let reopened = try researchRepository.messages(
+            let relaunched = try LocalChatRepository(url: researchURL)
+            guard let reopened = try relaunched.messages(
                     conversationID: researchConversation.id).last,
                   reopened.sources == researchReply.sources else {
-                print("SELFTEST ERROR: research sources persistence round trip"); exit(1)
+                print("SELFTEST ERROR: research sources relaunch round trip"); exit(1)
             }
+            try? FileManager.default.removeItem(at: researchURL.deletingLastPathComponent())
             let citedRequest = researchTransport.histories.first?.first?.content ?? ""
             guard citedRequest.contains("bracketed numbers like [1]") else {
                 print("SELFTEST ERROR: citations contract missing from research request"); exit(1)

@@ -400,7 +400,7 @@ enum SelfTest {
     @MainActor static func dumpContext() {
         let configStore = ConfigStore()
         let settings = configStore.nativeSettings
-        let model = settings.activeProfile?.selectedModel ?? ""
+        let model = configStore.nativeResolved?.model ?? settings.activeProfile?.selectedModel ?? ""
         let capabilities = settings.resolveCapabilities(model: model).profile
         let registry = NativeToolRegistry(
             definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared))
@@ -1604,7 +1604,8 @@ enum SelfTest {
                 nativeConfig: config,
                 nativeTransport: transport,
                 repository: repository,
-                hasLegacyOWUI: false)
+                hasLegacyOWUI: false,
+                nativeOwnerName: "Riley")
             await store.connect()
             store.sendText("First")
             await waitForGeneration(store)
@@ -1616,6 +1617,7 @@ enum SelfTest {
                   conversation.messages[1].state == .complete,
                   transport.histories.count == 2,
                   transport.histories[1].first?.content.contains(NativeChatSettings.defaultSystemPrompt) == true,
+                  transport.histories[1].first?.content.contains("You are speaking with Riley.") == true,
                   transport.histories[1].dropFirst().map(\.content) == ["First", "Native reply", "Second"],
                   try repository.messages(conversationID: conversation.id).count == 4 else {
                 print("SELFTEST ERROR: native store multi-turn persistence"); exit(1)

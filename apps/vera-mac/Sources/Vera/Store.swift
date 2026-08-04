@@ -45,6 +45,7 @@ final class ChatStore: ObservableObject {
     private var nativeConfig: NativeChatConfig?
     private var nativeTransport: (any NativeChatTransport)?
     private var nativeSystemPrompt: String
+    private var nativeOwnerName: String?
     private var nativeEnabledToolIDs: Set<String>
     private var nativeCapabilityOverrides: [String: ModelCapabilityProfile]
     private var visionBridgeConfig: VisionBridgeConfig?
@@ -70,6 +71,7 @@ final class ChatStore: ObservableObject {
          nativeConfig: NativeChatConfig?, nativeTransport: (any NativeChatTransport)?,
          repository: (any ChatRepository)?, repositoryError: String? = nil, hasLegacyOWUI: Bool,
          nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt,
+         nativeOwnerName: String? = nil,
          nativeEnabledToolIDs: Set<String> = [],
          nativeCapabilityOverrides: [String: ModelCapabilityProfile] = [:],
          visionBridgeConfig: VisionBridgeConfig? = nil,
@@ -86,6 +88,7 @@ final class ChatStore: ObservableObject {
         self.nativeConfig = nativeConfig
         self.nativeTransport = nativeTransport
         self.nativeSystemPrompt = nativeSystemPrompt
+        self.nativeOwnerName = nativeOwnerName
         self.nativeEnabledToolIDs = nativeEnabledToolIDs
         self.nativeCapabilityOverrides = nativeCapabilityOverrides
         self.visionBridgeConfig = visionBridgeConfig
@@ -153,7 +156,8 @@ final class ChatStore: ObservableObject {
 
     /// Standalone constructor (screenshots / `Shot`): loads config and builds its own deps.
     convenience init() {
-        let native = ConfigStore().nativeResolved
+        let configStore = ConfigStore()
+        let native = configStore.nativeResolved
         let legacy = OWUIConfig.load()
         let ambient = legacy ?? OWUIConfig.ambientOnly(native: native)
         self.init(
@@ -164,6 +168,7 @@ final class ChatStore: ObservableObject {
             nativeTransport: native.map { NativeChatClient(config: $0) },
             repository: try? LocalChatRepository(inMemory: true),
             hasLegacyOWUI: legacy != nil,
+            nativeOwnerName: configStore.ownerName,
             nativeMemorySettings: .fresh)
     }
 
@@ -187,6 +192,7 @@ final class ChatStore: ObservableObject {
     func adoptNative(
         _ cfg: NativeChatConfig,
         systemPrompt: String = NativeChatSettings.defaultSystemPrompt,
+        ownerName: String? = nil,
         enabledToolIDs: Set<String>? = nil,
         capabilityOverrides: [String: ModelCapabilityProfile]? = nil,
         visionBridge: VisionBridgeConfig? = nil,
@@ -196,6 +202,7 @@ final class ChatStore: ObservableObject {
         nativeConfig = cfg
         nativeTransport = NativeChatClient(config: cfg)
         nativeSystemPrompt = systemPrompt
+        nativeOwnerName = ownerName
         if let enabledToolIDs { nativeEnabledToolIDs = enabledToolIDs }
         if let capabilityOverrides { nativeCapabilityOverrides = capabilityOverrides }
         visionBridgeConfig = visionBridge
@@ -1233,7 +1240,7 @@ final class ChatStore: ObservableObject {
         let memorySettings = nativeMemorySettings
         let memoryService = nativeMemoryService
         let persona = nativeSystemPrompt
-        let ownerName = config?.ownerName
+        let ownerName = nativeOwnerName ?? config?.ownerName
         let activeTools = nativeToolRegistry.active(enabledIDs: enabledToolIDs)
         Task {
             defer { generating = false }

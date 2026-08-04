@@ -55,6 +55,7 @@ struct VeraApp: App {
             repositoryError: repositoryError,
             hasLegacyOWUI: legacy != nil,
             nativeSystemPrompt: configInstance.nativeSettings.systemPrompt,
+            nativeOwnerName: configInstance.ownerName,
             nativeEnabledToolIDs: configInstance.nativeSettings.enabledToolIDs,
             nativeCapabilityOverrides: configInstance.nativeSettings.capabilityOverrides,
             visionBridgeConfig: configInstance.visionBridgeResolved,

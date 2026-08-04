@@ -146,9 +146,9 @@ struct PulseCardSnapshot: Codable, Equatable {
     }
 
     private static let credentialKeyPattern =
-        "(?i)(password|passwd|secret|token|api[_-]?key|apikey|authorization|auth[_-]?header|bearer|credential|private[_-]?key|client[_-]?secret|access[_-]?key|session[_-]?id|cookie)"
+        "(?i)(password|passwd|secret|token|api[\\s_.-]?key|apikey|authorization|auth[\\s_.-]?header|bearer|credential|private[\\s_.-]?key|client[\\s_.-]?secret|access[\\s_.-]?key|session[\\s_.-]?id|cookie)"
     private static let credentialValuePattern =
-        "(?i)(bearer\\s+\\S+|basic\\s+[A-Za-z0-9+/=]{8,}|eyJ[A-Za-z0-9_-]{10,})"
+        "(?i)(bearer\\s+\\S+|basic\\s+[A-Za-z0-9+/=]{4,}|eyJ[A-Za-z0-9_-]{10,})"
 
     private static func sanitizedAttrs(_ attrs: [String: String]) -> [String: String] {
         attrs.filter { key, value in

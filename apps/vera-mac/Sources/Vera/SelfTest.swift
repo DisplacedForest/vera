@@ -1047,7 +1047,12 @@ enum SelfTest {
                     "room": "closet",
                     "password": "SECRET-ATTR-VALUE",
                     "api_key": "SECRET-ATTR-KEY",
+                    "api key": "SECRET-SPACE-KEY",
+                    "client secret": "SECRET-CLIENT-VALUE",
+                    "session.id": "SECRET-DOT-VALUE",
                     "note": "Bearer SECRET-BEARER-VALUE",
+                    "basic note": "Basic WTpi",
+                    "jwt note": "eyJhbGciOiJIUzI1NiJ9SECRETJWT",
                 ]
                 return GroomOp(index: 0, type: "gc", store: "knowledge",
                                reason: "orphan", before: [entity], after: nil)
@@ -1086,7 +1091,12 @@ enum SelfTest {
               !json.contains("ITEM-COMMIT-TOKEN"),
               !json.contains("SECRET-ATTR-VALUE"),
               !json.contains("SECRET-ATTR-KEY"),
+              !json.contains("SECRET-SPACE-KEY"),
+              !json.contains("SECRET-CLIENT-VALUE"),
+              !json.contains("SECRET-DOT-VALUE"),
               !json.contains("SECRET-BEARER-VALUE"),
+              !json.contains("Basic WTpi"),
+              !json.contains("SECRETJWT"),
               !json.contains("ftp://"),
               !json.contains("file://") else {
             print("SELFTEST ERROR: pulse snapshot leaked tokens or non-web URLs"); exit(1)
@@ -1203,6 +1213,7 @@ enum SelfTest {
                   first.pulse?.title == card.title,
                   first.pulse?.action == nil,
                   first.pulse?.sourceList.map(\.url) == ["https://a.example/one"],
+                  first.pulse?.changeSet.first?.before.first?.attrs == ["room": "closet"],
                   first.sources.map(\.n) == [1],
                   first.text.contains("The river rose overnight.") else {
                 print("SELFTEST ERROR: pulse seed round-trip after restart"); exit(1)

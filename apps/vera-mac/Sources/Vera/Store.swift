@@ -95,7 +95,10 @@ final class ChatStore: ObservableObject {
         if sweepOrphanedAttachments, let repository,
            let referenced = try? repository.referencedAttachmentFileNames() {
             let store = attachmentStore
-            Task.detached(priority: .utility) { store.sweepOrphans(keeping: referenced) }
+            let candidates = store.orphanCandidates(keeping: referenced)
+            if !candidates.isEmpty {
+                Task.detached(priority: .utility) { store.removeOrphans(candidates) }
+            }
         }
     }
 
@@ -864,16 +867,19 @@ final class ChatStore: ObservableObject {
     func deleteConversation(_ id: String) {
         let idx = conversations.firstIndex { $0.id == id }
         let stored = (try? repository?.messages(conversationID: id)) ?? []
-        for message in stored {
-            for attachment in message.attachments { attachmentStore.remove(attachment) }
-        }
         conversations.removeAll { $0.id == id }
         if selectedID == id {
             let next = idx.flatMap { conversations.indices.contains($0) ? conversations[$0] : conversations.last }
             selectedID = next?.id ?? conversations.first?.id
         }
-        do { try repository?.deleteConversation(id) }
-        catch { chatConfigurationError = "The conversation couldn't be deleted: \(error.localizedDescription)" }
+        do {
+            try repository?.deleteConversation(id)
+            for message in stored {
+                for attachment in message.attachments { attachmentStore.remove(attachment) }
+            }
+        } catch {
+            chatConfigurationError = "The conversation couldn't be deleted: \(error.localizedDescription)"
+        }
         if selectedID == nil { newConversation() }
     }
 

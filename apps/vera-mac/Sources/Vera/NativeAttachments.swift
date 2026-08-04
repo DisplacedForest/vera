@@ -88,10 +88,20 @@ final class NativeAttachmentStore: Sendable {
         try? FileManager.default.removeItem(at: url)
     }
 
-    func sweepOrphans(keeping referenced: Set<String>) {
+    func orphanCandidates(keeping referenced: Set<String>) -> [URL] {
         guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: nil) else { return }
-        for entry in entries where !referenced.contains(entry.lastPathComponent) {
+            at: directory, includingPropertiesForKeys: nil) else { return [] }
+        return entries.filter { !referenced.contains($0.lastPathComponent) }
+    }
+
+    func sweepOrphans(keeping referenced: Set<String>) {
+        removeOrphans(orphanCandidates(keeping: referenced))
+    }
+
+    func removeOrphans(_ candidates: [URL]) {
+        let root = directory.standardizedFileURL.path
+        for entry in candidates
+        where entry.deletingLastPathComponent().standardizedFileURL.path == root {
             try? FileManager.default.removeItem(at: entry)
         }
     }

@@ -70,10 +70,11 @@ struct AuthedAsyncImage: View {
             failed = true
             return
         }
-        if let cached = RemoteImageCache.shared.get(url) { image = cached; return }
+        let cacheKey = u.absoluteString
+        if let cached = RemoteImageCache.shared.get(cacheKey) { image = cached; return }
         if u.isFileURL {
             if let img = NSImage(contentsOf: u) {
-                RemoteImageCache.shared.set(url, img)
+                RemoteImageCache.shared.set(cacheKey, img)
                 image = img
             } else {
                 image = nil
@@ -88,7 +89,7 @@ struct AuthedAsyncImage: View {
             failed = true
             return
         }
-        RemoteImageCache.shared.set(url, img)
+        RemoteImageCache.shared.set(cacheKey, img)
         image = img
     }
 }

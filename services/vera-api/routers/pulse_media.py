@@ -1,3 +1,4 @@
+import base64
 import logging
 import os
 import re
@@ -24,6 +25,18 @@ def media_dir() -> str:
     return os.environ.get("PULSE_MEDIA_DIR", "/data/pulse/media")
 
 
+def sniff_mime(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def save_image(data: bytes, mime: str = "image/png") -> str | None:
     name = f"{uuid.uuid4().hex}.{_EXT.get(mime, 'png')}"
     try:
@@ -39,6 +52,18 @@ def save_image(data: bytes, mime: str = "image/png") -> str | None:
     return f"/pulse/media/{name}"
 
 
+def as_data_uri(ref: str) -> str | None:
+    name = ref.rsplit("/", 1)[-1]
+    if not _NAME_RE.match(name):
+        return None
+    try:
+        with open(os.path.join(media_dir(), name), "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    return f"data:{_MIME[name.rsplit('.', 1)[1]]};base64,{base64.b64encode(data).decode()}"
+
+
 @router.get("/pulse/media/{name}", tags=["pulse"])
 async def serve(name: str):
     if not _NAME_RE.match(name):
@@ -51,10 +76,17 @@ async def serve(name: str):
 
 class MigrateBody(BaseModel):
     token: str | None = None
+    source_base: str | None = None
 
 
 def _absolute(url) -> bool:
     return isinstance(url, str) and url.startswith(("http://", "https://"))
+
+
+def _token_for(url: str, body: MigrateBody) -> str | None:
+    if body.token and body.source_base and url.startswith(body.source_base):
+        return body.token
+    return None
 
 
 async def _fetch(url: str, token: str | None) -> tuple[bytes, str] | None:
@@ -68,48 +100,59 @@ async def _fetch(url: str, token: str | None) -> tuple[bytes, str] | None:
                 data = await r.read()
     except Exception:
         return None
-    if not data:
+    mime = sniff_mime(data) if data else None
+    if not mime:
         return None
-    from .pulse_images import _img_kind
-    _, mime = _img_kind(data)
     return data, mime
 
 
-async def _rehome(url: str, token: str | None) -> str | None:
+async def _rehome(url: str, token: str | None) -> tuple[str, str | None]:
     got = await _fetch(url, token)
-    return save_image(got[0], got[1]) if got else None
+    if not got:
+        return "missing", None
+    ref = save_image(got[0], got[1])
+    if not ref:
+        return "error", None
+    return "rehomed", ref
 
 
 @router.post("/pulse/media/migrate", tags=["pulse"])
 async def migrate(body: MigrateBody):
-    rehomed = missing = changed_cards = 0
+    rehomed = missing = errors = changed_cards = 0
     for c in store.list_cards(include_expired=True):
         changed = False
         if _absolute(c.get("image_url")):
-            ref = await _rehome(c["image_url"], body.token)
-            if ref:
+            status, ref = await _rehome(c["image_url"], _token_for(c["image_url"], body))
+            if status == "rehomed":
                 rehomed += 1
-            else:
+                c["image_url"] = ref
+                changed = True
+            elif status == "missing":
                 missing += 1
-            c["image_url"] = ref
-            changed = True
+                c["image_url"] = None
+                changed = True
+            else:
+                errors += 1
         imgs = c.get("inline_images") or []
         for im in imgs:
             if _absolute(im.get("url")):
-                ref = await _rehome(im["url"], body.token)
-                if ref:
+                status, ref = await _rehome(im["url"], _token_for(im["url"], body))
+                if status == "rehomed":
                     rehomed += 1
                     im["url"] = ref
-                else:
+                    changed = True
+                elif status == "missing":
                     missing += 1
                     im["url"] = ""
-                changed = True
+                    changed = True
+                else:
+                    errors += 1
         if changed:
             store.rewrite_media(c["id"], c["image_url"], imgs)
             changed_cards += 1
     cleared = _clear_legacy_chat_ids()
     return {"ok": True, "cards_rewritten": changed_cards, "images_rehomed": rehomed,
-            "images_missing": missing, "chat_ids_cleared": cleared}
+            "images_missing": missing, "errors": errors, "chat_ids_cleared": cleared}
 
 
 def _clear_legacy_chat_ids() -> int:

@@ -23,7 +23,7 @@ final class ChatStore: ObservableObject {
     @Published var generating = false        // true for the whole turn (drives the living flame mark)
     @Published var pulseRatings: [String: String] = [:]   // Pulse cardID → "up"/"down"
     @Published var messageRatings: [UUID: String] = [:]   // chat messageID → "up"/"down"
-    @Published var bookmarkedPulseIDs: Set<String> = []   // Pulse cards also surfaced in the sidebar
+    @Published var bookmarkedPulseIDs: Set<String> = []
     @Published var readPulseIDs: Set<String> = []         // cards whose detail this person has opened
     @Published var restoreState: [String: String] = [:]   // "<cardID>:<opIndex>" → running/done/failed
     @Published var actionState: [String: String] = [:]    // Pulse cardID → running/done/dismissed/failed
@@ -462,22 +462,11 @@ final class ChatStore: ObservableObject {
 
     // MARK: - Bookmark + feedback
 
-    /// Bookmark a Pulse card → server-persisted (vera-api), surfaced in the chat sidebar as a real
-    /// chat, while it stays in the Pulse feed until expiry. Toggle off removes the untouched entry.
     func bookmarkPulse(_ card: PulseCard) {
         let turningOn = !bookmarkedPulseIDs.contains(card.id)
         if turningOn { bookmarkedPulseIDs.insert(card.id) } else { bookmarkedPulseIDs.remove(card.id) }
         guard let client else { return }
-        Task {
-            let chatID = await client.setPulseBookmark(id: card.id, on: turningOn)
-            if turningOn, let chatID, !conversations.contains(where: { $0.id == chatID }) {
-                conversations.insert(Conversation(id: chatID, title: card.title,
-                    messages: [Message(role: .assistant, text: card.body, pulse: card)],
-                    updatedAt: Date(), isPersisted: true), at: 0)
-            } else if !turningOn {
-                conversations.removeAll { $0.messages.count == 1 && $0.messages.first?.pulse?.id == card.id }
-            }
-        }
+        Task { await client.setPulseBookmark(id: card.id, on: turningOn) }
     }
 
     /// Thumbs-up/down a Pulse card. Tapping the active thumb again clears it (no record on clear).

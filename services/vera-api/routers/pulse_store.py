@@ -265,12 +265,12 @@ def unread_counts(user_id: str) -> dict:
 
 
 def sweep(today: str) -> int:
-    """Expire ALL prior-day cards from the feed; it is daily and clears overnight.
+    """Expire prior-day cards from the feed; it is daily and clears overnight.
     Returns count expired."""
     init()
     with _conn() as c:
         cur = c.execute(
-            "UPDATE cards SET status='expired' WHERE status != 'expired' AND day < ?",
+            "UPDATE cards SET status='expired' WHERE status NOT IN ('expired', 'bookmarked') AND day < ?",
             (today,),
         )
         return cur.rowcount

@@ -80,8 +80,7 @@ struct PulseView: View {
             if let c = detail {
                 PulseDetailView(card: c, token: store.apiToken, apiBase: store.mediaBase,
                                 onClose: { store.pulseDetail = nil },
-                                onContinue: { store.openPulseInChat(c) },
-                                canBookmark: false)
+                                onContinue: { store.openPulseInChat(c) })
                     .transition(.opacity)
                     .zIndex(1)
             }
@@ -165,8 +164,6 @@ struct PulseCardTile: View {
                     cardAction("hand.thumbsup", on: store.pulseRatings[card.id] == "up") { store.ratePulse(card, "up") }
                     cardAction("hand.thumbsdown", on: store.pulseRatings[card.id] == "down") { store.ratePulse(card, "down") }
                     cardAction("bookmark", on: store.bookmarkedPulseIDs.contains(card.id)) { store.bookmarkPulse(card) }
-                        .disabled(true)
-                        .help("Pulse bookmarks are not available in native chat yet")
                 }
                 .padding(.top, 2)
                 if let action = card.action { actionAffordance(action) }
@@ -478,8 +475,7 @@ struct PulseVeinView: View {
             if let c = detail {
                 PulseDetailView(card: c, token: store.apiToken, apiBase: store.mediaBase,
                                 onClose: { detail = nil },
-                                onContinue: { store.openPulseInChat(c, onOpened: { detail = nil }) },
-                                canBookmark: false)
+                                onContinue: { store.openPulseInChat(c, onOpened: { detail = nil }) })
                     .transition(.opacity).zIndex(1)
             }
         }

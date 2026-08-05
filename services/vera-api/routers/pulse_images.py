@@ -9,7 +9,7 @@ import aiohttp
 
 from .images import ImageSearchRequest, search as image_search
 from .pulse_llm import _request_json
-from .pulse_media import save_image
+from .pulse_media import as_data_uri, save_image
 
 log = logging.getLogger("vera.pulse")
 
@@ -124,6 +124,10 @@ async def review_cover(image_url: str, headline: str, summary: str, body: str) -
     from . import model_client
     if not model_client.configured("vision") or not image_url:
         return None
+    if image_url.startswith("/pulse/media/"):
+        image_url = as_data_uri(image_url)
+        if not image_url:
+            return None
     prompt = (
         "Review this briefing-card image against the supplied story. Return JSON only with "
         "accept (boolean), score (number from zero to one), and reason (short string). Reject only if it is unrelated, contains "

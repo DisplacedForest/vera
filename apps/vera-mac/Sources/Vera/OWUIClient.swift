@@ -501,27 +501,13 @@ struct OWUIClient: Sendable {
         return true
     }
 
-    /// Promote a card → create/return its OWUI chat id (so it opens as a real chat).
-    func promotePulse(id: String) async -> String? {
-        guard let url = veraAPI("/pulse/\(id)/promote") else { return nil }
-        var r = URLRequest(url: url)
-        r.httpMethod = "POST"
-        guard let (data, _) = try? await URLSession.shared.data(for: r),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return obj["chat_id"] as? String
-    }
-
-    /// Bookmark/unbookmark a card → returns its backing OWUI chat id (created on first bookmark).
-    @discardableResult
-    func setPulseBookmark(id: String, on: Bool) async -> String? {
-        guard let url = veraAPI("/pulse/\(id)/bookmark") else { return nil }
+    func setPulseBookmark(id: String, on: Bool) async {
+        guard let url = veraAPI("/pulse/\(id)/bookmark") else { return }
         var r = URLRequest(url: url)
         r.httpMethod = "POST"
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try? JSONSerialization.data(withJSONObject: ["on": on])
-        guard let (data, _) = try? await URLSession.shared.data(for: r),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return obj["chat_id"] as? String
+        _ = try? await URLSession.shared.data(for: r)
     }
 
     /// IDs of pinned chats (to restore the Pinned section on launch).

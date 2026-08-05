@@ -132,7 +132,23 @@ def test_migration_covers_expired_cards(monkeypatch):
     assert pulse_store.get_card("c1")["image_url"].startswith("/pulse/media/")
 
 
-def test_migration_sends_token(monkeypatch):
+def test_migration_scopes_token_to_source_base(monkeypatch):
+    seen = {}
+
+    async def fetch(url, token):
+        seen[url] = token
+        return PNG, "image/png"
+
+    _insert("c1", image_url="http://legacy.example/x",
+            inline=[{"n": 1, "url": "http://thirdparty.example/y", "caption": "", "sourceN": 0}])
+    monkeypatch.setattr(pulse_media, "_fetch", fetch)
+    asyncio.run(pulse_media.migrate(pulse_media.MigrateBody(
+        token="sekret", source_base="http://legacy.example")))
+    assert seen["http://legacy.example/x"] == "sekret"
+    assert seen["http://thirdparty.example/y"] is None
+
+
+def test_migration_without_source_base_never_sends_token(monkeypatch):
     seen = {}
 
     async def fetch(url, token):
@@ -142,7 +158,44 @@ def test_migration_sends_token(monkeypatch):
     _insert("c1", image_url="http://legacy.example/x")
     monkeypatch.setattr(pulse_media, "_fetch", fetch)
     asyncio.run(pulse_media.migrate(pulse_media.MigrateBody(token="sekret")))
-    assert seen["token"] == "sekret"
+    assert seen["token"] is None
+
+
+def test_migration_save_failure_preserves_the_original_url(monkeypatch):
+    good = "http://legacy.example/api/v1/files/aa/content"
+    _insert("c1", image_url=good)
+    monkeypatch.setattr(pulse_media, "_fetch", _fake_fetch({good: PNG}))
+    monkeypatch.setattr(pulse_media, "save_image", lambda data, mime="image/png": None)
+    out = asyncio.run(pulse_media.migrate(pulse_media.MigrateBody()))
+    assert out["errors"] == 1
+    assert out["cards_rewritten"] == 0 and out["images_missing"] == 0
+    assert pulse_store.get_card("c1")["image_url"] == good
+
+
+def test_sniff_rejects_non_image_payloads():
+    assert pulse_media.sniff_mime(b"<html><body>error</body></html>") is None
+    assert pulse_media.sniff_mime(b"") is None
+    assert pulse_media.sniff_mime(PNG) == "image/png"
+    assert pulse_media.sniff_mime(JPG) == "image/jpeg"
+    assert pulse_media.sniff_mime(b"GIF89a" + b"z" * 16) == "image/gif"
+    assert pulse_media.sniff_mime(b"RIFF\x00\x00\x00\x00WEBP" + b"z" * 16) == "image/webp"
+
+
+def test_as_data_uri_round_trip():
+    ref = pulse_media.save_image(PNG)
+    uri = pulse_media.as_data_uri(ref)
+    assert uri.startswith("data:image/png;base64,")
+    assert pulse_media.as_data_uri("/pulse/media/../../etc/passwd") is None
+    assert pulse_media.as_data_uri("/pulse/media/" + "f" * 32 + ".png") is None
+
+
+def test_sweep_keeps_bookmarked_cards():
+    _insert("old-new", status="new", day="2026-08-01")
+    _insert("old-marked", status="bookmarked", day="2026-08-01")
+    expired = pulse_store.sweep("2026-08-04")
+    assert expired == 1
+    assert pulse_store.get_card("old-new")["status"] == "expired"
+    assert pulse_store.get_card("old-marked")["status"] == "bookmarked"
 
 
 def test_saved_refs_are_json_clean():

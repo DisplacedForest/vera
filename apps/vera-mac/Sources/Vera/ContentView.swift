@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The sidebar's selectable destinations — nav surfaces, one conversation, or an Agentic pane.
 enum SidebarItem: Hashable {
-    case pulse, journal, memory
+    case pulse, journal, memory, knowledge
     case convo(String)
     case canvas, activity
 }
@@ -35,6 +35,7 @@ struct ContentView: View {
                         case .pulse: PulseView()
                         case .journal: JournalView()
                         case .memory: MemoryView()
+                        case .knowledge: KnowledgeView()
                         case .agentic: AgenticView(pulseWorkflow: pulseWorkflow)
                         }
                     }
@@ -99,6 +100,7 @@ private struct Sidebar: View {
                 case .pulse: return .pulse
                 case .journal: return .journal
                 case .memory: return .memory
+                case .knowledge: return .knowledge
                 case .agentic: return store.agenticPane == .canvas ? .canvas : .activity
                 case .chat: return store.selectedID.map(SidebarItem.convo)
                 }
@@ -108,6 +110,7 @@ private struct Sidebar: View {
                 case .pulse: store.goToPulse()
                 case .journal: store.section = .journal
                 case .memory: store.section = .memory
+                case .knowledge: store.section = .knowledge
                 case .canvas: store.section = .agentic; store.agenticPane = .canvas; store.agenticFlowID = nil
                 case .activity: store.section = .agentic; store.agenticPane = .activity; store.agenticFlowID = nil
                 case .convo(let id): store.select(id)
@@ -161,6 +164,7 @@ private struct Sidebar: View {
                         .simultaneousGesture(TapGesture().onEnded { store.goToPulse() })
                     Label("Journal", systemImage: "book.closed").tag(SidebarItem.journal)
                     Label("Memory", systemImage: "tray.full").tag(SidebarItem.memory)
+                    Label("Knowledge", systemImage: "books.vertical").tag(SidebarItem.knowledge)
                 }
                 ForEach(store.sidebarGroups(search: search)) { group in
                     Section(group.title) {
@@ -267,8 +271,11 @@ private struct ChatPane: View {
                     .padding(.horizontal, 28).padding(.bottom, 2)
                 }
                 if convo.isPersisted {
-                    HStack {
+                    HStack(spacing: 12) {
                         ConversationInstructionsChip(conversation: convo)
+                        if store.isPulseConfigured {
+                            KnowledgeGroundingChip(conversation: convo)
+                        }
                         Spacer()
                     }
                     .frame(maxWidth: 760)

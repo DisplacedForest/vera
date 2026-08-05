@@ -4,12 +4,12 @@ import Foundation
 /// `journal`, and `memory` are nav rows under the Chat tab. Veins lives inside Pulse, and
 /// Plugins/MCP live inside Settings, so none of those three are sections.
 enum AppSection: String, CaseIterable, Identifiable {
-    case chat, pulse, journal, memory, agentic
+    case chat, pulse, journal, memory, knowledge, agentic
     var id: String { rawValue }
     var title: String {
         switch self {
         case .chat: "Chat"; case .pulse: "Pulse"; case .journal: "Journal"
-        case .memory: "Memory"; case .agentic: "Agentic"
+        case .memory: "Memory"; case .knowledge: "Knowledge"; case .agentic: "Agentic"
         }
     }
     var icon: String {
@@ -18,6 +18,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .pulse: "newspaper"
         case .journal: "book.closed"
         case .memory: "tray.full"
+        case .knowledge: "books.vertical"
         case .agentic: "slider.horizontal.3"
         }
     }

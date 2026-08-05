@@ -48,6 +48,12 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
+        } else if view.hasPrefix("knowledge") {
+            content = AnyView(
+                KnowledgeShotSurface(variant: view)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
         } else if view == "blocks" {
             let demo = """
             Here's how Openda's output stacks up, and why the Juventus dip is system, not talent. [1]

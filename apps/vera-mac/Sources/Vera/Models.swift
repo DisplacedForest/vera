@@ -48,4 +48,5 @@ struct Conversation: Identifiable, Hashable {
     var originType: String? = nil
     var originID: String? = nil
     var instructions: String? = nil
+    var grounding: [String] = []
 }

@@ -83,6 +83,7 @@ struct NativeContextInput: Sendable {
     var ownerName: String?
     var memories: [NativeMemoryRanked]
     var worldModel: String
+    var knowledgeGrounding: String
     var capabilities: ModelCapabilityProfile
     var tools: [NativeToolDefinition]
     var contracts: Set<NativePresentationContract>
@@ -91,6 +92,7 @@ struct NativeContextInput: Sendable {
         persona: String, userScope: String = "", conversationInstructions: String = "",
         timestamp: Date, timeZone: TimeZone, ownerName: String? = nil,
         memories: [NativeMemoryRanked] = [], worldModel: String = "",
+        knowledgeGrounding: String = "",
         capabilities: ModelCapabilityProfile = .textOnly, tools: [NativeToolDefinition] = [],
         contracts: Set<NativePresentationContract> = NativePresentationContract.chatDefaults
     ) {
@@ -102,6 +104,7 @@ struct NativeContextInput: Sendable {
         self.ownerName = ownerName
         self.memories = memories
         self.worldModel = worldModel
+        self.knowledgeGrounding = knowledgeGrounding
         self.capabilities = capabilities
         self.tools = tools
         self.contracts = contracts
@@ -138,13 +141,14 @@ enum NativeContextAssembler {
         static let session = 400
         static let memory = 4_800
         static let world = 4_800
+        static let knowledge = 6_000
         static let tools = 6_000
         static let contract = 3_200
     }
 
     static var totalBudget: Int {
         Caps.policy + Caps.persona + Caps.user + Caps.conversation + Caps.session
-            + Caps.memory + Caps.world + Caps.tools
+            + Caps.memory + Caps.world + Caps.knowledge + Caps.tools
             + NativePresentationContract.allCases.count * Caps.contract
     }
 
@@ -165,6 +169,7 @@ enum NativeContextAssembler {
             add("memory", memory, cap: Caps.memory)
         }
         add("world", input.worldModel, cap: Caps.world)
+        add("knowledge", knowledgeSection(input.knowledgeGrounding), cap: Caps.knowledge)
         if input.capabilities.supportsTools, !input.tools.isEmpty {
             add("tools", toolsSection(input.tools), cap: Caps.tools)
         }
@@ -178,6 +183,12 @@ enum NativeContextAssembler {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         return "USER CONTEXT\n\(trimmed)"
+    }
+
+    private static func knowledgeSection(_ content: String) -> String {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return "KNOWLEDGE GROUNDING\n\(trimmed)"
     }
 
     private static func conversationSection(_ content: String) -> String {

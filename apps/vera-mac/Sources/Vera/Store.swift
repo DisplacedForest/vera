@@ -21,6 +21,7 @@ final class ChatStore: ObservableObject {
     @Published var journalArchive: [JournalArchiveMonth] = [] // recently resolved ones
     @Published var streamStatus: String?     // live tool/progress line while Vera is thinking
     @Published var generating = false        // true for the whole turn (drives the living flame mark)
+    @Published var groundingStatus: KnowledgeGroundingStatus?
     @Published var pulseRatings: [String: String] = [:]   // Pulse cardID → "up"/"down"
     @Published var messageRatings: [UUID: String] = [:]   // chat messageID → "up"/"down"
     @Published var bookmarkedPulseIDs: Set<String> = []   // Pulse cards also surfaced in the sidebar
@@ -1036,6 +1037,14 @@ final class ChatStore: ObservableObject {
         catch { chatConfigurationError = "The conversation instructions could not save: \(error.localizedDescription)" }
     }
 
+    func setConversationGrounding(_ id: String, _ collectionIDs: [String]) {
+        guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        conversations[index].grounding = collectionIDs
+        conversations[index].updatedAt = Date()
+        do { try repository?.saveConversation(conversations[index]) }
+        catch { chatConfigurationError = "The grounding selection could not save: \(error.localizedDescription)" }
+    }
+
     func adoptPersona(_ id: String?) {
         nativePersonaID = id
     }
@@ -1485,6 +1494,9 @@ final class ChatStore: ObservableObject {
         let persona = scopes.persona
         let ownerName = nativeOwnerName ?? config?.ownerName
         let activeTools = nativeToolRegistry.active(enabledIDs: enabledToolIDs)
+        let groundingCollections = conversations.first(where: { $0.id == id })?.grounding ?? []
+        let groundingBase = config?.veraAPIBase
+        groundingStatus = nil
         lastRequestTrace = NativeRequestTrace.make(
             model: nativeConfig.model, streaming: nativeConfig.streaming,
             options: nativeConfig.options, timestamp: Date())
@@ -1555,15 +1567,45 @@ final class ChatStore: ObservableObject {
                         }
                     }
                 }
+                var groundingAssembly: KnowledgeGrounding.Assembly?
+                if !groundingCollections.isEmpty {
+                    if let groundingBase {
+                        streamStatus = "Searching knowledge…"
+                        groundingStatus = .retrieving
+                        let result = await KnowledgeClient(base: groundingBase)
+                            .query(text, collections: groundingCollections)
+                        switch result {
+                        case .ok(let passages) where !passages.isEmpty:
+                            groundingAssembly = KnowledgeGrounding.assemble(passages)
+                            groundingStatus = .grounded(passages.count)
+                        case .ok:
+                            groundingStatus = .empty
+                        case .unconfigured:
+                            groundingStatus = .unconfigured
+                        case .error(let detail):
+                            groundingStatus = .error(detail)
+                        }
+                        streamStatus = "Thinking…"
+                    } else {
+                        groundingStatus = .unconfigured
+                    }
+                }
                 var contracts = NativePresentationContract.chatDefaults
                 if activeTools.contains(where: { NativeWebTools.researchCapableIDs.contains($0.id) }) {
                     contracts.insert(.citations)
+                }
+                if groundingAssembly != nil { contracts.insert(.citations) }
+                if let groundingAssembly,
+                   let i = conversations.firstIndex(where: { $0.id == id }),
+                   replyIndex < conversations[i].messages.count {
+                    conversations[i].messages[replyIndex].sources = groundingAssembly.sources
                 }
                 let assembled = NativeContextAssembler.assemble(NativeContextInput(
                     persona: persona, userScope: scopes.userScope,
                     conversationInstructions: scopes.instructions,
                     timestamp: Date(), timeZone: .current,
                     ownerName: ownerName, memories: selectedMemories,
+                    knowledgeGrounding: groundingAssembly?.block ?? "",
                     capabilities: capabilityProfile, tools: activeTools,
                     contracts: contracts))
                 let history = NativeChatHistoryBuilder.build(

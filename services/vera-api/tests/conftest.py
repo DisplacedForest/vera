@@ -107,6 +107,40 @@ VEIN_SHAPES = [
 ]
 
 
+_EMBED_VOCAB = ["alpha", "beta", "gamma", "delta"]
+
+
+def _embed_vector(text):
+    t = text.lower()
+    return [float(t.count(w)) for w in _EMBED_VOCAB] + [1.0]
+
+
+@pytest.fixture
+def docs_store(monkeypatch, tmp_path):
+    from routers import documents_store as ds
+    monkeypatch.setattr(ds, "DB_PATH", str(tmp_path / "documents.db"))
+    monkeypatch.setattr(ds, "FILES_DIR", str(tmp_path / "documents"))
+    monkeypatch.setattr(ds, "_embeddings_cfg", lambda: None)
+    ds.init()
+    return ds
+
+
+@pytest.fixture
+def fake_embeddings(monkeypatch, docs_store):
+    cfg = {"url": "http://embeddings.test/v1", "model": "fake-embed"}
+
+    async def post(url, payload):
+        texts = payload["input"]
+        if isinstance(texts, str):
+            texts = [texts]
+        return {"data": [{"index": i, "embedding": _embed_vector(t)}
+                         for i, t in enumerate(texts)]}
+
+    monkeypatch.setattr(docs_store, "_embeddings_cfg", lambda: dict(cfg))
+    monkeypatch.setattr(docs_store, "_embeddings_post", post)
+    return {"cfg": cfg, "vec": _embed_vector}
+
+
 @pytest.fixture
 def vein_shapes(monkeypatch, tmp_path):
     from routers import vein_defs

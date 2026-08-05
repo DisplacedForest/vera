@@ -89,9 +89,29 @@ struct WorkflowSchemaField: Hashable, Identifiable {
     }
 }
 
+func workflowDisplayName(_ type: String) -> String {
+    let tail = type.split(separator: ".").last.map(String.init) ?? type
+    var words: [String] = []
+    var current = ""
+    for character in tail {
+        if character == "_" || character == "-" {
+            if !current.isEmpty { words.append(current); current = "" }
+        } else if character.isUppercase, current.last?.isLowercase == true {
+            words.append(current)
+            current = String(character)
+        } else {
+            current.append(character)
+        }
+    }
+    if !current.isEmpty { words.append(current) }
+    let joined = words.joined(separator: " ").lowercased()
+    return joined.isEmpty ? tail : joined.prefix(1).uppercased() + joined.dropFirst()
+}
+
 struct WorkflowCatalogNode: Hashable, Identifiable {
     let type: String
     let label: String
+    let description: String
     let icon: String
     let tint: String
     let category: String
@@ -113,7 +133,9 @@ struct WorkflowCatalogNode: Hashable, Identifiable {
     static func parse(_ raw: Any) -> WorkflowCatalogNode? {
         guard let object = raw as? [String: Any],
               let type = object["type"] as? String,
-              let label = object["label"] as? String else { return nil }
+              let label = object["label"] as? String,
+              let description = object["description"] as? String,
+              !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let icon = object["icon"] as? String ?? "puzzlepiece"
         let resolvedIcon = NSImage(systemSymbolName: icon, accessibilityDescription: nil) == nil ? "puzzlepiece" : icon
         let schema: [String: Any]
@@ -134,6 +156,7 @@ struct WorkflowCatalogNode: Hashable, Identifiable {
         }
         return WorkflowCatalogNode(type: type,
                                    label: label,
+                                   description: description,
                                    icon: resolvedIcon,
                                    tint: object["tint"] as? String ?? "accent",
                                    category: object["category"] as? String ?? "transform",
@@ -203,7 +226,7 @@ struct WorkflowCatalog: Hashable {
     }
 
     func label(for type: String) -> String {
-        node(for: type)?.label ?? type
+        node(for: type)?.label ?? workflowDisplayName(type)
     }
 
     var paletteNodes: [WorkflowCatalogNode] {

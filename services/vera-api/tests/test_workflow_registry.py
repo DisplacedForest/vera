@@ -23,6 +23,7 @@ def stub_node():
     vein_engine.register("card_stub", _run, node={
         "label": "Card stub", "icon": "circle", "tint": "accent",
         "category": "transform", "insertable": True,
+        "description": "Passes cards through unchanged for tests.",
         "config_schema": {"limit": {"type": "number", "min": 1, "max": 10, "default": 5}},
     })
     yield "card_stub"
@@ -58,6 +59,35 @@ def test_catalog_includes_vein_blocks_as_non_insertable_nodes():
     entries = {entry["type"]: entry for entry in workflow_registry.catalog()}
     assert entries["http_fetch"]["category"] == "enrich"
     assert entries["http_fetch"]["insertable"] is False
+
+
+def test_every_catalog_entry_carries_a_description():
+    for entry in workflow_registry.catalog():
+        assert isinstance(entry["description"], str)
+        assert entry["description"].strip()
+
+
+def test_catalog_rejects_entries_without_a_description():
+    async def _run(items, params, ctx):
+        return items
+    vein_engine.register("bare_stub", _run)
+    try:
+        with pytest.raises(ValueError, match="bare_stub"):
+            workflow_registry.catalog()
+    finally:
+        vein_engine.BLOCKS.pop("bare_stub", None)
+
+
+def test_block_description_falls_back_to_describe_text():
+    async def _run(items, params, ctx):
+        return items
+    vein_engine.register("noted_stub", _run, describe="turns notes into items for tests")
+    try:
+        entries = {entry["type"]: entry for entry in workflow_registry.catalog()}
+        assert entries["noted_stub"]["description"] == "turns notes into items for tests"
+    finally:
+        vein_engine.BLOCKS.pop("noted_stub", None)
+        vein_engine.BLOCK_NOTES.pop("noted_stub", None)
 
 
 def test_catalog_endpoint_returns_nodes_and_profile():

@@ -182,7 +182,7 @@ struct WorkflowRunNodeCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 9))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(spec?.label ?? node.type).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                    Text(spec?.label ?? workflowDisplayName(node.type)).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
                     if run != nil {
                         Circle().fill(runStateColor(run?.state ?? "")).frame(width: 6, height: 6)
                     }
@@ -223,13 +223,15 @@ struct WorkflowRunInspector: View {
         VStack(alignment: .leading, spacing: 0) {
             if let selected = store.runVersion?.definition.nodes.first(where: { $0.id == store.selectedNodeID }) {
                 let spec = store.catalog?.node(for: selected.type)
-                HStack(spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
                     Image(systemName: spec?.icon ?? "puzzlepiece").font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(graphTint(spec?.tint ?? "accent")).frame(width: 34, height: 34)
                         .background(graphTint(spec?.tint ?? "accent").opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 9))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(spec?.label ?? selected.type).font(.system(size: 14, weight: .semibold))
-                        Text(spec?.categoryLabel ?? "Node").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                        Text(spec?.label ?? workflowDisplayName(selected.type)).font(.system(size: 14, weight: .semibold))
+                        Text(spec?.description ?? spec?.categoryLabel ?? "Node").font(.system(size: 10))
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(16)
@@ -402,10 +404,10 @@ extension PulseWorkflowStore {
                     {"from":"synthesis","to":"claim_audit"},{"from":"claim_audit","to":"cover_art"},
                     {"from":"cover_art","to":"visual_review"},{"from":"visual_review","to":"cover_retry"},
                     {"from":"cover_retry","to":"inject"}],
-           "positions":{"triage":{"x":105,"y":310},"gates":{"x":290,"y":310},"synthesis":{"x":475,"y":310},
-                        "claim_audit":{"x":660,"y":310},"cover_art":{"x":845,"y":310},
-                        "visual_review":{"x":1030,"y":310},"cover_retry":{"x":1215,"y":310},
-                        "inject":{"x":1400,"y":310}}}},
+           "positions":{"triage":{"x":105,"y":310},"gates":{"x":351,"y":310},"synthesis":{"x":597,"y":310},
+                        "claim_audit":{"x":843,"y":310},"cover_art":{"x":1089,"y":310},
+                        "visual_review":{"x":1335,"y":310},"cover_retry":{"x":1581,"y":310},
+                        "inject":{"x":1827,"y":310}}}},
          "nodes":[
            {"id":"triage","state":"ok","input":{"items":0},"output":{"items":9,"rounds":3},"started_at":1754250000,"finished_at":1754250060},
            {"id":"gates","state":"ok","input":{"items":9},"output":{"items":6},"started_at":1754250060,"finished_at":1754250061},

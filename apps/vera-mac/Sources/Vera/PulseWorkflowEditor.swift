@@ -79,7 +79,7 @@ struct PulseWorkflowDefinition: Hashable {
         let savedPositions = (object["positions"] as? [String: Any] ?? [:]).compactMapValues(PulseWorkflowPoint.parse)
         let positions = nodes.enumerated().reduce(into: savedPositions) { result, item in
             if result[item.element.id] == nil {
-                result[item.element.id] = PulseWorkflowPoint(x: 110 + CGFloat(item.offset) * 165, y: 210)
+                result[item.element.id] = PulseWorkflowPoint(x: 110 + CGFloat(item.offset) * WorkflowCardGeometry.placementPitch, y: 210)
             }
         }
         return nodes.isEmpty ? nil : PulseWorkflowDefinition(id: id, nodes: nodes, edges: edges, positions: positions)
@@ -439,7 +439,7 @@ final class PulseWorkflowStore: ObservableObject {
         draft.definition.positions[id] = point
         if let edge, applySplice(of: id, into: edge, in: &draft.definition) {
             let type = draft.definition.node(withID: id)?.type
-            note = "\(type.map { catalog?.label(for: $0) ?? $0 } ?? id) inserted into the path."
+            note = "\(type.map { catalog?.label(for: $0) ?? workflowDisplayName($0) } ?? id) inserted into the path."
         }
         self.draft = draft
     }
@@ -485,7 +485,7 @@ final class PulseWorkflowStore: ObservableObject {
         guard var draft, let node = draft.definition.node(withID: id),
               applySplice(of: id, into: edge, in: &draft.definition) else { return }
         self.draft = draft
-        note = "\(catalog?.label(for: node.type) ?? node.type) inserted into the path."
+        note = "\(catalog?.label(for: node.type) ?? workflowDisplayName(node.type)) inserted into the path."
     }
 
     private func applySplice(of id: String, into edge: PulseWorkflowEdge,
@@ -584,7 +584,7 @@ final class PulseWorkflowStore: ObservableObject {
         let definition = PulseWorkflowDefinition(id: "pulse", nodes: nodes,
                                                  edges: Array(zip(nodes, nodes.dropFirst())).map { PulseWorkflowEdge(from: $0.id, to: $1.id) },
                                                  positions: Dictionary(uniqueKeysWithValues: nodes.enumerated().map {
-                                                     ($0.element.id, PulseWorkflowPoint(x: 105 + CGFloat($0.offset) * 185, y: 310))
+                                                     ($0.element.id, PulseWorkflowPoint(x: 105 + CGFloat($0.offset) * WorkflowCardGeometry.placementPitch, y: 310))
                                                  }))
         store.active = PulseWorkflowVersion(id: "fixture", number: 2, state: "active", definition: definition)
         if editing { store.draft = store.active }
@@ -598,18 +598,18 @@ extension WorkflowCatalog {
     static func fixture() -> WorkflowCatalog? {
         let json = """
         {"nodes":[
-          {"type":"pulse.triage","label":"Triage","icon":"globe","tint":"accent","category":"core","config_schema":{},"insertable":false},
-          {"type":"pulse.gates","label":"Gates","icon":"line.3.horizontal.decrease.circle","tint":"orange","category":"core","config_schema":{},"insertable":false},
-          {"type":"pulse.synthesis","label":"Synthesis","icon":"sparkles","tint":"purple","category":"core","config_schema":{},"insertable":false},
-          {"type":"pulse.claim_audit","label":"Claim audit","icon":"checkmark.shield","tint":"cyan","category":"core","config_schema":{},"insertable":false},
-          {"type":"pulse.cover_art","label":"Cover art","icon":"photo","tint":"purple","category":"core",
+          {"type":"pulse.triage","label":"Triage","description":"Pulls in this run's fresh candidate stories and signals so the rest of the pipeline has something to judge.","icon":"globe","tint":"accent","category":"core","config_schema":{},"insertable":false},
+          {"type":"pulse.gates","label":"Gates","description":"Checks each candidate against your interest and quality gates and drops the ones that fall short.","icon":"line.3.horizontal.decrease.circle","tint":"orange","category":"core","config_schema":{},"insertable":false},
+          {"type":"pulse.synthesis","label":"Synthesis","description":"Writes each surviving candidate into a readable card with a headline and summary.","icon":"sparkles","tint":"purple","category":"core","config_schema":{},"insertable":false},
+          {"type":"pulse.claim_audit","label":"Claim audit","description":"Rechecks the factual claims in every drafted card and pulls the ones that don't hold up.","icon":"checkmark.shield","tint":"cyan","category":"core","config_schema":{},"insertable":false},
+          {"type":"pulse.cover_art","label":"Cover art","description":"Generates a cover image for each card in the visual style you pick.","icon":"photo","tint":"purple","category":"core",
            "config_schema":{"style":{"type":"choice","default":"rotating","options":["rotating","photographic","illustrated","editorial"]}},"insertable":false},
-          {"type":"pulse.visual_review","label":"Visual review","icon":"eye","tint":"cyan","category":"visual",
+          {"type":"pulse.visual_review","label":"Visual review","description":"Scores each generated cover and rejects the ones below your quality threshold.","icon":"eye","tint":"cyan","category":"visual",
            "config_schema":{"threshold":{"type":"number","min":0,"max":1,"default":0.8}},"insertable":false},
-          {"type":"pulse.cover_retry","label":"One retry","icon":"arrow.clockwise","tint":"orange","category":"visual",
+          {"type":"pulse.cover_retry","label":"One retry","description":"Regenerates a rejected cover one more time before the card ships without it.","icon":"arrow.clockwise","tint":"orange","category":"visual",
            "config_schema":{"max_attempts":{"type":"choice","options":[0,1],"default":1}},"insertable":false},
-          {"type":"pulse.inject","label":"Inject","icon":"arrow.down.to.line","tint":"green","category":"core","config_schema":{},"insertable":false},
-          {"type":"flow.filter","label":"Filter","icon":"line.3.horizontal.decrease","tint":"orange","category":"transform",
+          {"type":"pulse.inject","label":"Inject","description":"Publishes the finished cards into your feed.","icon":"arrow.down.to.line","tint":"green","category":"core","config_schema":{},"insertable":false},
+          {"type":"flow.filter","label":"Filter","description":"Keeps or drops cards by comparing one of their fields against a value you choose.","icon":"line.3.horizontal.decrease","tint":"orange","category":"transform",
            "config_schema":{"field":{"type":"text","default":"title"},
                             "operator":{"type":"choice","default":"contains","options":["contains","not_contains","equals","not_equals","present","missing"]},
                             "value":{"type":"text","default":""},
@@ -706,7 +706,9 @@ struct PulseWorkflowPalette: View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return all }
         return all.filter {
-            $0.label.localizedCaseInsensitiveContains(query) || $0.type.localizedCaseInsensitiveContains(query)
+            $0.label.localizedCaseInsensitiveContains(query)
+                || $0.description.localizedCaseInsensitiveContains(query)
+                || $0.type.localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -750,13 +752,13 @@ struct PulseWorkflowPalette: View {
                 .background(graphTint(entry.tint).opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.label).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                Text(entry.type).font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Text(entry.description).font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary).lineLimit(2)
             }
             Spacer(minLength: 0)
             Image(systemName: installed ? "scope" : "plus")
                 .font(.system(size: 9, weight: .bold)).foregroundStyle(installed ? Theme.textSecondary : Theme.accent)
         }
-        .padding(.horizontal, 8).frame(height: 46).contentShape(Rectangle())
+        .padding(.horizontal, 8).padding(.vertical, 7).frame(minHeight: 46).contentShape(Rectangle())
         .background(Theme.surface.opacity(0.76)).clipShape(RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
     }
@@ -1292,11 +1294,12 @@ struct PulseWorkflowEditor: View {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(entry.label).font(.system(size: 11, weight: .semibold))
                                         .foregroundStyle(Theme.textPrimary)
-                                    Text(entry.type).font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                                    Text(entry.description).font(.system(size: 9)).foregroundStyle(Theme.textSecondary)
+                                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                                 }
                                 Spacer(minLength: 0)
                             }
-                            .padding(.horizontal, 6).frame(height: 36).contentShape(Rectangle())
+                            .padding(.horizontal, 6).padding(.vertical, 5).frame(minHeight: 36).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -1401,13 +1404,15 @@ struct PulseWorkflowEditor: View {
         VStack(alignment: .leading, spacing: 0) {
             if let selected = store.displayed?.definition.nodes.first(where: { $0.id == store.selectedNodeID }) {
                 let spec = store.catalog?.node(for: selected.type)
-                HStack(spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
                     Image(systemName: spec?.icon ?? "puzzlepiece").font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(graphTint(spec?.tint ?? "accent")).frame(width: 34, height: 34)
                         .background(graphTint(spec?.tint ?? "accent").opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 9))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(spec?.label ?? selected.type).font(.system(size: 14, weight: .semibold))
-                        Text(spec?.categoryLabel ?? "Node").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                        Text(spec?.label ?? workflowDisplayName(selected.type)).font(.system(size: 14, weight: .semibold))
+                        Text(spec?.description ?? spec?.categoryLabel ?? "Node").font(.system(size: 10))
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(16)
@@ -1478,7 +1483,7 @@ struct PulseWorkflowEditor: View {
                     HStack(spacing: 7) {
                         Image(systemName: edge.from == node.id ? "arrow.right" : "arrow.left")
                             .font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.textSecondary)
-                        Text(peer.map { store.catalog?.label(for: $0.type) ?? $0.type } ?? peerID)
+                        Text(peer.map { store.catalog?.label(for: $0.type) ?? workflowDisplayName($0.type) } ?? peerID)
                             .font(.system(size: 10.5, weight: .medium))
                         Spacer()
                         if store.isEditing {
@@ -1631,7 +1636,7 @@ struct WorkflowNodeCard: View {
                 .frame(width: 34, height: 34).background(graphTint(spec?.tint ?? "accent").opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 9))
             VStack(alignment: .leading, spacing: 2) {
-                Text(spec?.label ?? node.type).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                Text(spec?.label ?? workflowDisplayName(node.type)).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
                 Text(spec?.categoryLabel ?? "Node").font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary)
             }
             Spacer(minLength: 0)

@@ -5,41 +5,60 @@ from . import vein_engine
 
 PULSE_SPECS = {
     "pulse.triage": {"label": "Triage", "icon": "globe", "tint": "accent", "category": "core",
+                     "description": "Pulls in this run's fresh candidate stories and signals so the rest of the pipeline has something to judge.",
                      "config_schema": {}, "insertable": False},
     "pulse.gates": {"label": "Gates", "icon": "line.3.horizontal.decrease.circle", "tint": "orange",
-                    "category": "core", "config_schema": {}, "insertable": False},
+                    "category": "core",
+                    "description": "Checks each candidate against your interest and quality gates and drops the ones that fall short.",
+                    "config_schema": {}, "insertable": False},
     "pulse.synthesis": {"label": "Synthesis", "icon": "sparkles", "tint": "purple", "category": "core",
+                        "description": "Writes each surviving candidate into a readable card with a headline and summary.",
                         "config_schema": {}, "insertable": False},
     "pulse.claim_audit": {"label": "Claim audit", "icon": "checkmark.shield", "tint": "cyan",
-                          "category": "core", "config_schema": {}, "insertable": False},
+                          "category": "core",
+                          "description": "Rechecks the factual claims in every drafted card and pulls the ones that don't hold up.",
+                          "config_schema": {}, "insertable": False},
     "pulse.cover_art": {"label": "Cover art", "icon": "photo", "tint": "purple", "category": "core",
+                        "description": "Generates a cover image for each card in the visual style you pick.",
                         "config_schema": {"style": {"type": "choice", "default": "rotating",
                                                     "options": ["rotating", "photographic", "illustrated", "editorial"]}},
                         "insertable": False},
     "pulse.visual_review": {"label": "Visual review", "icon": "eye", "tint": "cyan", "category": "visual",
+                            "description": "Scores each generated cover and rejects the ones below your quality threshold.",
                             "config_schema": {"threshold": {"type": "number", "min": 0, "max": 1, "default": 0.8}},
                             "insertable": False},
     "pulse.cover_retry": {"label": "One retry", "icon": "arrow.clockwise", "tint": "orange", "category": "visual",
+                          "description": "Regenerates a rejected cover one more time before the card ships without it.",
                           "config_schema": {"max_attempts": {"type": "choice", "options": [0, 1], "default": 1}},
                           "insertable": False},
     "pulse.inject": {"label": "Inject", "icon": "arrow.down.to.line", "tint": "green", "category": "core",
+                     "description": "Publishes the finished cards into your feed.",
                      "config_schema": {}, "insertable": False},
 }
 
 BLOCK_META = {
-    "web_search": {"label": "Web search", "icon": "magnifyingglass", "category": "enrich"},
-    "http_fetch": {"label": "HTTP fetch", "icon": "arrow.down.circle", "category": "enrich"},
-    "ha_state": {"label": "Home state", "icon": "house", "category": "enrich"},
-    "trip_band": {"label": "Trip band", "icon": "waveform.path", "category": "transform"},
-    "llm_judge": {"label": "LLM judge", "icon": "scale.3d", "category": "transform"},
-    "llm_compose": {"label": "LLM compose", "icon": "text.badge.star", "category": "transform"},
-    "situation_cluster": {"label": "Situation cluster", "icon": "circle.grid.2x2", "category": "transform"},
-    "present": {"label": "Present", "icon": "chart.bar", "category": "notify"},
+    "web_search": {"label": "Web search", "icon": "magnifyingglass", "category": "enrich",
+                   "description": "Searches the web for a query and turns the results into items."},
+    "http_fetch": {"label": "HTTP fetch", "icon": "arrow.down.circle", "category": "enrich",
+                   "description": "Fetches a URL and turns the response into items."},
+    "ha_state": {"label": "Home state", "icon": "house", "category": "enrich",
+                 "description": "Reads the current state of a Home Assistant entity as an item."},
+    "trip_band": {"label": "Trip band", "icon": "waveform.path", "category": "transform",
+                  "description": "Watches a numeric reading and emits an item when it crosses the band you set."},
+    "llm_judge": {"label": "LLM judge", "icon": "scale.3d", "category": "transform",
+                  "description": "Asks the model whether each item clears the bar you describe and keeps the ones that do."},
+    "llm_compose": {"label": "LLM compose", "icon": "text.badge.star", "category": "transform",
+                    "description": "Asks the model to write new text from the incoming items."},
+    "situation_cluster": {"label": "Situation cluster", "icon": "circle.grid.2x2", "category": "transform",
+                          "description": "Groups related items into one situation so they present together."},
+    "present": {"label": "Present", "icon": "chart.bar", "category": "notify",
+                "description": "Formats the final items into the card that gets posted."},
 }
 
 GENERAL_SPECS = {
     "flow.filter": {"label": "Filter", "icon": "line.3.horizontal.decrease", "tint": "orange",
                     "category": "transform",
+                    "description": "Keeps or drops cards by comparing one of their fields against a value you choose.",
                     "config_schema": {"field": {"type": "text", "default": "title"},
                                       "operator": {"type": "choice", "default": "contains",
                                                    "options": ["contains", "not_contains", "equals",
@@ -48,6 +67,7 @@ GENERAL_SPECS = {
                                       "action": {"type": "choice", "default": "keep", "options": ["keep", "drop"]}},
                     "insertable": True},
     "flow.llm_step": {"label": "LLM step", "icon": "wand.and.stars", "tint": "purple", "category": "transform",
+                      "description": "Runs your prompt over each card or the whole set and applies what the model returns.",
                       "config_schema": {"prompt": {"type": "text", "default": ""},
                                         "mode": {"type": "choice", "default": "per_card",
                                                  "options": ["per_card", "set"]},
@@ -55,11 +75,13 @@ GENERAL_SPECS = {
                                                    "options": ["annotate", "replace_summary", "drop_on_empty"]}},
                       "insertable": True},
     "flow.http_fetch": {"label": "HTTP fetch", "icon": "arrow.down.circle", "tint": "cyan", "category": "enrich",
+                        "description": "Fetches a URL and attaches what it finds for later steps to use.",
                         "config_schema": {"url": {"type": "text", "default": ""},
                                           "extract": {"type": "text", "default": ""},
                                           "context_key": {"type": "text", "default": "fetched"}},
                         "insertable": True},
     "flow.notify": {"label": "Notify", "icon": "bell.badge", "tint": "green", "category": "notify",
+                    "description": "Sends a notification with your headline when cards reach this step.",
                     "config_schema": {"headline": {"type": "text", "default": ""}},
                     "insertable": True},
 }
@@ -88,6 +110,8 @@ def _block_spec(name: str) -> dict:
         "icon": declared.get("icon") or meta.get("icon") or "puzzlepiece",
         "tint": declared.get("tint") or meta.get("tint") or "accent",
         "category": declared.get("category") or meta.get("category") or "transform",
+        "description": declared.get("description") or meta.get("description")
+                       or vein_engine.BLOCK_NOTES.get(name) or "",
         "config_schema": declared.get("config_schema") or {},
         "insertable": bool(declared.get("insertable", False)),
     }
@@ -107,6 +131,10 @@ def catalog() -> list[dict]:
     entries = [{"type": node_type, **spec} for node_type, spec in PULSE_SPECS.items()]
     entries.extend({"type": node_type, **spec} for node_type, spec in GENERAL_SPECS.items())
     entries.extend({"type": name, **_block_spec(name)} for name in sorted(vein_engine.BLOCKS))
+    for entry in entries:
+        description = entry.get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError(f"catalog entry {entry['type']} is missing a description")
     return entries
 
 

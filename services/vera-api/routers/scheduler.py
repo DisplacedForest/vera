@@ -162,6 +162,39 @@ def _next_fire(cron: str, after: datetime) -> datetime:
     return croniter(cron, after).get_next(datetime)
 
 
+def job_cron(job_id: str) -> str | None:
+    reg = _registry()
+    if job_id not in reg:
+        return None
+    return _effective(job_id, store.overrides().get(job_id), reg)["cron"]
+
+
+def set_job_cron(job_id: str, cron: str):
+    if job_id not in _registry():
+        raise ValueError(f"unknown job '{job_id}'")
+    if not croniter.is_valid(cron):
+        raise ValueError("that schedule does not translate to a valid firing rule")
+    pinned = _env_cron(job_id)
+    if pinned:
+        if pinned == cron:
+            return
+        raise ValueError("the schedule is pinned by the server environment and cannot change here")
+    store.set_override(job_id, cron=cron)
+
+
+def job_view(job_id: str) -> dict | None:
+    reg = _registry()
+    if job_id not in reg:
+        return None
+    view = _effective(job_id, store.overrides().get(job_id), reg)
+    try:
+        view["next_run"] = (_next_fire(view["cron"], datetime.now(TZ)).isoformat()
+                            if view["enabled"] and ENABLED else None)
+    except (ValueError, KeyError):
+        view["next_run"] = None
+    return view
+
+
 def jobs_view() -> list[dict]:
     rows = store.overrides()
     out = []

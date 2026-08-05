@@ -19,7 +19,7 @@ def test_pulse_baseline_is_active_and_versioned():
     assert workflow["version"] == 1
     assert workflow["state"] == "active"
     assert [node["id"] for node in workflow["definition"]["nodes"]] == [
-        "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
+        "schedule", "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
 
 
 def test_draft_can_be_saved_and_promoted():
@@ -81,7 +81,7 @@ def test_run_records_the_version_selected_at_start():
     assert run["workflow_version_id"] != promoted["id"]
     pinned = workflow_store.get_version(run["workflow_version_id"])
     assert [node["id"] for node in pinned["definition"]["nodes"]] == [
-        "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
+        "schedule", "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
     assert run["version"]["id"] == run["workflow_version_id"]
     assert run["version"]["definition"] == pinned["definition"]
 

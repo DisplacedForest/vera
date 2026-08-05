@@ -178,19 +178,34 @@ struct WorkflowRunNodeCard: View {
     var spec: WorkflowCatalogNode?
     var run: PulseWorkflowNodeRun?
     var selected: Bool
+    var hasInput: Bool = true
+    var triggerJob: SchedulerJob?
+
+    private var faded: Bool { run == nil && triggerJob == nil }
 
     var body: some View {
         WorkflowCardFace(spec: spec, fallbackType: node.type,
                          stroke: strokeColor, strokeWidth: selected ? 2 : 1,
-                         fillOpacity: run == nil ? 0.55 : 1)
+                         fillOpacity: faded ? 0.55 : 1)
             .shadow(color: Theme.bg.opacity(0.35), radius: selected ? 9 : 4, y: 2)
-            .opacity(run == nil ? 0.6 : 1)
+            .opacity(faded ? 0.6 : 1)
             .overlay {
-                WorkflowCardName(text: spec?.label ?? workflowDisplayName(node.type), muted: run == nil)
+                WorkflowCardName(text: spec?.label ?? workflowDisplayName(node.type), muted: faded,
+                                 caption: fireLine)
             }
-            .overlay(alignment: .leading) { WorkflowPortDot().offset(x: -4) }
+            .overlay(alignment: .leading) {
+                if hasInput { WorkflowPortDot().offset(x: -4) }
+            }
             .overlay(alignment: .trailing) { WorkflowPortDot().offset(x: 4) }
             .overlay(alignment: .topTrailing) { badge }
+    }
+
+    private var fireLine: String? {
+        guard let triggerJob else { return nil }
+        var parts: [String] = []
+        if let last = triggerJob.lastRunAt { parts.append("fired \(relativeTime(last))") }
+        if let next = triggerJob.nextRun { parts.append("next \(relativeTime(next))") }
+        return parts.isEmpty ? "never fired" : parts.joined(separator: " · ")
     }
 
     @ViewBuilder private var badge: some View {
@@ -268,7 +283,26 @@ struct WorkflowRunInspector: View {
 
     private func content(_ selected: PulseWorkflowNode, spec: WorkflowCatalogNode?) -> some View {
         let run = store.latestRun?.nodeRun(selected.id)
+        let isTrigger = spec?.category == "trigger"
         return VStack(alignment: .leading, spacing: 16) {
+            if isTrigger {
+                section("Schedule") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let job = store.triggerJob {
+                            if let last = job.lastRunAt { row("Last fire", relativeTime(last)) }
+                            if let next = job.nextRun { row("Next fire", relativeTime(next)) }
+                            if job.lastRunAt == nil, job.nextRun == nil {
+                                Text("No fires recorded yet.")
+                                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                            }
+                        } else {
+                            Text("The schedule record isn't available right now.")
+                                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            } else {
             section("Run") {
                 if let run {
                     VStack(alignment: .leading, spacing: 6) {
@@ -293,7 +327,8 @@ struct WorkflowRunInspector: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if let run {
+            }
+            if let run, !isTrigger {
                 section("Input") { summaryRows(run.input, empty: "No input recorded.") }
                 section("Output") { summaryRows(run.output, empty: "No output recorded.") }
             }
@@ -410,7 +445,8 @@ extension PulseWorkflowStore {
         {"id":"run-fixture","workflow_id":"pulse","state":"ok","started_at":1754250000,"finished_at":1754250340,
          "output":{},"error":null,
          "version":{"id":"fixture-pinned","version":2,"state":"archived","definition":{"id":"pulse",
-           "nodes":[{"id":"triage","type":"pulse.triage","config":{}},
+           "nodes":[{"id":"schedule","type":"trigger.schedule","config":{"mode":"daily","time":"05:00"}},
+                    {"id":"triage","type":"pulse.triage","config":{}},
                     {"id":"gates","type":"pulse.gates","config":{}},
                     {"id":"synthesis","type":"pulse.synthesis","config":{}},
                     {"id":"claim_audit","type":"pulse.claim_audit","config":{}},
@@ -418,14 +454,14 @@ extension PulseWorkflowStore {
                     {"id":"visual_review","type":"pulse.visual_review","config":{"threshold":0.8}},
                     {"id":"cover_retry","type":"pulse.cover_retry","config":{"max_attempts":1}},
                     {"id":"inject","type":"pulse.inject","config":{}}],
-           "edges":[{"from":"triage","to":"gates"},{"from":"gates","to":"synthesis"},
+           "edges":[{"from":"schedule","to":"triage"},{"from":"triage","to":"gates"},{"from":"gates","to":"synthesis"},
                     {"from":"synthesis","to":"claim_audit"},{"from":"claim_audit","to":"cover_art"},
                     {"from":"cover_art","to":"visual_review"},{"from":"visual_review","to":"cover_retry"},
                     {"from":"cover_retry","to":"inject"}],
-           "positions":{"triage":{"x":105,"y":310},"gates":{"x":289,"y":310},"synthesis":{"x":473,"y":310},
-                        "claim_audit":{"x":657,"y":310},"cover_art":{"x":841,"y":310},
-                        "visual_review":{"x":1025,"y":310},"cover_retry":{"x":1209,"y":310},
-                        "inject":{"x":1393,"y":310}}}},
+           "positions":{"schedule":{"x":105,"y":310},"triage":{"x":289,"y":310},"gates":{"x":473,"y":310},
+                        "synthesis":{"x":657,"y":310},"claim_audit":{"x":841,"y":310},"cover_art":{"x":1025,"y":310},
+                        "visual_review":{"x":1209,"y":310},"cover_retry":{"x":1393,"y":310},
+                        "inject":{"x":1577,"y":310}}}},
          "nodes":[
            {"id":"triage","state":"ok","input":{"items":0},"output":{"items":9,"rounds":3},"started_at":1754250000,"finished_at":1754250060},
            {"id":"gates","state":"ok","input":{"items":9},"output":{"items":6},"started_at":1754250060,"finished_at":1754250061},
@@ -446,6 +482,11 @@ extension PulseWorkflowStore {
         if let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) {
             store.latestRun = PulseWorkflowRun.parse(object)
         }
+        store.triggerJob = SchedulerJob(id: "pulse", label: "Pulse briefing run", cron: "0 5 * * *",
+                                        enabled: true, envLocked: false, gated: nil,
+                                        lastRunAt: Date().addingTimeInterval(-7 * 3600), lastRunOK: true,
+                                        lastRunDetail: "5 cards",
+                                        nextRun: Date().addingTimeInterval(17 * 3600))
         store.selectedNodeID = "visual_review"
         return store
     }

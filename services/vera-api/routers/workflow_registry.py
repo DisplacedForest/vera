@@ -1,6 +1,7 @@
 import math
 
 from . import vein_engine
+from . import workflow_triggers
 
 
 PULSE_SPECS = {
@@ -93,9 +94,11 @@ PULSE_PROFILE = {
     "insertable_categories": ["transform", "enrich", "notify"],
     "pairs": [{"types": ["pulse.visual_review", "pulse.cover_retry"],
                "after": "pulse.cover_art", "before": "pulse.inject"}],
+    "triggers": [workflow_triggers.SCHEDULE_TYPE],
 }
 
-GENERIC_PROFILE = {"id": "generic", "spine": [], "insertable_categories": [], "pairs": []}
+GENERIC_PROFILE = {"id": "generic", "spine": [], "insertable_categories": [], "pairs": [],
+                   "triggers": []}
 
 
 def profile_for(workflow_id: str) -> dict:
@@ -118,6 +121,8 @@ def _block_spec(name: str) -> dict:
 
 
 def spec_for(node_type) -> dict | None:
+    if node_type in workflow_triggers.SPECS:
+        return workflow_triggers.SPECS[node_type]
     if node_type in PULSE_SPECS:
         return PULSE_SPECS[node_type]
     if node_type in GENERAL_SPECS:
@@ -128,7 +133,8 @@ def spec_for(node_type) -> dict | None:
 
 
 def catalog() -> list[dict]:
-    entries = [{"type": node_type, **spec} for node_type, spec in PULSE_SPECS.items()]
+    entries = [{"type": node_type, **spec} for node_type, spec in workflow_triggers.SPECS.items()]
+    entries.extend({"type": node_type, **spec} for node_type, spec in PULSE_SPECS.items())
     entries.extend({"type": node_type, **spec} for node_type, spec in GENERAL_SPECS.items())
     entries.extend({"type": name, **_block_spec(name)} for name in sorted(vein_engine.BLOCKS))
     for entry in entries:
@@ -205,6 +211,32 @@ def _require_acyclic(ids: list[str], edges: list[dict]):
         raise ValueError("workflow must not contain a cycle")
 
 
+def _validate_triggers(nodes: list[dict], edges: list[dict]) -> set[str]:
+    triggers = [node for node in nodes if workflow_triggers.is_trigger(node.get("type"))]
+    if len(triggers) > 1:
+        raise ValueError("only one trigger is allowed in a workflow")
+    trigger_ids = {node["id"] for node in triggers}
+    for edge in edges:
+        if edge.get("to") in trigger_ids:
+            raise ValueError("a trigger starts the workflow and cannot take an input")
+    for node in triggers:
+        workflow_triggers.validate_config(node.get("config") or {})
+    return trigger_ids
+
+
+def _without(nodes: list[dict], edges: list[dict], ids: set[str]):
+    kept_nodes = [node for node in nodes if node["id"] not in ids]
+    kept_edges = [edge for edge in edges if edge["from"] not in ids and edge["to"] not in ids]
+    return kept_nodes, kept_edges
+
+
+def _validate_trigger_edges(trigger_ids: set[str], edges: list[dict], head: str):
+    for trigger_id in trigger_ids:
+        outgoing = [edge for edge in edges if edge["from"] == trigger_id]
+        if len(outgoing) != 1 or outgoing[0]["to"] != head:
+            raise ValueError("the trigger must connect to the start of the workflow")
+
+
 def _validate_spine(profile: dict, nodes: list[dict], edges: list[dict]):
     counts: dict[str, int] = {}
     for node in nodes:
@@ -229,7 +261,8 @@ def _validate_spine(profile: dict, nodes: list[dict], edges: list[dict]):
         if not spec["insertable"] or spec["category"] not in profile["insertable_categories"]:
             raise ValueError(f"{spec['label']} cannot be added to this workflow")
     type_for = {node["id"]: node["type"] for node in nodes}
-    order = [type_for[node_id] for node_id in _single_path(nodes, edges)]
+    path = _single_path(nodes, edges)
+    order = [type_for[node_id] for node_id in path]
     if order[0] != profile["spine"][0] or order[-1] != profile["spine"][-1]:
         raise ValueError(f"workflow must run from {PULSE_SPECS[profile['spine'][0]]['label']} to {PULSE_SPECS[profile['spine'][-1]]['label']}")
     if [stage for stage in order if stage in profile["spine"]] != profile["spine"]:
@@ -243,6 +276,7 @@ def _validate_spine(profile: dict, nodes: list[dict], edges: list[dict]):
             raise ValueError(f"{PULSE_SPECS[second]['label']} must directly follow {PULSE_SPECS[first]['label']}")
         if not (order.index(pair["after"]) < start and end < order.index(pair["before"])):
             raise ValueError(f"{PULSE_SPECS[first]['label']} belongs between {PULSE_SPECS[pair['after']]['label']} and {PULSE_SPECS[pair['before']]['label']}")
+    return path
 
 
 def validate_definition(workflow_id: str, definition: dict):
@@ -265,8 +299,22 @@ def validate_definition(workflow_id: str, definition: dict):
     declared = set(ids)
     if any(edge.get("from") not in declared or edge.get("to") not in declared for edge in edges):
         raise ValueError("edges must connect declared nodes")
+    trigger_ids = _validate_triggers(nodes, edges)
     profile = profile_for(workflow_id)
     if profile["spine"]:
-        _validate_spine(profile, nodes, edges)
+        body_nodes, body_edges = _without(nodes, edges, trigger_ids)
+        if not body_nodes:
+            raise ValueError("workflow needs its processing stages, not just a trigger")
+        path = _validate_spine(profile, body_nodes, body_edges)
+        _validate_trigger_edges(trigger_ids, edges, path[0])
     else:
         _require_acyclic(ids, edges)
+
+
+def validate_promotion(workflow_id: str, definition: dict):
+    validate_definition(workflow_id, definition)
+    present = {node.get("type") for node in definition.get("nodes") or []}
+    for trigger_type in profile_for(workflow_id).get("triggers") or []:
+        if trigger_type not in present:
+            label = spec_for(trigger_type)["label"]
+            raise ValueError(f"Add a {label} trigger so this workflow can start on its own")

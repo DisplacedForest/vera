@@ -184,11 +184,12 @@ struct WorkflowProfile: Hashable {
     let spine: [String]
     let insertableCategories: [String]
     let pairs: [WorkflowProfilePair]
+    let triggers: [String]
 
     var pairTypes: [String] { pairs.flatMap(\.types) }
 
     var canonicalOrder: [String] {
-        var order = spine
+        var order = triggers + spine
         for pair in pairs {
             let anchor = order.firstIndex(of: pair.before) ?? order.endIndex
             order.insert(contentsOf: pair.types, at: anchor)
@@ -199,7 +200,8 @@ struct WorkflowProfile: Hashable {
     static func parse(_ raw: Any) -> WorkflowProfile? {
         guard let object = raw as? [String: Any], let id = object["id"] as? String,
               let spine = stringList(object["spine"]),
-              let categories = stringList(object["insertable_categories"]) else { return nil }
+              let categories = stringList(object["insertable_categories"]),
+              let triggers = stringList(object["triggers"]) else { return nil }
         var pairs: [WorkflowProfilePair] = []
         if let rawPairs = object["pairs"] {
             guard let list = rawPairs as? [Any] else { return nil }
@@ -208,7 +210,8 @@ struct WorkflowProfile: Hashable {
                 pairs.append(pair)
             }
         }
-        return WorkflowProfile(id: id, spine: spine, insertableCategories: categories, pairs: pairs)
+        return WorkflowProfile(id: id, spine: spine, insertableCategories: categories, pairs: pairs,
+                               triggers: triggers)
     }
 
     private static func stringList(_ raw: Any?) -> [String]? {
@@ -231,7 +234,8 @@ struct WorkflowCatalog: Hashable {
 
     var paletteNodes: [WorkflowCatalogNode] {
         nodes.filter { entry in
-            profile.spine.contains(entry.type)
+            profile.triggers.contains(entry.type)
+                || profile.spine.contains(entry.type)
                 || profile.pairTypes.contains(entry.type)
                 || (entry.insertable && profile.insertableCategories.contains(entry.category))
         }
@@ -246,7 +250,15 @@ struct WorkflowCatalog: Hashable {
     }
 
     func isRequired(_ type: String) -> Bool {
-        profile.spine.contains(type)
+        profile.spine.contains(type) || profile.triggers.contains(type)
+    }
+
+    func isTriggerType(_ type: String) -> Bool {
+        node(for: type)?.category == "trigger"
+    }
+
+    func triggerIDs(in definition: PulseWorkflowDefinition) -> Set<String> {
+        Set(definition.nodes.filter { isTriggerType($0.type) }.map(\.id))
     }
 
     func canonicalIndex(of type: String) -> Int? {

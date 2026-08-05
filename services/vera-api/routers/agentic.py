@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from . import action_store, scheduler_store
 from . import workflow_registry
 from . import workflow_store
+from . import workflow_triggers
 
 log = logging.getLogger("agentic")
 router = APIRouter()
@@ -183,7 +184,8 @@ async def graph():
             try:
                 active = workflow_store.active("pulse")
                 flow["stage_layout"] = "pipeline"
-                flow["stages"] = active["definition"].get("nodes") or []
+                flow["stages"] = [node for node in active["definition"].get("nodes") or []
+                                  if not workflow_triggers.is_trigger(node.get("type"))]
                 flow["workflow"] = {"version": active["version"], "state": active["state"], "editable": True}
                 flow["stage_state"] = _pulse_stage_state()
                 if (flow["stage_state"] or {}).get("state") == "running":
@@ -206,13 +208,26 @@ async def graph():
     return {"flows": flows, "surfaces": surfaces, "edges": edges}
 
 
+def _trigger_job(workflow_id: str) -> dict | None:
+    job_id = workflow_triggers.JOB_FOR_WORKFLOW.get(workflow_id)
+    if not job_id:
+        return None
+    try:
+        from . import scheduler
+        return scheduler.job_view(job_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("workflow: trigger job view failed: %s", e)
+        return None
+
+
 @router.get("/agentic/workflows/{workflow_id}", tags=["agentic"])
 async def workflow(workflow_id: str):
     try:
         active = workflow_store.active(workflow_id)
     except KeyError:
         raise HTTPException(404, "workflow not found")
-    return {"workflow": active, "latest_run": workflow_store.latest_run(workflow_id)}
+    return {"workflow": active, "latest_run": workflow_store.latest_run(workflow_id),
+            "trigger_job": _trigger_job(workflow_id)}
 
 
 @router.get("/agentic/workflows/{workflow_id}/catalog", tags=["agentic"])

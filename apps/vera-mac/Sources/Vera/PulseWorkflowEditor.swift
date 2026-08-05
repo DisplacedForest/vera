@@ -88,8 +88,16 @@ struct PulseWorkflowDefinition: Hashable {
 
 extension WorkflowCatalog {
     func validationMessage(for definition: PulseWorkflowDefinition) -> String? {
+        let triggerIDs = triggerIDs(in: definition)
+        if triggerIDs.count > 1 { return "Only one trigger is allowed." }
+        if definition.edges.contains(where: { triggerIDs.contains($0.to) }) {
+            return "A trigger starts the workflow and cannot take an input."
+        }
+        var body = definition
+        body.nodes.removeAll { triggerIDs.contains($0.id) }
+        body.edges.removeAll { triggerIDs.contains($0.from) || triggerIDs.contains($0.to) }
         var counts: [String: Int] = [:]
-        for node in definition.nodes { counts[node.type, default: 0] += 1 }
+        for node in body.nodes { counts[node.type, default: 0] += 1 }
         for stage in profile.spine {
             guard let count = counts[stage] else { return "Add the required \(label(for: stage)) node." }
             if count > 1 { return "Only one \(label(for: stage)) node is allowed." }
@@ -104,7 +112,7 @@ extension WorkflowCatalog {
                 return "Only one \(label(for: type)) node is allowed."
             }
         }
-        for entry in definition.nodes {
+        for entry in body.nodes {
             if profile.spine.contains(entry.type) || profile.pairTypes.contains(entry.type) { continue }
             guard let spec = node(for: entry.type), spec.insertable,
                   profile.insertableCategories.contains(spec.category) else {
@@ -112,10 +120,15 @@ extension WorkflowCatalog {
             }
         }
         guard !profile.spine.isEmpty else {
-            return isAcyclic(definition) ? nil : "Remove the cycle from this workflow."
+            guard isAcyclic(definition) else { return "Remove the cycle from this workflow." }
+            return triggerConnectionMessage(triggerIDs, in: definition, head: nil)
         }
-        guard let path = singlePath(definition) else { return "Connect every node into a single path." }
-        let order = path.compactMap { id in definition.node(withID: id)?.type }
+        guard !body.nodes.isEmpty else { return "Add the required \(label(for: profile.spine.first ?? "")) node." }
+        guard let path = singlePath(body) else { return "Connect every node into a single path." }
+        if let message = triggerConnectionMessage(triggerIDs, in: definition, head: path.first) {
+            return message
+        }
+        let order = path.compactMap { id in body.node(withID: id)?.type }
         guard order.first == profile.spine.first, order.last == profile.spine.last else {
             return "The workflow must run from \(label(for: profile.spine.first ?? "")) to \(label(for: profile.spine.last ?? ""))."
         }
@@ -136,8 +149,27 @@ extension WorkflowCatalog {
         return nil
     }
 
+    private func triggerConnectionMessage(_ triggerIDs: Set<String>, in definition: PulseWorkflowDefinition,
+                                          head: String?) -> String? {
+        for id in triggerIDs {
+            let outgoing = definition.edges.filter { $0.from == id }
+            if outgoing.count != 1 || (head != nil && outgoing.first?.to != head) {
+                return "Connect the trigger to the start of the workflow."
+            }
+        }
+        return nil
+    }
+
+    func promotionMessage(for definition: PulseWorkflowDefinition) -> String? {
+        for type in profile.triggers where !definition.nodes.contains(where: { $0.type == type }) {
+            return "Add a \(label(for: type)) trigger so this workflow can start on its own."
+        }
+        return nil
+    }
+
     func allowsConnection(from source: PulseWorkflowNode, to target: PulseWorkflowNode, in definition: PulseWorkflowDefinition) -> Bool {
         guard source.id != target.id else { return false }
+        guard !isTriggerType(target.type) else { return false }
         guard let sourceIndex = canonicalIndex(of: source.type),
               let targetIndex = canonicalIndex(of: target.type) else { return true }
         guard sourceIndex < targetIndex else { return false }
@@ -254,13 +286,19 @@ struct PulseWorkflowClient {
         return WorkflowCatalog.parse(object)
     }
 
-    func overview() async -> (version: PulseWorkflowVersion, latestRun: PulseWorkflowRun?, runUnreadable: Bool)? {
+    func overview() async -> (version: PulseWorkflowVersion, latestRun: PulseWorkflowRun?, runUnreadable: Bool,
+                              triggerJob: SchedulerJob?)? {
         guard let (data, status) = await fetch(path: "/agentic/workflows/pulse"),
               (200..<300).contains(status),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let version = PulseWorkflowVersion.parse(object["workflow"] as Any) else { return nil }
         let run = PulseWorkflowRun.classify(object["latest_run"])
-        return (version, run.run, run.unreadable)
+        return (version, run.run, run.unreadable, Self.triggerJob(from: object["trigger_job"]))
+    }
+
+    static func triggerJob(from raw: Any?) -> SchedulerJob? {
+        guard let job = raw as? [String: Any] else { return nil }
+        return SchedulerState.parse(["jobs": [job]])?.jobs.first
     }
 
     func createDraft() async -> PulseWorkflowVersion? {
@@ -287,6 +325,7 @@ final class PulseWorkflowStore: ObservableObject {
     @Published var active: PulseWorkflowVersion?
     @Published var draft: PulseWorkflowVersion?
     @Published var latestRun: PulseWorkflowRun?
+    @Published var triggerJob: SchedulerJob?
     @Published var runUnreadable = false
     @Published var runStale = false
     @Published var selectedNodeID: String?
@@ -304,8 +343,12 @@ final class PulseWorkflowStore: ObservableObject {
         guard let catalog, let definition = displayed?.definition else { return nil }
         return catalog.validationMessage(for: definition)
     }
+    var promotionMessage: String? {
+        guard let catalog, let definition = displayed?.definition else { return nil }
+        return catalog.promotionMessage(for: definition)
+    }
     var canSave: Bool { isEditing && changed && validationMessage == nil && !busy }
-    var canPromote: Bool { isEditing && validationMessage == nil && !busy }
+    var canPromote: Bool { isEditing && validationMessage == nil && promotionMessage == nil && !busy }
 
     func configure(base: URL?) {
         client = base.map { PulseWorkflowClient(base: $0) }
@@ -319,6 +362,7 @@ final class PulseWorkflowStore: ObservableObject {
         guard let overview = await client.overview() else { phase = .unavailable; return }
         active = overview.version
         latestRun = overview.latestRun
+        triggerJob = overview.triggerJob
         runUnreadable = overview.runUnreadable
         runStale = false
         if draft == nil { selectedNodeID = overview.version.definition.nodes.first?.id }
@@ -344,6 +388,7 @@ final class PulseWorkflowStore: ObservableObject {
         }
         active = overview.version
         latestRun = overview.latestRun
+        triggerJob = overview.triggerJob
         runUnreadable = overview.runUnreadable
         runStale = false
     }
@@ -522,7 +567,7 @@ final class PulseWorkflowStore: ObservableObject {
 
     func promote() async {
         guard let client, let draft else { return }
-        if let message = validationMessage {
+        if let message = validationMessage ?? promotionMessage {
             note = message
             return
         }
@@ -566,6 +611,8 @@ final class PulseWorkflowStore: ObservableObject {
         let store = PulseWorkflowStore()
         store.catalog = WorkflowCatalog.fixture()
         var nodes = [
+            PulseWorkflowNode(id: "schedule", type: "trigger.schedule",
+                              config: ["mode": .string("daily"), "time": .string("05:00")]),
             PulseWorkflowNode(id: "triage", type: "pulse.triage", config: [:]),
             PulseWorkflowNode(id: "gates", type: "pulse.gates", config: [:]),
             PulseWorkflowNode(id: "synthesis", type: "pulse.synthesis", config: [:]),
@@ -579,7 +626,7 @@ final class PulseWorkflowStore: ObservableObject {
             nodes.insert(PulseWorkflowNode(id: "filter", type: "flow.filter",
                                            config: ["field": .string("title"), "operator": .string("contains"),
                                                     "value": .string("frost"), "action": .string("drop")]),
-                         at: 3)
+                         at: 4)
         }
         let definition = PulseWorkflowDefinition(id: "pulse", nodes: nodes,
                                                  edges: Array(zip(nodes, nodes.dropFirst())).map { PulseWorkflowEdge(from: $0.id, to: $1.id) },
@@ -598,6 +645,11 @@ extension WorkflowCatalog {
     static func fixture() -> WorkflowCatalog? {
         let json = """
         {"nodes":[
+          {"type":"trigger.schedule","label":"Schedule","description":"Starts this workflow automatically on the schedule you set.","icon":"clock","tint":"accent","category":"trigger",
+           "config_schema":{"mode":{"type":"choice","default":"daily","options":["daily","weekly","interval"]},
+                            "time":{"type":"text","default":"05:00"},
+                            "weekday":{"type":"choice","default":"monday","options":["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]},
+                            "every_minutes":{"type":"choice","default":60,"options":[5,10,15,30,60,120,240,360,720]}},"insertable":false},
           {"type":"pulse.triage","label":"Triage","description":"Pulls in this run's fresh candidate stories and signals so the rest of the pipeline has something to judge.","icon":"globe","tint":"accent","category":"core","config_schema":{},"insertable":false},
           {"type":"pulse.gates","label":"Gates","description":"Checks each candidate against your interest and quality gates and drops the ones that fall short.","icon":"line.3.horizontal.decrease.circle","tint":"orange","category":"core","config_schema":{},"insertable":false},
           {"type":"pulse.synthesis","label":"Synthesis","description":"Writes each surviving candidate into a readable card with a headline and summary.","icon":"sparkles","tint":"purple","category":"core","config_schema":{},"insertable":false},
@@ -618,7 +670,8 @@ extension WorkflowCatalog {
         "profile":{"id":"pulse",
           "spine":["pulse.triage","pulse.gates","pulse.synthesis","pulse.claim_audit","pulse.cover_art","pulse.inject"],
           "insertable_categories":["transform","enrich","notify"],
-          "pairs":[{"types":["pulse.visual_review","pulse.cover_retry"],"after":"pulse.cover_art","before":"pulse.inject"}]}}
+          "pairs":[{"types":["pulse.visual_review","pulse.cover_retry"],"after":"pulse.cover_art","before":"pulse.inject"}],
+          "triggers":["trigger.schedule"]}}
         """
         guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) else { return nil }
         return WorkflowCatalog.parse(object)
@@ -963,6 +1016,9 @@ struct PulseWorkflowEditor: View {
                 if let message = store.validationMessage {
                     Label(message, systemImage: "circle.dashed")
                         .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.orange).lineLimit(1)
+                } else if let message = store.promotionMessage {
+                    Label(message, systemImage: "bolt.badge.clock")
+                        .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.orange).lineLimit(1)
                 } else {
                     Label("Ready to save", systemImage: "checkmark.circle.fill")
                         .font(.system(size: 10.5, weight: .medium)).foregroundStyle(.green)
@@ -1054,8 +1110,10 @@ struct PulseWorkflowEditor: View {
                                      inputHighlighted: wireDrag?.targetID == node.id,
                                      hovered: hoveredNodeID == node.id && wireDrag == nil && nodeDrag == nil,
                                      canDelete: store.isEditing && store.catalog?.isRequired(node.type) == false,
+                                     hasInput: store.catalog?.isTriggerType(node.type) != true,
                                      portHitDiameter: 2 * WorkflowCardGeometry.portHitRadius / nav.transform.scale,
-                                     onInput: store.isEditing ? { store.completeConnection(to: node.id) } : nil,
+                                     onInput: store.isEditing && store.catalog?.isTriggerType(node.type) != true
+                                         ? { store.completeConnection(to: node.id) } : nil,
                                      onOutput: store.isEditing ? { store.startConnection(from: node.id) } : nil,
                                      onOutputDragChanged: store.isEditing ? { location in updateWireDrag(from: node.id, viewportPoint: location) } : nil,
                                      onOutputDragEnded: store.isEditing ? { location in finishWireDrag(viewportPoint: location) } : nil,
@@ -1183,11 +1241,17 @@ struct PulseWorkflowEditor: View {
         return nil
     }
 
+    private var triggerNodeIDs: Set<String> {
+        guard let catalog = store.catalog, let definition = store.displayed?.definition else { return [] }
+        return catalog.triggerIDs(in: definition)
+    }
+
     private func updateWireDrag(from sourceID: String, viewportPoint: CGPoint) {
         guard let definition = store.displayed?.definition else { return }
         let point = nav.transform.toCanvas(viewportPoint)
         let target = WorkflowCardGeometry.nearestInputPort(to: point, in: definition, excluding: sourceID,
-                                                           within: WorkflowCardGeometry.portHitRadius / nav.transform.scale)
+                                                           within: WorkflowCardGeometry.portHitRadius / nav.transform.scale,
+                                                           blocked: triggerNodeIDs)
         wireDrag = WorkflowWireDrag(sourceID: sourceID, point: point, targetID: target)
         hoverEdge = nil
     }
@@ -1198,7 +1262,8 @@ struct PulseWorkflowEditor: View {
         guard let definition = store.displayed?.definition else { return }
         let point = nav.transform.toCanvas(viewportPoint)
         if let target = WorkflowCardGeometry.nearestInputPort(to: point, in: definition, excluding: drag.sourceID,
-                                                              within: WorkflowCardGeometry.portHitRadius / nav.transform.scale) {
+                                                              within: WorkflowCardGeometry.portHitRadius / nav.transform.scale,
+                                                              blocked: triggerNodeIDs) {
             store.connect(from: drag.sourceID, to: target)
         } else if let card = cardID(at: point, in: definition), card != drag.sourceID {
             store.connect(from: drag.sourceID, to: card)
@@ -1405,7 +1470,8 @@ struct PulseWorkflowEditor: View {
             ForEach(workflow.definition.nodes) { node in
                 if let point = workflow.definition.positions[node.id] {
                     WorkflowNodeCard(node: node, spec: store.catalog?.node(for: node.type),
-                                     selected: store.selectedNodeID == node.id)
+                                     selected: store.selectedNodeID == node.id,
+                                     hasInput: store.catalog?.isTriggerType(node.type) != true)
                         .position(x: point.x, y: point.y)
                 }
             }
@@ -1463,9 +1529,12 @@ struct PulseWorkflowEditor: View {
             }
             ForEach(workflow.definition.nodes) { node in
                 if let point = workflow.definition.positions[node.id] {
+                    let isTrigger = store.catalog?.isTriggerType(node.type) == true
                     WorkflowRunNodeCard(node: node, spec: store.catalog?.node(for: node.type),
                                         run: run.nodeRun(node.id),
-                                        selected: store.selectedNodeID == node.id)
+                                        selected: store.selectedNodeID == node.id,
+                                        hasInput: !isTrigger,
+                                        triggerJob: isTrigger ? store.triggerJob : nil)
                         .position(x: point.x, y: point.y)
                         .onTapGesture { store.selectedNodeID = node.id }
                 }
@@ -1751,15 +1820,24 @@ struct WorkflowCardFace: View {
 struct WorkflowCardName: View {
     var text: String
     var muted: Bool = false
+    var caption: String? = nil
 
     var body: some View {
-        Text(text).font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(muted ? Theme.textSecondary : Theme.textPrimary)
-            .lineLimit(1)
-            .frame(maxWidth: 150)
-            .fixedSize()
-            .offset(y: WorkflowCardGeometry.size.height / 2 + 16)
-            .allowsHitTesting(false)
+        VStack(spacing: 1) {
+            Text(text).font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(muted ? Theme.textSecondary : Theme.textPrimary)
+                .lineLimit(1)
+                .frame(maxWidth: 150)
+                .fixedSize()
+            if let caption {
+                Text(caption).font(.system(size: 9))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .offset(y: WorkflowCardGeometry.size.height / 2 + (caption == nil ? 16 : 22))
+        .allowsHitTesting(false)
     }
 }
 
@@ -1779,6 +1857,7 @@ struct WorkflowNodeCard: View {
     var inputHighlighted: Bool = false
     var hovered: Bool = false
     var canDelete: Bool = false
+    var hasInput: Bool = true
     var portHitDiameter: CGFloat = 2 * WorkflowCardGeometry.portHitRadius
     var onInput: (() -> Void)? = nil
     var onOutput: (() -> Void)? = nil
@@ -1802,7 +1881,9 @@ struct WorkflowNodeCard: View {
                          stroke: strokeColor, strokeWidth: connecting || selected ? 2 : 1)
             .shadow(color: Theme.bg.opacity(0.35), radius: selected || hovered ? 9 : 4, y: 2)
             .overlay { WorkflowCardName(text: spec?.label ?? workflowDisplayName(node.type)) }
-            .overlay(alignment: .leading) { inputPort.offset(x: onInput != nil ? -portHitDiameter / 2 : -4) }
+            .overlay(alignment: .leading) {
+                if hasInput { inputPort.offset(x: onInput != nil ? -portHitDiameter / 2 : -4) }
+            }
             .overlay(alignment: .trailing) { outputPort.offset(x: onOutput != nil ? portHitDiameter / 2 : 4) }
             .overlay(alignment: .top) {
                 if showsActions { quickActions.offset(y: -27) }

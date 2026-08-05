@@ -3910,10 +3910,14 @@ enum SelfTest {
             print("  agentic graph OK (flows + stages + state, surfaces incl. nil stat)")
 
             guard let editorCatalog = WorkflowCatalog.fixture(),
-                  editorCatalog.nodes.count == 9,
-                  editorCatalog.paletteNodes.count == 9,
-                  editorCatalog.paletteCategories == ["core", "visual", "transform"],
-                  editorCatalog.profile.canonicalOrder == ["pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit",
+                  editorCatalog.nodes.count == 10,
+                  editorCatalog.paletteNodes.count == 10,
+                  editorCatalog.paletteCategories == ["trigger", "core", "visual", "transform"],
+                  editorCatalog.profile.triggers == ["trigger.schedule"],
+                  editorCatalog.isRequired("trigger.schedule"),
+                  editorCatalog.isTriggerType("trigger.schedule"),
+                  !editorCatalog.isTriggerType("pulse.triage"),
+                  editorCatalog.profile.canonicalOrder == ["trigger.schedule", "pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit",
                                                           "pulse.cover_art", "pulse.visual_review", "pulse.cover_retry", "pulse.inject"],
                   editorCatalog.label(for: "pulse.inject") == "Inject",
                   editorCatalog.label(for: "flow.mystery_step") == "Mystery step",
@@ -4039,7 +4043,7 @@ enum SelfTest {
                   editorStore.canSave == false else {
                 print("SELFTEST ERROR: visual workflow removal"); exit(1)
             }
-            editorStore.placeNodeInDraft("pulse.visual_review", at: CGPoint(x: 1025, y: 310))
+            editorStore.placeNodeInDraft("pulse.visual_review", at: CGPoint(x: 1209, y: 310))
             guard editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "visual_review")) == true,
                   editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "visual_review", to: "cover_retry")) == true,
                   editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "cover_retry")) == false,
@@ -4059,6 +4063,53 @@ enum SelfTest {
                 print("SELFTEST ERROR: installed workflow node placement"); exit(1)
             }
             print("  pulse workflow OK (served catalog + schema fields + profile validation)")
+
+            let triggerStore = PulseWorkflowStore.fixture()
+            triggerStore.draft = triggerStore.active
+            guard let triggerCatalog = triggerStore.catalog,
+                  let triggerDefinition = triggerStore.draft?.definition,
+                  let scheduleNode = triggerDefinition.node(withID: "schedule"),
+                  let triageNode = triggerDefinition.node(withID: "triage") else {
+                print("SELFTEST ERROR: trigger fixture shape"); exit(1)
+            }
+            guard triggerCatalog.validationMessage(for: triggerDefinition) == nil,
+                  triggerCatalog.promotionMessage(for: triggerDefinition) == nil,
+                  !triggerCatalog.allowsConnection(from: triageNode, to: scheduleNode, in: triggerDefinition),
+                  triggerCatalog.allowsConnection(from: scheduleNode, to: triageNode, in: triggerDefinition) else {
+                print("SELFTEST ERROR: trigger connection rules"); exit(1)
+            }
+            var triggerless = triggerDefinition
+            triggerless.nodes.removeAll { $0.id == "schedule" }
+            triggerless.edges.removeAll { $0.from == "schedule" || $0.to == "schedule" }
+            guard triggerCatalog.validationMessage(for: triggerless) == nil,
+                  triggerCatalog.promotionMessage(for: triggerless) == "Add a Schedule trigger so this workflow can start on its own." else {
+                print("SELFTEST ERROR: triggerless draft gating"); exit(1)
+            }
+            var wiredIn = triggerDefinition
+            wiredIn.edges.append(PulseWorkflowEdge(from: "inject", to: "schedule"))
+            guard triggerCatalog.validationMessage(for: wiredIn) == "A trigger starts the workflow and cannot take an input." else {
+                print("SELFTEST ERROR: trigger in-edge rule"); exit(1)
+            }
+            var strayTrigger = triggerDefinition
+            strayTrigger.edges.removeAll { $0.from == "schedule" }
+            guard triggerCatalog.validationMessage(for: strayTrigger) == "Connect the trigger to the start of the workflow." else {
+                print("SELFTEST ERROR: trigger head rule"); exit(1)
+            }
+            guard WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 105 - 46 + 4, y: 310),
+                                                        in: triggerDefinition, excluding: "inject",
+                                                        blocked: triggerCatalog.triggerIDs(in: triggerDefinition)) == nil else {
+                print("SELFTEST ERROR: trigger input port exclusion"); exit(1)
+            }
+            guard let parsedTriggerJob = PulseWorkflowClient.triggerJob(from: [
+                      "id": "pulse", "label": "Pulse briefing run", "cron": "0 5 * * *", "enabled": true,
+                      "last_run": ["ts": 1754250000, "ok": true, "detail": "5 cards"],
+                      "next_run": "2025-08-04T05:00:00Z"] as [String: Any]),
+                  parsedTriggerJob.lastRunOK == true,
+                  parsedTriggerJob.nextRun != nil,
+                  PulseWorkflowClient.triggerJob(from: nil) == nil else {
+                print("SELFTEST ERROR: trigger job parse"); exit(1)
+            }
+            print("  trigger nodes OK (connection + gating + head rule + port exclusion + job parse)")
 
             for scale in [WorkflowCanvasTransform.minScale, 0.75, 1.0, 1.6, WorkflowCanvasTransform.maxScale] {
                 var transform = WorkflowCanvasTransform(scale: scale, offset: CGSize(width: -140, height: 90))
@@ -4203,7 +4254,7 @@ enum SelfTest {
             }
             let fallbackStore = PulseWorkflowStore.fixture()
             fallbackStore.draft = fallbackStore.active
-            fallbackStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 197, y: 310),
+            fallbackStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 381, y: 310),
                                            into: PulseWorkflowEdge(from: "ghost", to: "gates"))
             guard let fallbackID = fallbackStore.selectedNodeID,
                   fallbackStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: fallbackID)) == true,
@@ -4227,7 +4278,8 @@ enum SelfTest {
                   fixtureRun.nodeRun("gates")?.countsLine == "6 items",
                   fixtureRun.version?.id == "fixture-pinned",
                   fixtureRun.version?.number == 2,
-                  fixtureRun.version?.definition.nodes.count == 8,
+                  fixtureRun.version?.definition.nodes.count == 9,
+                  fixtureRun.nodeRun("schedule") == nil,
                   runFixtureStore.runVersion?.id == "fixture-pinned" else {
                 print("SELFTEST ERROR: workflow run parse"); exit(1)
             }

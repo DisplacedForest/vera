@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import AVFoundation
 
@@ -4043,6 +4044,139 @@ enum SelfTest {
                 print("SELFTEST ERROR: installed workflow node placement"); exit(1)
             }
             print("  pulse workflow OK (served catalog + schema fields + profile validation)")
+
+            for scale in [WorkflowCanvasTransform.minScale, 0.75, 1.0, 1.6, WorkflowCanvasTransform.maxScale] {
+                var transform = WorkflowCanvasTransform(scale: scale, offset: CGSize(width: -140, height: 90))
+                let canvasPoint = CGPoint(x: 312.5, y: 481.25)
+                let screen = transform.toScreen(canvasPoint)
+                let back = transform.toCanvas(screen)
+                guard abs(back.x - canvasPoint.x) < 0.001, abs(back.y - canvasPoint.y) < 0.001 else {
+                    print("SELFTEST ERROR: canvas transform round trip at scale \(scale)"); exit(1)
+                }
+                let anchor = CGPoint(x: 220, y: 160)
+                let anchorCanvas = transform.toCanvas(anchor)
+                transform.zoom(by: 1.3, around: anchor)
+                let anchorAfter = transform.toCanvas(anchor)
+                guard abs(anchorAfter.x - anchorCanvas.x) < 0.001, abs(anchorAfter.y - anchorCanvas.y) < 0.001 else {
+                    print("SELFTEST ERROR: canvas zoom anchor drift at scale \(scale)"); exit(1)
+                }
+            }
+            var clamped = WorkflowCanvasTransform()
+            clamped.zoom(by: 100, around: .zero)
+            let clampedHigh = clamped.scale
+            clamped.zoom(by: 0.000001, around: .zero)
+            guard clampedHigh == WorkflowCanvasTransform.maxScale,
+                  clamped.scale == WorkflowCanvasTransform.minScale else {
+                print("SELFTEST ERROR: canvas zoom clamping"); exit(1)
+            }
+            var panned = WorkflowCanvasTransform()
+            panned.pan(by: CGSize(width: 30, height: -12))
+            panned.pan(by: CGSize(width: -5, height: 2))
+            guard panned.offset == CGSize(width: 25, height: -10) else {
+                print("SELFTEST ERROR: canvas pan accumulation"); exit(1)
+            }
+            print("  canvas transform OK (round trip + zoom anchor + clamps + pan)")
+
+            let geometryDefinition = PulseWorkflowDefinition(
+                id: "geometry",
+                nodes: [PulseWorkflowNode(id: "a", type: "pulse.triage", config: [:]),
+                        PulseWorkflowNode(id: "b", type: "pulse.gates", config: [:]),
+                        PulseWorkflowNode(id: "c", type: "pulse.inject", config: [:])],
+                edges: [PulseWorkflowEdge(from: "a", to: "b"), PulseWorkflowEdge(from: "b", to: "c")],
+                positions: ["a": PulseWorkflowPoint(x: 120, y: 300),
+                            "b": PulseWorkflowPoint(x: 420, y: 300),
+                            "c": PulseWorkflowPoint(x: 720, y: 420)])
+            let half = WorkflowCardGeometry.size.width / 2
+            guard WorkflowCardGeometry.outputPort(for: "a", in: geometryDefinition) == CGPoint(x: 120 + half, y: 300),
+                  WorkflowCardGeometry.inputPort(for: "b", in: geometryDefinition) == CGPoint(x: 420 - half, y: 300),
+                  WorkflowCardGeometry.outputPort(for: "missing", in: geometryDefinition) == nil,
+                  WorkflowCardGeometry.position(of: "a", in: geometryDefinition,
+                                                offsets: ["a": CGSize(width: 40, height: -25)]) == CGPoint(x: 160, y: 275) else {
+                print("SELFTEST ERROR: workflow port geometry"); exit(1)
+            }
+            guard nearestWorkflowEdge(to: CGPoint(x: 300, y: 300), in: geometryDefinition) == PulseWorkflowEdge(from: "a", to: "b"),
+                  nearestWorkflowEdge(to: CGPoint(x: 570, y: 360), in: geometryDefinition) == PulseWorkflowEdge(from: "b", to: "c"),
+                  nearestWorkflowEdge(to: CGPoint(x: 300, y: 700), in: geometryDefinition) == nil,
+                  nearestWorkflowEdge(to: CGPoint(x: 300, y: 320), in: geometryDefinition, within: 5) == nil else {
+                print("SELFTEST ERROR: workflow splice target selection"); exit(1)
+            }
+            guard let geometryMid = workflowWireMidpoint(PulseWorkflowEdge(from: "a", to: "b"), in: geometryDefinition),
+                  abs(geometryMid.x - 270) < 0.001, abs(geometryMid.y - 300) < 0.001 else {
+                print("SELFTEST ERROR: workflow wire midpoint"); exit(1)
+            }
+            guard WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 340, y: 306), in: geometryDefinition, excluding: "a") == "b",
+                  WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 340, y: 306), in: geometryDefinition, excluding: "b") == nil,
+                  WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 200, y: 306), in: geometryDefinition, excluding: "a") == nil,
+                  WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 120 - half + 4, y: 300), in: geometryDefinition, excluding: "b") == "a" else {
+                print("SELFTEST ERROR: workflow input port hit test"); exit(1)
+            }
+            print("  canvas geometry OK (ports + splice targets + midpoint + hit tests)")
+
+            let spliceStore = PulseWorkflowStore.fixture()
+            spliceStore.draft = spliceStore.active
+            spliceStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 60, y: 60))
+            guard let spliceID = spliceStore.selectedNodeID,
+                  spliceStore.draft?.definition.edges.contains(where: { $0.from == spliceID || $0.to == spliceID }) == false else {
+                print("SELFTEST ERROR: splice fixture placement"); exit(1)
+            }
+            let targetEdge = PulseWorkflowEdge(from: "triage", to: "gates")
+            spliceStore.spliceNode(spliceID, into: PulseWorkflowEdge(from: "nope", to: "gates"))
+            guard spliceStore.draft?.definition.edges.contains(targetEdge) == true else {
+                print("SELFTEST ERROR: splice missing edge guard"); exit(1)
+            }
+            spliceStore.spliceNode(spliceID, into: targetEdge)
+            guard spliceStore.draft?.definition.edges.contains(targetEdge) == false,
+                  spliceStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: spliceID)) == true,
+                  spliceStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: spliceID, to: "gates")) == true else {
+                print("SELFTEST ERROR: splice node into edge"); exit(1)
+            }
+            let spliceEdgeCount = spliceStore.draft?.definition.edges.count
+            spliceStore.spliceNode(spliceID, into: PulseWorkflowEdge(from: "synthesis", to: "claim_audit"))
+            guard spliceStore.draft?.definition.edges.count == spliceEdgeCount else {
+                print("SELFTEST ERROR: splice connected node guard"); exit(1)
+            }
+            print("  workflow splice OK (guards + edge replacement)")
+
+            let dragStore = PulseWorkflowStore.fixture()
+            dragStore.draft = dragStore.active
+            dragStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 60, y: 60))
+            guard let dragID = dragStore.selectedNodeID,
+                  dragStore.draft?.definition.edges.contains(where: { $0.from == dragID || $0.to == dragID }) == false else {
+                print("SELFTEST ERROR: drag fixture placement"); exit(1)
+            }
+            var dragPublishes = 0
+            let dragSink = dragStore.$draft.dropFirst().sink { _ in dragPublishes += 1 }
+            dragStore.completeNodeDrag(dragID, by: CGSize(width: 40, height: 20),
+                                       splicing: PulseWorkflowEdge(from: "triage", to: "gates"))
+            guard dragPublishes == 1,
+                  dragStore.draft?.definition.positions[dragID] == PulseWorkflowPoint(x: 130, y: 90),
+                  dragStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: dragID)) == true,
+                  dragStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: dragID, to: "gates")) == true,
+                  dragStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "gates")) == false else {
+                print("SELFTEST ERROR: single-publish splice drag"); exit(1)
+            }
+            dragSink.cancel()
+            let edgeStore = PulseWorkflowStore.fixture()
+            edgeStore.draft = edgeStore.active
+            let chosenEdge = PulseWorkflowEdge(from: "synthesis", to: "claim_audit")
+            edgeStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 197, y: 310), into: chosenEdge)
+            guard let pickedID = edgeStore.selectedNodeID,
+                  edgeStore.draft?.definition.edges.contains(chosenEdge) == false,
+                  edgeStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "synthesis", to: pickedID)) == true,
+                  edgeStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: pickedID, to: "claim_audit")) == true,
+                  edgeStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "gates")) == true else {
+                print("SELFTEST ERROR: authoritative insert edge"); exit(1)
+            }
+            let fallbackStore = PulseWorkflowStore.fixture()
+            fallbackStore.draft = fallbackStore.active
+            fallbackStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 197, y: 310),
+                                           into: PulseWorkflowEdge(from: "ghost", to: "gates"))
+            guard let fallbackID = fallbackStore.selectedNodeID,
+                  fallbackStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: fallbackID)) == true,
+                  fallbackStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: fallbackID, to: "gates")) == true else {
+                print("SELFTEST ERROR: insert edge fallback"); exit(1)
+            }
+            print("  canvas insert OK (single publish + authoritative edge + fallback)")
 
             let runFixtureStore = PulseWorkflowStore.runFixture()
             guard runFixtureStore.mode == .run,

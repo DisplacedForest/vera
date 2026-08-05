@@ -1,7 +1,6 @@
 """Pulse store — SQLite-backed, the standalone home for Pulse cards.
 
-A card is a typed record with real lifecycle status (not an OWUI folder chat); the app
-reads the feed from here and cards only cross into OWUI at promotion.
+A card is a typed record with real lifecycle status; the app reads the feed from here.
 """
 
 import json
@@ -48,8 +47,7 @@ def init():
                 image_url TEXT,
                 tint TEXT,
                 sources TEXT,          -- json [{n,title,url}]
-                inline_images TEXT,    -- json [{n,url,caption,sourceN}]
-                promoted_chat_id TEXT
+                inline_images TEXT     -- json [{n,url,caption,sourceN}]
             )
             """
         )
@@ -109,8 +107,8 @@ def insert_card(card: dict):
     with _conn() as c:
         c.execute(
             """INSERT OR REPLACE INTO cards
-               (id, created_at, day, status, title, summary, body, image_url, tint, sources, inline_images, promoted_chat_id, action, kind, severity, user_id, provenance, category, change_set, items, audit, situation_key)
-               VALUES (:id,:created_at,:day,:status,:title,:summary,:body,:image_url,:tint,:sources,:inline_images,:promoted_chat_id,:action,:kind,:severity,:user_id,:provenance,:category,:change_set,:items,:audit,:situation_key)""",
+               (id, created_at, day, status, title, summary, body, image_url, tint, sources, inline_images, action, kind, severity, user_id, provenance, category, change_set, items, audit, situation_key)
+               VALUES (:id,:created_at,:day,:status,:title,:summary,:body,:image_url,:tint,:sources,:inline_images,:action,:kind,:severity,:user_id,:provenance,:category,:change_set,:items,:audit,:situation_key)""",
             {
                 "id": card["id"],
                 "created_at": card.get("created_at") or int(time.time()),
@@ -123,7 +121,6 @@ def insert_card(card: dict):
                 "tint": card.get("tint"),
                 "sources": json.dumps(card.get("sources") or []),
                 "inline_images": json.dumps(card.get("inline_images") or []),
-                "promoted_chat_id": card.get("promoted_chat_id"),
                 "action": json.dumps(card["action"]) if card.get("action") else None,
                 "kind": card.get("kind") or "research",
                 "severity": card.get("severity"),
@@ -151,7 +148,6 @@ def _row_to_card(r: sqlite3.Row) -> dict:
         "tint": r["tint"],
         "sources": json.loads(r["sources"] or "[]"),
         "inline_images": json.loads(r["inline_images"] or "[]"),
-        "promoted_chat_id": r["promoted_chat_id"],
         "action": json.loads(r["action"]) if r["action"] else None,
         "kind": r["kind"] or "research",
         "severity": r["severity"],
@@ -188,13 +184,17 @@ def get_card(card_id: str) -> dict | None:
     return _row_to_card(r) if r else None
 
 
-def set_status(card_id: str, status: str, promoted_chat_id: str | None = None):
+def set_status(card_id: str, status: str):
     init()
     with _conn() as c:
-        if promoted_chat_id is not None:
-            c.execute("UPDATE cards SET status=?, promoted_chat_id=? WHERE id=?", (status, promoted_chat_id, card_id))
-        else:
-            c.execute("UPDATE cards SET status=? WHERE id=?", (status, card_id))
+        c.execute("UPDATE cards SET status=? WHERE id=?", (status, card_id))
+
+
+def rewrite_media(card_id: str, image_url: str | None, inline_images: list):
+    init()
+    with _conn() as c:
+        c.execute("UPDATE cards SET image_url=?, inline_images=? WHERE id=?",
+                  (image_url, json.dumps(inline_images or []), card_id))
 
 
 def apply_audit(card_id: str, title: str, body: str, audit: str):
@@ -265,12 +265,12 @@ def unread_counts(user_id: str) -> dict:
 
 
 def sweep(today: str) -> int:
-    """Expire ALL prior-day cards from the feed. Bookmarked/promoted cards already live on as real
-    OWUI chats (graduation); the Pulse feed itself is daily and clears overnight. Returns count expired."""
+    """Expire prior-day cards from the feed; it is daily and clears overnight.
+    Returns count expired."""
     init()
     with _conn() as c:
         cur = c.execute(
-            "UPDATE cards SET status='expired' WHERE status != 'expired' AND day < ?",
+            "UPDATE cards SET status='expired' WHERE status NOT IN ('expired', 'bookmarked') AND day < ?",
             (today,),
         )
         return cur.rowcount

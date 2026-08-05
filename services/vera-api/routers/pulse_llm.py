@@ -6,8 +6,6 @@ import aiohttp
 
 from .persona import think_kwargs
 
-OWUI_BASE = os.environ.get("OWUI_BASE", "").rstrip("/")
-OWUI_KEY = os.environ.get("OWUI_KEY", "")
 VERA_BASE = os.environ.get("VERA_BASE", "").rstrip("/")          # main LLM, any OpenAI-compatible /v1
 MODEL = os.environ.get("VERA_MODEL", "")
 TZ = ZoneInfo(os.environ.get("HOME_TZ", "UTC"))  # untouched cards expire the day after creation (ChatGPT-Pulse daily freshness)
@@ -25,10 +23,6 @@ def _parse_template_kwargs() -> dict | None:
     except ValueError:
         return None
     return v if isinstance(v, dict) and v else None
-
-
-def _headers():
-    return {"Authorization": f"Bearer {OWUI_KEY}", "Content-Type": "application/json"}
 
 
 async def _request_json(method, url, *, timeout, **kwargs):

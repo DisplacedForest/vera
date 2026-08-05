@@ -41,10 +41,15 @@ from .home import compute_deviations
 from .persona import orientation, owner, personalize, voiced
 from .pulse import (StatusCard, _active_users, _get_memories,
                     _recent_for_user, _vera, _vision, research_topic, status_card)
-from .pulse_llm import OWUI_BASE, _headers
 from .websearch import SearchRequest, search as web_search
 
 router = APIRouter()
+OWUI_BASE = os.environ.get("OWUI_BASE", "").rstrip("/")
+
+
+def _headers():
+    return {"Authorization": f"Bearer {os.environ.get('OWUI_KEY', '')}",
+            "Content-Type": "application/json"}
 TZ = ZoneInfo(os.environ.get("HOME_TZ", "UTC"))
 CHECKLIST = os.path.join(os.path.dirname(__file__), "..", "HEARTBEAT.md")
 HB_DESC = "Vera's standing proactive instructions (self-authored; read each heartbeat tick)."

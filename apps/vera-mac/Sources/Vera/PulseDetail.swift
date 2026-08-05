@@ -12,7 +12,6 @@ struct PulseDetailView: View {
     var onClose: () -> Void = {}
     var onContinue: () -> Void = {}
     var canContinue = true
-    var canBookmark = false
 
     private var isOpening: Bool { store.pulseContinuation[card.id] == .opening }
 
@@ -76,8 +75,7 @@ struct PulseDetailView: View {
                 detailBtn(store.bookmarkedPulseIDs.contains(card.id) ? "bookmark.fill" : "bookmark") {
                     store.bookmarkPulse(card)
                 }
-                .disabled(!canBookmark)
-                .help(canBookmark ? "Bookmark" : "Pulse bookmarks are not available in native chat yet")
+                .help("Bookmark")
                 detailBtn("xmark", action: onClose)
             }
             .padding(.top, 16).padding(.horizontal, 16).padding(.bottom, 16)

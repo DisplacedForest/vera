@@ -129,9 +129,23 @@ def test_embedding_config_change_marks_stale(docs_store, fake_embeddings):
     fake_embeddings["cfg"]["model"] = "different-model"
     assert docs_store.get_file(f["id"])["state"] == "stale"
     assert docs_store.get_collection(col["id"])["index_state"] == "stale"
+    q = asyncio.run(docs_store.query("alpha", [col["id"]]))
+    assert q["status"] == "ok" and q["passages"] == []
     res = asyncio.run(docs_store.index_file(f["id"]))
     assert res["status"] == "ready"
     assert docs_store.get_file(f["id"])["state"] == "ready"
+    q = asyncio.run(docs_store.query("alpha", [col["id"]]))
+    assert len(q["passages"]) == 1
+
+
+def test_ready_files_show_stale_when_embeddings_unset(docs_store, fake_embeddings, monkeypatch):
+    col = docs_store.create_collection("Unset")
+    f = docs_store.add_file(col["id"], "a.txt", b"alpha")
+    asyncio.run(docs_store.index_file(f["id"]))
+    assert docs_store.get_file(f["id"])["state"] == "ready"
+    monkeypatch.setattr(docs_store, "_embeddings_cfg", lambda: None)
+    assert docs_store.get_file(f["id"])["state"] == "stale"
+    assert docs_store.get_collection(col["id"])["index_state"] == "stale"
 
 
 def test_storage_cap(docs_store, monkeypatch):
@@ -196,22 +210,25 @@ def test_malformed_embeddings_degrade_cleanly(docs_store, fake_embeddings, monke
     assert q["status"] == "error" and "malformed" in q["detail"] and q["passages"] == []
 
 
-def test_index_supersede_guard_on_replace(docs_store, fake_embeddings):
-    col = docs_store.create_collection("Race")
-    f = docs_store.add_file(col["id"], "a.txt", b"alpha original")
-
+def _race_replace(docs_store, fid, name, data):
     real_embed = docs_store.embed_texts
     state = {}
 
     async def racing_embed(texts):
         if "done" not in state:
             state["done"] = True
-            docs_store.replace_file(f["id"], "a.txt", b"alpha replaced content")
+            docs_store.replace_file(fid, name, data)
         return await real_embed(texts)
 
     import unittest.mock
     with unittest.mock.patch.object(docs_store, "embed_texts", racing_embed):
-        res = asyncio.run(docs_store.index_file(f["id"]))
+        return asyncio.run(docs_store.index_file(fid))
+
+
+def test_index_supersede_guard_on_replace(docs_store, fake_embeddings):
+    col = docs_store.create_collection("Race")
+    f = docs_store.add_file(col["id"], "a.txt", b"alpha original")
+    res = _race_replace(docs_store, f["id"], "a.txt", b"alpha replaced content")
     assert res["status"] == "superseded"
     got = docs_store.get_file(f["id"])
     assert got["state"] == "stale"
@@ -219,6 +236,55 @@ def test_index_supersede_guard_on_replace(docs_store, fake_embeddings):
     assert res["status"] == "ready"
     q = asyncio.run(docs_store.query("alpha", [col["id"]]))
     assert "replaced" in q["passages"][0]["text"]
+
+
+def test_index_supersede_guard_on_same_content_rename(docs_store, fake_embeddings):
+    col = docs_store.create_collection("Rename")
+    f = docs_store.add_file(col["id"], "a.txt", b"alpha same bytes")
+    res = _race_replace(docs_store, f["id"], "b.md", b"alpha same bytes")
+    assert res["status"] == "superseded"
+    assert docs_store.get_file(f["id"])["state"] == "stale"
+
+
+def test_concurrent_reindex_is_serialized(docs_store, fake_embeddings):
+    col = docs_store.create_collection("Serial")
+    f = docs_store.add_file(col["id"], "a.txt", b"alpha")
+    with docs_store._conn() as c:
+        c.execute("UPDATE file SET state='indexing', updated_at=? WHERE id=?",
+                  (docs_store._now(), f["id"]))
+    res = asyncio.run(docs_store.index_file(f["id"]))
+    assert res["status"] == "superseded"
+    with docs_store._conn() as c:
+        c.execute("UPDATE file SET updated_at=? WHERE id=?",
+                  (docs_store._now() - 3600, f["id"]))
+    res = asyncio.run(docs_store.index_file(f["id"]))
+    assert res["status"] == "ready"
+
+
+def test_add_file_to_deleted_collection_is_rejected(docs_store):
+    with pytest.raises(LookupError):
+        docs_store.add_file("missing", "a.txt", b"alpha")
+
+
+def test_per_file_cap(docs_store, monkeypatch):
+    monkeypatch.setenv("DOCUMENTS_MAX_FILE_BYTES", "4")
+    col = docs_store.create_collection("PerFile")
+    with pytest.raises(docs_store.FileTooLarge, match="DOCUMENTS_MAX_FILE_BYTES"):
+        docs_store.add_file(col["id"], "a.txt", b"12345")
+
+
+def test_cosine_overflow_is_not_nan(docs_store):
+    huge = [1e308, 1e308]
+    assert docs_store._cosine(huge, huge) == 0.0
+
+
+def test_source_tamper_is_detected(docs_store, fake_embeddings):
+    col = docs_store.create_collection("Tamper")
+    f = docs_store.add_file(col["id"], "a.txt", b"alpha honest")
+    with open(docs_store._source_path(f["id"]), "wb") as fh:
+        fh.write(b"alpha tampered")
+    res = asyncio.run(docs_store.index_file(f["id"]))
+    assert res["status"] == "failed" and "hash" in res["error"]
 
 
 def test_query_scopes_to_requested_collections(docs_store, fake_embeddings):

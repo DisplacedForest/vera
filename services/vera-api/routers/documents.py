@@ -27,6 +27,7 @@ class QueryIn(BaseModel):
 async def status():
     return {"ok": True, "configured": store.embeddings_configured(),
             "storage_used": store.storage_used(), "storage_cap": store.storage_cap(),
+            "file_cap": store.file_cap(),
             "supported_formats": list(store.SUPPORTED_FORMATS)}
 
 
@@ -75,7 +76,7 @@ async def delete_collection(cid: str):
     return {"ok": True}
 
 
-async def _read_capped(upload: UploadFile, limit: int) -> bytes:
+async def _read_capped(upload: UploadFile, remaining: int) -> bytes:
     parts = []
     total = 0
     while True:
@@ -83,11 +84,16 @@ async def _read_capped(upload: UploadFile, limit: int) -> bytes:
         if not piece:
             break
         total += len(piece)
-        if total > limit:
+        if total > store.file_cap():
+            raise HTTPException(
+                status_code=413,
+                detail=f"file too large: the upload passes the {store.file_cap()} byte "
+                       f"per-file cap (DOCUMENTS_MAX_FILE_BYTES)")
+        if total > remaining:
             raise HTTPException(
                 status_code=507,
                 detail=f"storage cap exceeded: the upload passes the remaining "
-                       f"{limit} byte budget (DOCUMENTS_MAX_BYTES)")
+                       f"{remaining} byte budget (DOCUMENTS_MAX_BYTES)")
         parts.append(piece)
     return b"".join(parts)
 
@@ -111,6 +117,10 @@ async def _ingest(cid: str, upload: UploadFile, replace_fid: str | None = None) 
             f = store.add_file(cid, name, data)
     except store.StorageCapExceeded as e:
         raise HTTPException(status_code=507, detail=str(e))
+    except store.FileTooLarge as e:
+        raise HTTPException(status_code=413, detail=str(e))
+    except LookupError:
+        raise HTTPException(status_code=404, detail="collection not found")
     except ValueError as e:
         raise HTTPException(status_code=415, detail=str(e))
     result = await store.index_file(f["id"])
@@ -173,6 +183,8 @@ async def query(body: QueryIn):
     text = body.query.strip()
     if not text:
         raise HTTPException(status_code=400, detail="query text is required")
+    if body.collection_ids is not None and len(body.collection_ids) > 100:
+        raise HTTPException(status_code=400, detail="too many collection ids (100 max)")
     top_k = min(max(1, body.top_k), 50)
     budget = min(max(200, body.char_budget), 60000)
     return await store.query(text, body.collection_ids, top_k=top_k, char_budget=budget)

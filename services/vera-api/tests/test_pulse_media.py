@@ -161,6 +161,7 @@ def test_token_scoping_compares_parsed_origins():
     assert pulse_media._token_for("not a url", body) is None
     assert pulse_media._token_for("https://legacy.example:notaport/a", body) is None
     assert pulse_media._token_for("https://legacy.example:99999999/a", body) is None
+    assert pulse_media._token_for("https://legacy.example:0/a", body) is None
 
 
 def test_migration_survives_malformed_port_urls(monkeypatch):

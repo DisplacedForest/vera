@@ -134,7 +134,7 @@ def test_missing_core_stage_is_named():
     definition["edges"] = [edge for edge in definition["edges"]
                            if "claim_audit" not in (edge["from"], edge["to"])]
     definition["edges"].append({"from": "synthesis", "to": "cover_art"})
-    with pytest.raises(ValueError, match="Claim audit"):
+    with pytest.raises(ValueError, match="Check the facts"):
         workflow_registry.validate_definition("pulse", definition)
 
 

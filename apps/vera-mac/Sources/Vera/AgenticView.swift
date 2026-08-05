@@ -49,16 +49,6 @@ final class SchedulerStore: ObservableObject {
         }
     }
 
-    /// Persist an edited cron. Returns whether the server accepted it (the editor stays open on failure).
-    func saveCron(_ job: SchedulerJob, cron: String) async -> Bool {
-        guard let client else { return false }
-        busy.insert(job.id)
-        defer { busy.remove(job.id) }
-        let ok = await client.update(id: job.id, cron: cron)
-        if ok { await refresh() }
-        return ok
-    }
-
     /// Fire a job immediately.
     func runNow(_ job: SchedulerJob) {
         guard let client else { return }
@@ -104,47 +94,21 @@ final class ActivityStore: ObservableObject {
     }
 }
 
-/// Live state for the last Pulse run's structured per-item detail (`GET /pulse/run_status`),
-/// used by the pulse drill-in's stage expansions. Absent or older runs leave `detail` nil so
-/// the canvas degrades to "no detail recorded for this run".
-@MainActor
-final class PulseRunStore: ObservableObject {
-    @Published var detail: PulseRunDetail?
-
-    private var client: PulseRunClient?
-
-    func configure(base: URL?) {
-        client = base.map { PulseRunClient(base: $0) }
-        if client == nil { detail = nil }
-    }
-
-    func refresh() async {
-        guard let client else { detail = nil; return }
-        if case .ok(let d) = await client.fetch() { detail = d } else { detail = nil }
-    }
-}
-
-/// The Agentic surface. Canvas: the organism map of every autonomous flow, with
-/// drill-ins and the node inspector. Activity: the reverse-chronological feed of
-/// everything Vera did on her own in the last day.
 struct AgenticView: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var config: ConfigStore
-    @ObservedObject var pulseWorkflow: PulseWorkflowStore
+    @ObservedObject var workflowEditor: WorkflowEditorStore
     @StateObject private var sched = SchedulerStore()
     @StateObject private var activity = ActivityStore()
     @StateObject private var graphStore = GraphStore()
-    @StateObject private var pulseRun = PulseRunStore()
-    @State private var editing: SchedulerJob?
 
     var body: some View {
         Group {
             switch store.agenticPane {
             case .canvas:
                 AgenticCanvasView(graphStore: graphStore, sched: sched, activity: activity,
-                                  pulseRun: pulseRun, pulseWorkflow: pulseWorkflow,
-                                  drilled: $store.agenticFlowID,
-                                  onEditSchedule: { editing = $0 })
+                                  workflowEditor: workflowEditor,
+                                  drilled: $store.agenticFlowID)
             case .activity:
                 AgenticActivityView(activity: activity)
             }
@@ -155,26 +119,20 @@ struct AgenticView: View {
             sched.configure(base: config.veraAPIBase)
             activity.configure(base: config.veraAPIBase)
             graphStore.configure(base: config.veraAPIBase)
-            pulseRun.configure(base: config.veraAPIBase)
-            pulseWorkflow.configure(base: config.veraAPIBase)
+            workflowEditor.configure(base: config.veraAPIBase)
             async let s: Void = sched.refresh()
             async let a: Void = activity.refresh()
             async let g: Void = graphStore.refresh()
-            async let p: Void = pulseRun.refresh()
-            async let w: Void = pulseWorkflow.refresh()
-            _ = await (s, a, g, p, w)
+            async let w: Void = workflowEditor.refresh()
+            _ = await (s, a, g, w)
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
                 async let s2: Void = sched.refresh()
                 async let a2: Void = activity.refresh()
                 async let g2: Void = graphStore.refresh()
-                async let p2: Void = pulseRun.refresh()
-                async let w2: Void = pulseWorkflow.refresh()
-                _ = await (s2, a2, g2, p2, w2)
+                async let w2: Void = workflowEditor.refresh()
+                _ = await (s2, a2, g2, w2)
             }
-        }
-        .sheet(item: $editing) { job in
-            CronEditor(job: job) { cron in await sched.saveCron(job, cron: cron) }
         }
     }
 }
@@ -299,105 +257,3 @@ func relativeTime(_ d: Date) -> String {
     return f.localizedString(for: d, relativeTo: Date())
 }
 
-/// Schedule editor: a simple time/interval picker with raw cron as the advanced escape hatch.
-private struct CronEditor: View {
-    let job: SchedulerJob
-    var onSave: (String) async -> Bool
-    @Environment(\.dismiss) private var dismiss
-
-    private enum Mode: String, CaseIterable, Identifiable {
-        case daily = "Daily", hours = "Hourly interval", minutes = "Minute interval", custom = "Custom cron"
-        var id: String { rawValue }
-    }
-    @State private var mode: Mode = .daily
-    @State private var time = Calendar.current.date(from: DateComponents(hour: 5, minute: 0)) ?? Date()
-    @State private var everyHours = 6
-    @State private var everyMinutes = 20
-    @State private var custom = ""
-    @State private var saving = false
-    @State private var error: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Schedule for \(job.label)").font(.system(size: 15, weight: .semibold))
-            Picker("", selection: $mode) {
-                ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented).labelsHidden()
-
-            switch mode {
-            case .daily:
-                DatePicker("At", selection: $time, displayedComponents: .hourAndMinute)
-                    .datePickerStyle(.field).frame(maxWidth: 180)
-            case .hours:
-                Stepper("Every \(everyHours) hour\(everyHours == 1 ? "" : "s")", value: $everyHours, in: 1...23)
-            case .minutes:
-                Stepper("Every \(everyMinutes) min", value: $everyMinutes, in: 1...59)
-            case .custom:
-                TextField("m h dom mon dow", text: $custom)
-                    .textFieldStyle(.roundedBorder).font(.system(size: 13, design: .monospaced))
-            }
-
-            HStack(spacing: 8) {
-                Image(systemName: "clock").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                Text(cronSummary(built)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                Spacer()
-            }
-
-            if let error {
-                Text(error).font(.system(size: 12)).foregroundStyle(.red)
-            }
-
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(saving ? "Saving…" : "Save") {
-                    guard valid else { error = "Enter a 5-field cron expression"; return }
-                    saving = true
-                    Task {
-                        let ok = await onSave(built)
-                        saving = false
-                        if ok { dismiss() } else { error = "The server refused the schedule" }
-                    }
-                }
-                .keyboardShortcut(.defaultAction).disabled(saving)
-            }
-        }
-        .padding(20).frame(width: 420)
-        .onAppear { seed() }
-    }
-
-    private var built: String {
-        switch mode {
-        case .daily:
-            let c = Calendar.current.dateComponents([.hour, .minute], from: time)
-            return "\(c.minute ?? 0) \(c.hour ?? 0) * * *"
-        case .hours: return "0 */\(everyHours) * * *"
-        case .minutes: return "*/\(everyMinutes) * * * *"
-        case .custom: return custom.trimmingCharacters(in: .whitespaces)
-        }
-    }
-
-    private var valid: Bool { built.split(separator: " ").count == 5 }
-
-    /// Pre-select the editor mode from the job's current cron.
-    private func seed() {
-        custom = job.cron
-        let f = job.cron.split(separator: " ").map(String.init)
-        guard f.count == 5 else { mode = .custom; return }
-        if f[1] == "*", f[0].hasPrefix("*/"), let n = Int(f[0].dropFirst(2)),
-           f[2] == "*", f[3] == "*", f[4] == "*" {
-            mode = .minutes; everyMinutes = n; return
-        }
-        if f[1].hasPrefix("*/"), let n = Int(f[1].dropFirst(2)), Int(f[0]) != nil,
-           f[2] == "*", f[3] == "*", f[4] == "*" {
-            mode = .hours; everyHours = n; return
-        }
-        if let mm = Int(f[0]), let hh = Int(f[1]), f[2] == "*", f[3] == "*", f[4] == "*" {
-            mode = .daily
-            time = Calendar.current.date(from: DateComponents(hour: hh, minute: mm)) ?? time
-            return
-        }
-        mode = .custom
-    }
-}

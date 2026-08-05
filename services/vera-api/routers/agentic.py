@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from . import action_store, scheduler_store
+from . import workflow_projection
 from . import workflow_registry
 from . import workflow_store
 from . import workflow_triggers
@@ -71,51 +72,19 @@ SURFACES: list[dict] = [
     {"id": "actions", "label": "Actions", "icon": "bolt"},
 ]
 
-_PULSE_STAGES = [
-    {"id": "triage", "label": "Triage", "icon": "globe", "tint": "accent"},
-    {"id": "gates", "label": "Gates", "icon": "line.3.horizontal.decrease.circle", "tint": "orange"},
-    {"id": "synthesis", "label": "Synthesis", "icon": "sparkles", "tint": "purple"},
-    {"id": "claim_audit", "label": "Claim audit", "icon": "checkmark.shield", "tint": "cyan"},
-    {"id": "cover_art", "label": "Cover art", "icon": "photo", "tint": "purple"},
-    {"id": "inject", "label": "Inject", "icon": "arrow.down.to.line", "tint": "green"},
-]
-
-# Per-flow canvas face: presentation label (the registry label stays the formal name),
-# icon/tint (SF Symbol + the app's chart-palette tint names), thematic group, the
-# surfaces the flow feeds, and the tools it is known to use (static attribution; the
-# activity feed adds per-event attribution on top). Flows with `stages` drill in.
-FLOW_FACE: dict[str, dict] = {
-    "pulse":          {"label": "Pulse briefing", "icon": "newspaper", "tint": "accent",
-                       "group": "Ambient", "feeds": ["pulse_feed"],
-                       "tools": ["websearch", "vera-image"],
-                       "stage_layout": "pipeline", "stages": _PULSE_STAGES},
-    "home_model":     {"label": "Home model", "icon": "house", "tint": "cyan",
-                       "group": "Home", "feeds": ["actions"], "tools": []},
-    "home_reconcile": {"label": "Map reconcile", "icon": "checklist", "tint": "cyan",
-                       "group": "Home", "feeds": ["veins"], "tools": []},
-    "home_digest":    {"label": "Rhythm digest", "icon": "doc.text", "tint": "cyan",
-                       "group": "Home", "feeds": ["veins"], "tools": []},
-    "conversation_extract": {"label": "Conversation extraction", "icon": "text.bubble",
-                             "tint": "purple", "group": "Memory", "feeds": ["memory"], "tools": []},
-    "weight_fit":     {"label": "Weight fit", "icon": "chart.xyaxis.line", "tint": "purple",
-                       "group": "Memory", "feeds": ["memory"], "tools": []},
-    "knowledge_groom": {"label": "Knowledge groom", "icon": "archivebox", "tint": "cyan",
-                        "group": "Home", "feeds": ["pulse_feed"], "tools": []},
-}
-
-# A job with no authored face still renders (and the test suite flags the omission).
-_DEFAULT_FACE = {"icon": "clock", "tint": "gray", "group": "Other", "feeds": [], "tools": []}
+FLOW_FACE = workflow_projection.FLOW_FACE
 
 
 class WorkflowDefinitionUpdate(BaseModel):
     definition: dict
 
 
-def _vein_face(job_id: str) -> dict:
-    from . import pulse_veins
-    spec = pulse_veins.manifest(job_id.removeprefix("vein_")) or {}
-    return {"label": spec.get("label", job_id), "icon": spec.get("icon", "clock"),
-            "tint": "cyan", "group": "Ambient", "feeds": ["veins"], "tools": []}
+def _stage_view(node: dict) -> dict:
+    spec = workflow_registry.spec_for(node.get("type")) or {}
+    return {"id": node["id"], "type": node.get("type"),
+            "label": spec.get("label") or node.get("label") or node["id"],
+            "icon": spec.get("icon") or node.get("icon") or "circle",
+            "tint": spec.get("tint") or node.get("tint") or "accent"}
 
 
 def _pulse_stage_state() -> dict | None:
@@ -165,13 +134,12 @@ async def graph():
     running = running_jobs()
     flows = []
     for job_id, (label, _cron, _handler) in _registry().items():
-        face = FLOW_FACE.get(job_id)
-        if face is None:
-            face = _vein_face(job_id) if job_id.startswith("vein_") else _DEFAULT_FACE
+        face = workflow_projection.face_for(job_id)
         flow = {
             "id": job_id,
             "label": face.get("label", label),
             "title": label,
+            "description": face.get("description"),
             "icon": face["icon"],
             "tint": face["tint"],
             "group": face["group"],
@@ -179,16 +147,18 @@ async def graph():
             "tools": face["tools"],
             "running": job_id in running,
         }
-        if face.get("stages"):
-            flow["stage_layout"] = face.get("stage_layout", "pipeline")
-            flow["stages"] = face["stages"]
+        try:
+            active = workflow_store.active(job_id)
+            profile = workflow_registry.profile_for(job_id)
+            flow["stage_layout"] = "pipeline"
+            flow["stages"] = [_stage_view(node) for node in active["definition"].get("nodes") or []
+                              if not workflow_triggers.is_trigger(node.get("type"))]
+            flow["workflow"] = {"version": active["version"], "state": active["state"],
+                                "editable": not profile.get("locked", False)}
+        except Exception as e:  # noqa: BLE001
+            log.warning("graph: workflow view for %s failed: %s", job_id, e)
         if job_id == "pulse":
             try:
-                active = workflow_store.active("pulse")
-                flow["stage_layout"] = "pipeline"
-                flow["stages"] = [node for node in active["definition"].get("nodes") or []
-                                  if not workflow_triggers.is_trigger(node.get("type"))]
-                flow["workflow"] = {"version": active["version"], "state": active["state"], "editable": True}
                 flow["stage_state"] = _pulse_stage_state()
                 if (flow["stage_state"] or {}).get("state") == "running":
                     flow["running"] = True
@@ -211,7 +181,7 @@ async def graph():
 
 
 def _trigger_job(workflow_id: str) -> dict | None:
-    job_id = workflow_triggers.JOB_FOR_WORKFLOW.get(workflow_id)
+    job_id = workflow_triggers.job_for(workflow_id)
     if not job_id:
         return None
     try:
@@ -222,13 +192,21 @@ def _trigger_job(workflow_id: str) -> dict | None:
         return None
 
 
+def _flow_view(workflow_id: str) -> dict:
+    face = workflow_projection.face_for(workflow_id)
+    return {"id": workflow_id, "label": face.get("label", workflow_id),
+            "description": face.get("description"), "icon": face["icon"],
+            "tint": face["tint"], "group": face["group"]}
+
+
 @router.get("/agentic/workflows/{workflow_id}", tags=["agentic"])
 async def workflow(workflow_id: str):
     try:
         active = workflow_store.active(workflow_id)
     except KeyError:
         raise HTTPException(404, "workflow not found")
-    return {"workflow": active, "latest_run": workflow_store.latest_run(workflow_id),
+    return {"workflow": active, "flow": _flow_view(workflow_id),
+            "latest_run": workflow_store.latest_run(workflow_id),
             "trigger_job": _trigger_job(workflow_id)}
 
 

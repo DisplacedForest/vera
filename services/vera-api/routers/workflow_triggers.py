@@ -24,7 +24,11 @@ SPECS = {
     },
 }
 
-JOB_FOR_WORKFLOW = {"pulse": "pulse"}
+def job_for(workflow_id) -> str | None:
+    if not isinstance(workflow_id, str):
+        return None
+    from . import scheduler
+    return workflow_id if workflow_id in scheduler._registry() else None
 
 _TIME = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 

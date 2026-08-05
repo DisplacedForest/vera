@@ -88,8 +88,11 @@ def test_drill_in_topology():
     assert pulse["stage_layout"] == "pipeline"
     assert [s["id"] for s in pulse["stages"]] == [
         "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
-    # Simple jobs carry no stages: the manifest decides depth.
-    assert "stages" not in _flow(out, "home_model")
+    home = _flow(out, "home_model")
+    assert [s["id"] for s in home["stages"]] == ["run"]
+    assert home["stages"][0]["label"] == "Refresh the home model"
+    assert home["workflow"]["editable"] is False
+    assert pulse["workflow"]["editable"] is True
 
 
 def test_pulse_topology_comes_from_the_active_workflow():

@@ -1,38 +1,39 @@
 import math
 
 from . import vein_engine
+from . import workflow_projection
 from . import workflow_triggers
 
 
 PULSE_SPECS = {
-    "pulse.triage": {"label": "Triage", "icon": "globe", "tint": "accent", "category": "core",
+    "pulse.triage": {"label": "Gather candidates", "icon": "globe", "tint": "accent", "category": "core",
                      "description": "Pulls in this run's fresh candidate stories and signals so the rest of the pipeline has something to judge.",
                      "config_schema": {}, "insertable": False},
-    "pulse.gates": {"label": "Gates", "icon": "line.3.horizontal.decrease.circle", "tint": "orange",
+    "pulse.gates": {"label": "Filter by interest", "icon": "line.3.horizontal.decrease.circle", "tint": "orange",
                     "category": "core",
                     "description": "Checks each candidate against your interest and quality gates and drops the ones that fall short.",
                     "config_schema": {}, "insertable": False},
-    "pulse.synthesis": {"label": "Synthesis", "icon": "sparkles", "tint": "purple", "category": "core",
+    "pulse.synthesis": {"label": "Write cards", "icon": "sparkles", "tint": "purple", "category": "core",
                         "description": "Writes each surviving candidate into a readable card with a headline and summary.",
                         "config_schema": {}, "insertable": False},
-    "pulse.claim_audit": {"label": "Claim audit", "icon": "checkmark.shield", "tint": "cyan",
+    "pulse.claim_audit": {"label": "Check the facts", "icon": "checkmark.shield", "tint": "cyan",
                           "category": "core",
                           "description": "Rechecks the factual claims in every drafted card and pulls the ones that don't hold up.",
                           "config_schema": {}, "insertable": False},
-    "pulse.cover_art": {"label": "Cover art", "icon": "photo", "tint": "purple", "category": "core",
+    "pulse.cover_art": {"label": "Generate covers", "icon": "photo", "tint": "purple", "category": "core",
                         "description": "Generates a cover image for each card in the visual style you pick.",
                         "config_schema": {"style": {"type": "choice", "default": "rotating",
                                                     "options": ["rotating", "photographic", "illustrated", "editorial"]}},
                         "insertable": False},
-    "pulse.visual_review": {"label": "Visual review", "icon": "eye", "tint": "cyan", "category": "visual",
+    "pulse.visual_review": {"label": "Review covers", "icon": "eye", "tint": "cyan", "category": "visual",
                             "description": "Scores each generated cover and rejects the ones below your quality threshold.",
                             "config_schema": {"threshold": {"type": "number", "min": 0, "max": 1, "default": 0.8}},
                             "insertable": False},
-    "pulse.cover_retry": {"label": "One retry", "icon": "arrow.clockwise", "tint": "orange", "category": "visual",
+    "pulse.cover_retry": {"label": "Retry a cover", "icon": "arrow.clockwise", "tint": "orange", "category": "visual",
                           "description": "Regenerates a rejected cover one more time before the card ships without it.",
                           "config_schema": {"max_attempts": {"type": "choice", "options": [0, 1], "default": 1}},
                           "insertable": False},
-    "pulse.inject": {"label": "Inject", "icon": "arrow.down.to.line", "tint": "green", "category": "core",
+    "pulse.inject": {"label": "Publish to feed", "icon": "arrow.down.to.line", "tint": "green", "category": "core",
                      "description": "Publishes the finished cards into your feed.",
                      "config_schema": {}, "insertable": False},
 }
@@ -95,14 +96,22 @@ PULSE_PROFILE = {
     "pairs": [{"types": ["pulse.visual_review", "pulse.cover_retry"],
                "after": "pulse.cover_art", "before": "pulse.inject"}],
     "triggers": [workflow_triggers.SCHEDULE_TYPE],
+    "locked": False,
 }
 
 GENERIC_PROFILE = {"id": "generic", "spine": [], "insertable_categories": [], "pairs": [],
-                   "triggers": []}
+                   "triggers": [], "locked": False}
+
+LOCKED_PROFILE = {"id": "locked", "spine": [], "insertable_categories": [], "pairs": [],
+                  "triggers": [workflow_triggers.SCHEDULE_TYPE], "locked": True}
 
 
 def profile_for(workflow_id: str) -> dict:
-    return PULSE_PROFILE if workflow_id == "pulse" else GENERIC_PROFILE
+    if workflow_id == "pulse":
+        return PULSE_PROFILE
+    if workflow_projection.is_projected(workflow_id):
+        return LOCKED_PROFILE
+    return GENERIC_PROFILE
 
 
 def _block_spec(name: str) -> dict:
@@ -129,7 +138,7 @@ def spec_for(node_type) -> dict | None:
         return GENERAL_SPECS[node_type]
     if isinstance(node_type, str) and node_type in vein_engine.BLOCKS:
         return _block_spec(node_type)
-    return None
+    return workflow_projection.step_spec(node_type)
 
 
 def catalog() -> list[dict]:
@@ -137,6 +146,8 @@ def catalog() -> list[dict]:
     entries.extend({"type": node_type, **spec} for node_type, spec in PULSE_SPECS.items())
     entries.extend({"type": node_type, **spec} for node_type, spec in GENERAL_SPECS.items())
     entries.extend({"type": name, **_block_spec(name)} for name in sorted(vein_engine.BLOCKS))
+    entries.extend({"type": node_type, **spec}
+                   for node_type, spec in sorted(workflow_projection.catalog_step_specs().items()))
     for entry in entries:
         description = entry.get("description")
         if not isinstance(description, str) or not description.strip():
@@ -279,6 +290,18 @@ def _validate_spine(profile: dict, nodes: list[dict], edges: list[dict]):
     return path
 
 
+def _validate_locked(workflow_id: str, nodes: list[dict], edges: list[dict]):
+    projection = workflow_projection.definition_for(workflow_id)
+    if projection is None:
+        raise ValueError("this workflow's structure is managed by the server")
+    served_nodes = {(node["id"], node["type"]) for node in projection["nodes"]}
+    served_edges = {(edge["from"], edge["to"]) for edge in projection["edges"]}
+    got_nodes = {(node.get("id"), node.get("type")) for node in nodes}
+    got_edges = {(edge.get("from"), edge.get("to")) for edge in edges}
+    if served_nodes != got_nodes or served_edges != got_edges:
+        raise ValueError("this workflow's steps are managed by the server; only its settings can change")
+
+
 def validate_definition(workflow_id: str, definition: dict):
     nodes = definition.get("nodes")
     edges = definition.get("edges")
@@ -301,6 +324,8 @@ def validate_definition(workflow_id: str, definition: dict):
         raise ValueError("edges must connect declared nodes")
     trigger_ids = _validate_triggers(nodes, edges)
     profile = profile_for(workflow_id)
+    if profile.get("locked"):
+        _validate_locked(workflow_id, nodes, edges)
     if profile["spine"]:
         body_nodes, body_edges = _without(nodes, edges, trigger_ids)
         if not body_nodes:

@@ -12,7 +12,7 @@ enum Shot {
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let store = ChatStore()
         let size: CGSize
-        if view == "agentic-editor" || view == "agentic-run" {
+        if view.hasPrefix("agentic-editor") || view == "agentic-run" {
             size = CGSize(width: 2048, height: 1100)
         } else if view.hasPrefix("settings-advanced") {
             size = CGSize(width: 1180, height: 1500)
@@ -259,22 +259,27 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
-        } else if view == "agentic-pulse"
-                    || view == "agentic-inspector" || view == "agentic-inspector-long" {
+        } else if view == "agentic-editor" {
             content = AnyView(
-                AgenticDetailShot(variant: view)
+                WorkflowEditorShot()
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
-        } else if view == "agentic-editor" {
+        } else if view == "agentic-editor-locked" {
             content = AnyView(
-                PulseWorkflowEditorShot()
+                LockedWorkflowEditorShot(store: WorkflowEditorStore.lockedFixture())
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
+        } else if view == "agentic-editor-vein" {
+            content = AnyView(
+                LockedWorkflowEditorShot(store: WorkflowEditorStore.veinFixture())
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
         } else if view == "agentic-run" {
             content = AnyView(
-                PulseWorkflowRunShot()
+                WorkflowRunShot()
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )

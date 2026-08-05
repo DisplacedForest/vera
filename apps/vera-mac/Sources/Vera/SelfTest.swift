@@ -3916,7 +3916,9 @@ enum SelfTest {
                   !editorCatalog.isTriggerType("pulse.triage"),
                   editorCatalog.profile.canonicalOrder == ["trigger.schedule", "pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit",
                                                           "pulse.cover_art", "pulse.visual_review", "pulse.cover_retry", "pulse.inject"],
-                  editorCatalog.label(for: "pulse.inject") == "Inject",
+                  editorCatalog.label(for: "pulse.inject") == "Publish to feed",
+                  editorCatalog.label(for: "pulse.triage") == "Gather candidates",
+                  editorCatalog.profile.locked == false,
                   editorCatalog.label(for: "flow.mystery_step") == "Mystery step",
                   editorCatalog.label(for: "LegacyNode") == "Legacy node",
                   editorCatalog.label(for: "vendor.legacyFetchStep") == "Legacy fetch step",
@@ -3982,7 +3984,7 @@ enum SelfTest {
             {"id":"pulse","nodes":[{"id":"filter","type":"flow.filter","config":{"field":"title","value":"frost"}}],"edges":[]}
             """
             guard let textObject = try? JSONSerialization.jsonObject(with: Data(textWorkflowJSON.utf8)),
-                  let textWorkflow = PulseWorkflowDefinition.parse(textObject),
+                  let textWorkflow = WorkflowDefinition.parse(textObject),
                   textWorkflow.nodes[0].config["value"] == .string("frost"),
                   let textTrip = (textWorkflow.jsonObject()["nodes"] as? [[String: Any]])?.first,
                   (textTrip["config"] as? [String: Any])?["value"] as? String == "frost" else {
@@ -3997,7 +3999,7 @@ enum SelfTest {
             ],"edges":[{"from":"cover_art","to":"visual_review"},{"from":"visual_review","to":"cover_retry"}]}
             """
             guard let workflowObject = try? JSONSerialization.jsonObject(with: Data(workflowJSON.utf8)),
-                  let workflow = PulseWorkflowDefinition.parse(workflowObject),
+                  let workflow = WorkflowDefinition.parse(workflowObject),
                   workflow.nodes[1].config["threshold"] == .double(0.8),
                   workflow.nodes[2].config["max_attempts"] == .int(1) else {
                 print("SELFTEST ERROR: pulse workflow parse"); exit(1)
@@ -4017,11 +4019,11 @@ enum SelfTest {
                   fallbackGaps.allSatisfy({ $0 - WorkflowCardGeometry.size.width >= WorkflowCardGeometry.size.width / 2 }) else {
                 print("SELFTEST ERROR: workflow fallback placement spacing"); exit(1)
             }
-            guard PulseWorkflowClient.rejectionMessage(from: Data(#"{"detail":"core stages are out of order"}"#.utf8)) == "core stages are out of order",
-                  PulseWorkflowClient.rejectionMessage(from: Data("{}".utf8)) == nil else {
+            guard WorkflowClient.rejectionMessage(from: Data(#"{"detail":"core stages are out of order"}"#.utf8)) == "core stages are out of order",
+                  WorkflowClient.rejectionMessage(from: Data("{}".utf8)) == nil else {
                 print("SELFTEST ERROR: workflow rejection parse"); exit(1)
             }
-            let editorStore = PulseWorkflowStore.fixture()
+            let editorStore = WorkflowEditorStore.fixture()
             editorStore.startConnection(from: "cover_art")
             guard editorStore.connectionSourceID == nil else {
                 print("SELFTEST ERROR: active workflow connection"); exit(1)
@@ -4029,21 +4031,21 @@ enum SelfTest {
             editorStore.draft = editorStore.active
             editorStore.startConnection(from: "cover_art")
             editorStore.completeConnection(to: "inject")
-            guard !(editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "inject")) ?? true) else {
+            guard !(editorStore.draft?.definition.edges.contains(WorkflowEdge(from: "cover_art", to: "inject")) ?? true) else {
                 print("SELFTEST ERROR: visual workflow connection"); exit(1)
             }
             editorStore.selectedNodeID = "visual_review"
             editorStore.removeSelectedNode()
             guard editorStore.draft?.definition.nodes.contains(where: { $0.type == "pulse.visual_review" }) == false,
-                  editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "cover_retry")) == true,
-                  editorStore.validationMessage == "Add Visual review to complete this path.",
+                  editorStore.draft?.definition.edges.contains(WorkflowEdge(from: "cover_art", to: "cover_retry")) == true,
+                  editorStore.validationMessage == "Add Review covers to complete this path.",
                   editorStore.canSave == false else {
                 print("SELFTEST ERROR: visual workflow removal"); exit(1)
             }
             editorStore.placeNodeInDraft("pulse.visual_review", at: CGPoint(x: 1209, y: 310))
-            guard editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "visual_review")) == true,
-                  editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "visual_review", to: "cover_retry")) == true,
-                  editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "cover_retry")) == false,
+            guard editorStore.draft?.definition.edges.contains(WorkflowEdge(from: "cover_art", to: "visual_review")) == true,
+                  editorStore.draft?.definition.edges.contains(WorkflowEdge(from: "visual_review", to: "cover_retry")) == true,
+                  editorStore.draft?.definition.edges.contains(WorkflowEdge(from: "cover_art", to: "cover_retry")) == false,
                   editorStore.draft?.definition.node(withID: "visual_review")?.config["threshold"] == .double(0.8),
                   editorStore.validationMessage == nil else {
                 print("SELFTEST ERROR: visual workflow wire insertion"); exit(1)
@@ -4056,12 +4058,12 @@ enum SelfTest {
             let nodeCount = editorStore.draft?.definition.nodes.count
             editorStore.placeNodeInDraft("pulse.triage", at: CGPoint(x: 180, y: 120))
             guard editorStore.draft?.definition.nodes.count == nodeCount,
-                  editorStore.draft?.definition.positions["triage"] == PulseWorkflowPoint(x: 180, y: 120) else {
+                  editorStore.draft?.definition.positions["triage"] == WorkflowPoint(x: 180, y: 120) else {
                 print("SELFTEST ERROR: installed workflow node placement"); exit(1)
             }
             print("  pulse workflow OK (served catalog + schema fields + profile validation)")
 
-            let triggerStore = PulseWorkflowStore.fixture()
+            let triggerStore = WorkflowEditorStore.fixture()
             triggerStore.draft = triggerStore.active
             guard let triggerCatalog = triggerStore.catalog,
                   let triggerDefinition = triggerStore.draft?.definition,
@@ -4083,7 +4085,7 @@ enum SelfTest {
                 print("SELFTEST ERROR: triggerless draft gating"); exit(1)
             }
             var wiredIn = triggerDefinition
-            wiredIn.edges.append(PulseWorkflowEdge(from: "inject", to: "schedule"))
+            wiredIn.edges.append(WorkflowEdge(from: "inject", to: "schedule"))
             guard triggerCatalog.validationMessage(for: wiredIn) == "A trigger starts the workflow and cannot take an input." else {
                 print("SELFTEST ERROR: trigger in-edge rule"); exit(1)
             }
@@ -4097,28 +4099,28 @@ enum SelfTest {
                                                         blocked: triggerCatalog.triggerIDs(in: triggerDefinition)) == nil else {
                 print("SELFTEST ERROR: trigger input port exclusion"); exit(1)
             }
-            guard let parsedTriggerJob = PulseWorkflowClient.triggerJob(from: [
+            guard let parsedTriggerJob = WorkflowClient.triggerJob(from: [
                       "id": "pulse", "label": "Pulse briefing run", "cron": "0 5 * * *", "enabled": true,
                       "last_run": ["ts": 1754250000, "ok": true, "detail": "5 cards"],
                       "next_run": "2025-08-04T05:00:00Z"] as [String: Any]),
                   parsedTriggerJob.lastRunOK == true,
                   parsedTriggerJob.nextRun != nil,
-                  PulseWorkflowClient.triggerJob(from: nil) == nil else {
+                  WorkflowClient.triggerJob(from: nil) == nil else {
                 print("SELFTEST ERROR: trigger job parse"); exit(1)
             }
-            let guardStore = PulseWorkflowStore.fixture()
+            let guardStore = WorkflowEditorStore.fixture()
             guardStore.draft = guardStore.active
             guardStore.draft?.definition.edges.removeAll { $0.from == "schedule" }
-            guardStore.spliceNode("schedule", into: PulseWorkflowEdge(from: "triage", to: "gates"))
-            guard guardStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "schedule")) == false,
-                  guardStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "gates")) == true else {
+            guardStore.spliceNode("schedule", into: WorkflowEdge(from: "triage", to: "gates"))
+            guard guardStore.draft?.definition.edges.contains(WorkflowEdge(from: "triage", to: "schedule")) == false,
+                  guardStore.draft?.definition.edges.contains(WorkflowEdge(from: "triage", to: "gates")) == true else {
                 print("SELFTEST ERROR: trigger splice guard"); exit(1)
             }
             guardStore.completeNodeDrag("schedule", by: CGSize(width: 12, height: 0),
-                                        splicing: PulseWorkflowEdge(from: "triage", to: "gates"))
-            guard guardStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "schedule")) == false,
-                  guardStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "schedule", to: "gates")) == false,
-                  guardStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "gates")) == true else {
+                                        splicing: WorkflowEdge(from: "triage", to: "gates"))
+            guard guardStore.draft?.definition.edges.contains(WorkflowEdge(from: "triage", to: "schedule")) == false,
+                  guardStore.draft?.definition.edges.contains(WorkflowEdge(from: "schedule", to: "gates")) == false,
+                  guardStore.draft?.definition.edges.contains(WorkflowEdge(from: "triage", to: "gates")) == true else {
                 print("SELFTEST ERROR: trigger drag splice guard"); exit(1)
             }
             print("  trigger nodes OK (connection + gating + head rule + port exclusion + splice guards + job parse)")
@@ -4155,15 +4157,15 @@ enum SelfTest {
             }
             print("  canvas transform OK (round trip + zoom anchor + clamps + pan)")
 
-            let geometryDefinition = PulseWorkflowDefinition(
+            let geometryDefinition = WorkflowDefinition(
                 id: "geometry",
-                nodes: [PulseWorkflowNode(id: "a", type: "pulse.triage", config: [:]),
-                        PulseWorkflowNode(id: "b", type: "pulse.gates", config: [:]),
-                        PulseWorkflowNode(id: "c", type: "pulse.inject", config: [:])],
-                edges: [PulseWorkflowEdge(from: "a", to: "b"), PulseWorkflowEdge(from: "b", to: "c")],
-                positions: ["a": PulseWorkflowPoint(x: 120, y: 300),
-                            "b": PulseWorkflowPoint(x: 420, y: 300),
-                            "c": PulseWorkflowPoint(x: 720, y: 420)])
+                nodes: [WorkflowNode(id: "a", type: "pulse.triage", config: [:]),
+                        WorkflowNode(id: "b", type: "pulse.gates", config: [:]),
+                        WorkflowNode(id: "c", type: "pulse.inject", config: [:])],
+                edges: [WorkflowEdge(from: "a", to: "b"), WorkflowEdge(from: "b", to: "c")],
+                positions: ["a": WorkflowPoint(x: 120, y: 300),
+                            "b": WorkflowPoint(x: 420, y: 300),
+                            "c": WorkflowPoint(x: 720, y: 420)])
             let half = WorkflowCardGeometry.size.width / 2
             guard WorkflowCardGeometry.outputPort(for: "a", in: geometryDefinition) == CGPoint(x: 120 + half, y: 300),
                   WorkflowCardGeometry.inputPort(for: "b", in: geometryDefinition) == CGPoint(x: 420 - half, y: 300),
@@ -4172,13 +4174,13 @@ enum SelfTest {
                                                 offsets: ["a": CGSize(width: 40, height: -25)]) == CGPoint(x: 160, y: 275) else {
                 print("SELFTEST ERROR: workflow port geometry"); exit(1)
             }
-            guard nearestWorkflowEdge(to: CGPoint(x: 300, y: 300), in: geometryDefinition) == PulseWorkflowEdge(from: "a", to: "b"),
-                  nearestWorkflowEdge(to: CGPoint(x: 570, y: 360), in: geometryDefinition) == PulseWorkflowEdge(from: "b", to: "c"),
+            guard nearestWorkflowEdge(to: CGPoint(x: 300, y: 300), in: geometryDefinition) == WorkflowEdge(from: "a", to: "b"),
+                  nearestWorkflowEdge(to: CGPoint(x: 570, y: 360), in: geometryDefinition) == WorkflowEdge(from: "b", to: "c"),
                   nearestWorkflowEdge(to: CGPoint(x: 300, y: 700), in: geometryDefinition) == nil,
                   nearestWorkflowEdge(to: CGPoint(x: 300, y: 320), in: geometryDefinition, within: 5) == nil else {
                 print("SELFTEST ERROR: workflow splice target selection"); exit(1)
             }
-            guard let geometryMid = workflowWireMidpoint(PulseWorkflowEdge(from: "a", to: "b"), in: geometryDefinition),
+            guard let geometryMid = workflowWireMidpoint(WorkflowEdge(from: "a", to: "b"), in: geometryDefinition),
                   abs(geometryMid.x - 270) < 0.001, abs(geometryMid.y - 300) < 0.001 else {
                 print("SELFTEST ERROR: workflow wire midpoint"); exit(1)
             }
@@ -4200,7 +4202,7 @@ enum SelfTest {
                   abs(fittedCenter.x - fitViewport.width / 2) < 0.001,
                   abs(fittedCenter.y - fitViewport.height / 2) < 0.001,
                   WorkflowCanvasTransform.fitting(.zero, in: fitViewport) == WorkflowCanvasTransform(),
-                  WorkflowCardGeometry.bounds(of: PulseWorkflowDefinition(id: "empty", nodes: [], edges: [], positions: [:])) == nil else {
+                  WorkflowCardGeometry.bounds(of: WorkflowDefinition(id: "empty", nodes: [], edges: [], positions: [:])) == nil else {
                 print("SELFTEST ERROR: fit view transform"); exit(1)
             }
             let wideBounds = CGRect(x: 0, y: 0, width: 40000, height: 200)
@@ -4209,32 +4211,32 @@ enum SelfTest {
             }
             print("  canvas geometry OK (ports + splice targets + midpoint + hit tests + fit)")
 
-            let spliceStore = PulseWorkflowStore.fixture()
+            let spliceStore = WorkflowEditorStore.fixture()
             spliceStore.draft = spliceStore.active
             spliceStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 60, y: 60))
             guard let spliceID = spliceStore.selectedNodeID,
                   spliceStore.draft?.definition.edges.contains(where: { $0.from == spliceID || $0.to == spliceID }) == false else {
                 print("SELFTEST ERROR: splice fixture placement"); exit(1)
             }
-            let targetEdge = PulseWorkflowEdge(from: "triage", to: "gates")
-            spliceStore.spliceNode(spliceID, into: PulseWorkflowEdge(from: "nope", to: "gates"))
+            let targetEdge = WorkflowEdge(from: "triage", to: "gates")
+            spliceStore.spliceNode(spliceID, into: WorkflowEdge(from: "nope", to: "gates"))
             guard spliceStore.draft?.definition.edges.contains(targetEdge) == true else {
                 print("SELFTEST ERROR: splice missing edge guard"); exit(1)
             }
             spliceStore.spliceNode(spliceID, into: targetEdge)
             guard spliceStore.draft?.definition.edges.contains(targetEdge) == false,
-                  spliceStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: spliceID)) == true,
-                  spliceStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: spliceID, to: "gates")) == true else {
+                  spliceStore.draft?.definition.edges.contains(WorkflowEdge(from: "triage", to: spliceID)) == true,
+                  spliceStore.draft?.definition.edges.contains(WorkflowEdge(from: spliceID, to: "gates")) == true else {
                 print("SELFTEST ERROR: splice node into edge"); exit(1)
             }
             let spliceEdgeCount = spliceStore.draft?.definition.edges.count
-            spliceStore.spliceNode(spliceID, into: PulseWorkflowEdge(from: "synthesis", to: "claim_audit"))
+            spliceStore.spliceNode(spliceID, into: WorkflowEdge(from: "synthesis", to: "claim_audit"))
             guard spliceStore.draft?.definition.edges.count == spliceEdgeCount else {
                 print("SELFTEST ERROR: splice connected node guard"); exit(1)
             }
             print("  workflow splice OK (guards + edge replacement)")
 
-            let dragStore = PulseWorkflowStore.fixture()
+            let dragStore = WorkflowEditorStore.fixture()
             dragStore.draft = dragStore.active
             dragStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 60, y: 60))
             guard let dragID = dragStore.selectedNodeID,
@@ -4244,38 +4246,84 @@ enum SelfTest {
             var dragPublishes = 0
             let dragSink = dragStore.$draft.dropFirst().sink { _ in dragPublishes += 1 }
             dragStore.completeNodeDrag(dragID, by: CGSize(width: 40, height: 20),
-                                       splicing: PulseWorkflowEdge(from: "triage", to: "gates"))
+                                       splicing: WorkflowEdge(from: "triage", to: "gates"))
             guard dragPublishes == 1,
-                  dragStore.draft?.definition.positions[dragID] == PulseWorkflowPoint(x: 130, y: 90),
-                  dragStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: dragID)) == true,
-                  dragStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: dragID, to: "gates")) == true,
-                  dragStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "gates")) == false else {
+                  dragStore.draft?.definition.positions[dragID] == WorkflowPoint(x: 130, y: 90),
+                  dragStore.draft?.definition.edges.contains(WorkflowEdge(from: "triage", to: dragID)) == true,
+                  dragStore.draft?.definition.edges.contains(WorkflowEdge(from: dragID, to: "gates")) == true,
+                  dragStore.draft?.definition.edges.contains(WorkflowEdge(from: "triage", to: "gates")) == false else {
                 print("SELFTEST ERROR: single-publish splice drag"); exit(1)
             }
             dragSink.cancel()
-            let edgeStore = PulseWorkflowStore.fixture()
+            let edgeStore = WorkflowEditorStore.fixture()
             edgeStore.draft = edgeStore.active
-            let chosenEdge = PulseWorkflowEdge(from: "synthesis", to: "claim_audit")
+            let chosenEdge = WorkflowEdge(from: "synthesis", to: "claim_audit")
             edgeStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 197, y: 310), into: chosenEdge)
             guard let pickedID = edgeStore.selectedNodeID,
                   edgeStore.draft?.definition.edges.contains(chosenEdge) == false,
-                  edgeStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "synthesis", to: pickedID)) == true,
-                  edgeStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: pickedID, to: "claim_audit")) == true,
-                  edgeStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "gates")) == true else {
+                  edgeStore.draft?.definition.edges.contains(WorkflowEdge(from: "synthesis", to: pickedID)) == true,
+                  edgeStore.draft?.definition.edges.contains(WorkflowEdge(from: pickedID, to: "claim_audit")) == true,
+                  edgeStore.draft?.definition.edges.contains(WorkflowEdge(from: "triage", to: "gates")) == true else {
                 print("SELFTEST ERROR: authoritative insert edge"); exit(1)
             }
-            let fallbackStore = PulseWorkflowStore.fixture()
+            let fallbackStore = WorkflowEditorStore.fixture()
             fallbackStore.draft = fallbackStore.active
             fallbackStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 381, y: 310),
-                                           into: PulseWorkflowEdge(from: "ghost", to: "gates"))
+                                           into: WorkflowEdge(from: "ghost", to: "gates"))
             guard let fallbackID = fallbackStore.selectedNodeID,
-                  fallbackStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: fallbackID)) == true,
-                  fallbackStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: fallbackID, to: "gates")) == true else {
+                  fallbackStore.draft?.definition.edges.contains(WorkflowEdge(from: "triage", to: fallbackID)) == true,
+                  fallbackStore.draft?.definition.edges.contains(WorkflowEdge(from: fallbackID, to: "gates")) == true else {
                 print("SELFTEST ERROR: insert edge fallback"); exit(1)
             }
             print("  canvas insert OK (single publish + authoritative edge + fallback)")
 
-            let runFixtureStore = PulseWorkflowStore.runFixture()
+            guard let lockedCatalog = WorkflowCatalog.lockedFixture(),
+                  lockedCatalog.profile.locked,
+                  lockedCatalog.profile.spine.isEmpty,
+                  lockedCatalog.profile.triggers == ["trigger.schedule"],
+                  WorkflowProfile.parse(["id": "generic"])?.locked == false else {
+                print("SELFTEST ERROR: locked profile parse"); exit(1)
+            }
+            guard WorkflowFlowFace.parse(["label": "Home model", "description": "Refreshes the model."])?.description == "Refreshes the model.",
+                  WorkflowFlowFace.parse(["description": "No label."]) == nil else {
+                print("SELFTEST ERROR: workflow flow face parse"); exit(1)
+            }
+            let lockedStore = WorkflowEditorStore.lockedFixture()
+            guard lockedStore.isLocked,
+                  lockedStore.flowLabel == "Home model",
+                  lockedStore.flowDescription.hasPrefix("Refreshes"),
+                  lockedStore.validationMessage == nil else {
+                print("SELFTEST ERROR: locked store chrome"); exit(1)
+            }
+            lockedStore.draft = lockedStore.active
+            guard lockedStore.isEditing, !lockedStore.allowsStructuralEditing else {
+                print("SELFTEST ERROR: locked editing state"); exit(1)
+            }
+            lockedStore.selectedNodeID = "run"
+            lockedStore.removeSelectedNode()
+            lockedStore.placeNodeInDraft("http_fetch", at: CGPoint(x: 500, y: 300))
+            lockedStore.startConnection(from: "schedule")
+            lockedStore.removeEdge(WorkflowEdge(from: "schedule", to: "run"))
+            guard lockedStore.draft?.definition.nodes.map(\.id) == ["schedule", "run"],
+                  lockedStore.draft?.definition.edges == [WorkflowEdge(from: "schedule", to: "run")],
+                  lockedStore.connectionSourceID == nil else {
+                print("SELFTEST ERROR: locked structural gating"); exit(1)
+            }
+            lockedStore.selectedNodeID = "schedule"
+            lockedStore.setConfigValue("time", .string("06:15"))
+            guard lockedStore.draft?.definition.node(withID: "schedule")?.config["time"] == .string("06:15") else {
+                print("SELFTEST ERROR: locked tunable edit"); exit(1)
+            }
+            let veinStore = WorkflowEditorStore.veinFixture()
+            guard veinStore.isLocked,
+                  veinStore.flowLabel == "Weather",
+                  veinStore.displayed?.definition.nodes.map(\.type) == ["trigger.schedule", "http_fetch", "trip_band"],
+                  veinStore.catalog?.label(for: "trip_band") == "Trip band" else {
+                print("SELFTEST ERROR: vein fixture projection"); exit(1)
+            }
+            print("  locked workflows OK (profile flag, chrome, structural gating, tunable edit, vein fixture)")
+
+            let runFixtureStore = WorkflowEditorStore.runFixture()
             guard runFixtureStore.mode == .run,
                   let fixtureRun = runFixtureStore.latestRun,
                   fixtureRun.state == "ok",
@@ -4305,22 +4353,22 @@ enum SelfTest {
              "nodes":[{"id":"experiment","state":"ok","output":{"items":2},"started_at":1754250001,"finished_at":1754250002}]}
             """
             guard let pinnedObject = try? JSONSerialization.jsonObject(with: Data(pinnedRunJSON.utf8)),
-                  let pinnedRun = PulseWorkflowRun.parse(pinnedObject),
+                  let pinnedRun = WorkflowRun.parse(pinnedObject),
                   pinnedRun.version?.definition.node(withID: "experiment") != nil,
                   pinnedRun.nodeRun("experiment")?.countsLine == "2 items" else {
                 print("SELFTEST ERROR: workflow run pinned version"); exit(1)
             }
-            guard PulseWorkflowRun.classify(nil) == (nil, false),
-                  PulseWorkflowRun.classify(NSNull()) == (nil, false),
-                  PulseWorkflowRun.classify(["id": "broken"]) == (nil, true),
-                  PulseWorkflowRun.classify(pinnedObject).unreadable == false else {
+            guard WorkflowRun.classify(nil) == (nil, false),
+                  WorkflowRun.classify(NSNull()) == (nil, false),
+                  WorkflowRun.classify(["id": "broken"]) == (nil, true),
+                  WorkflowRun.classify(pinnedObject).unreadable == false else {
                 print("SELFTEST ERROR: workflow run classification"); exit(1)
             }
-            let brokenVersion = PulseWorkflowRun.classify(["id": "r3", "state": "ok", "started_at": 1754250000,
+            let brokenVersion = WorkflowRun.classify(["id": "r3", "state": "ok", "started_at": 1754250000,
                                                           "version": ["broken": true]])
-            let nullVersion = PulseWorkflowRun.classify(["id": "r4", "state": "ok", "started_at": 1754250000,
+            let nullVersion = WorkflowRun.classify(["id": "r4", "state": "ok", "started_at": 1754250000,
                                                         "version": NSNull()])
-            let absentVersion = PulseWorkflowRun.classify(["id": "r5", "state": "ok", "started_at": 1754250000])
+            let absentVersion = WorkflowRun.classify(["id": "r5", "state": "ok", "started_at": 1754250000])
             guard brokenVersion == (nil, true),
                   nullVersion == (nil, true),
                   absentVersion.unreadable == false,
@@ -4336,15 +4384,15 @@ enum SelfTest {
                   evidence[0].verdictLine == "Accepted \u{b7} score 0.94" else {
                 print("SELFTEST ERROR: workflow run evidence"); exit(1)
             }
-            guard PulseWorkflowRun.parse(["id": "x", "state": "ok"]) == nil,
-                  PulseWorkflowRun.parse(NSNull()) == nil,
-                  let bareRun = PulseWorkflowRun.parse(["id": "x", "state": "running", "started_at": 1754250000]),
+            guard WorkflowRun.parse(["id": "x", "state": "ok"]) == nil,
+                  WorkflowRun.parse(NSNull()) == nil,
+                  let bareRun = WorkflowRun.parse(["id": "x", "state": "running", "started_at": 1754250000]),
                   bareRun.nodes.isEmpty, bareRun.cardEvidence.isEmpty, bareRun.finishedAt == nil,
                   bareRun.version == nil,
-                  PulseWorkflowNodeRun.parse(["id": "n"]) == nil,
-                  let openNode = PulseWorkflowNodeRun.parse(["id": "n", "state": "running", "started_at": 1754250000]),
+                  WorkflowNodeRun.parse(["id": "n"]) == nil,
+                  let openNode = WorkflowNodeRun.parse(["id": "n", "state": "running", "started_at": 1754250000]),
                   openNode.duration == nil, openNode.countsLine == nil,
-                  let legacyNode = PulseWorkflowNodeRun.parse(["id": "n", "state": "warning",
+                  let legacyNode = WorkflowNodeRun.parse(["id": "n", "state": "warning",
                                                               "output": ["review": ["accept": true], "rounds": 1]]),
                   legacyNode.output.keys.sorted() == ["rounds"], legacyNode.countsLine == "1 rounds" else {
                 print("SELFTEST ERROR: workflow run strictness"); exit(1)
@@ -4352,7 +4400,7 @@ enum SelfTest {
             guard runDurationText(0.4) == "under 1s", runDurationText(75) == "75s", runDurationText(212) == "3m 32s" else {
                 print("SELFTEST ERROR: run duration format"); exit(1)
             }
-            let emptyRunStore = PulseWorkflowStore.fixture()
+            let emptyRunStore = WorkflowEditorStore.fixture()
             emptyRunStore.mode = .run
             guard emptyRunStore.latestRun == nil else {
                 print("SELFTEST ERROR: run empty state"); exit(1)

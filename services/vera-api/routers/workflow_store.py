@@ -7,6 +7,7 @@ import uuid
 
 import data_root
 
+from . import workflow_projection
 from . import workflow_registry
 from . import workflow_triggers
 
@@ -18,7 +19,7 @@ TRIGGER_MIN_X = 60
 
 
 def _job_cron(workflow_id: str) -> str | None:
-    job_id = workflow_triggers.JOB_FOR_WORKFLOW.get(workflow_id)
+    job_id = workflow_triggers.job_for(workflow_id)
     if not job_id:
         return None
     try:
@@ -36,7 +37,7 @@ def _trigger_node_id(definition: dict) -> str | None:
 
 
 def _with_trigger(definition: dict, workflow_id: str, cron: str | None) -> tuple[dict, bool]:
-    if workflow_id not in workflow_triggers.JOB_FOR_WORKFLOW or _trigger_node_id(definition):
+    if workflow_triggers.job_for(workflow_id) is None or _trigger_node_id(definition):
         return definition, False
     nodes = list(definition.get("nodes") or [])
     edges = list(definition.get("edges") or [])
@@ -68,7 +69,7 @@ def _with_trigger(definition: dict, workflow_id: str, cron: str | None) -> tuple
 
 def _sync_trigger_config(definition: dict, workflow_id: str) -> dict:
     node_id = _trigger_node_id(definition)
-    if not node_id or workflow_id not in workflow_triggers.JOB_FOR_WORKFLOW:
+    if not node_id or workflow_triggers.job_for(workflow_id) is None:
         return definition
     live = workflow_triggers.config_for(_job_cron(workflow_id))
     if live is None:
@@ -92,12 +93,12 @@ def _pulse_definition() -> dict:
         "layout": "pipeline",
         "nodes": [
             {"id": "schedule", "type": "trigger.schedule", "config": {"mode": "daily", "time": "05:00"}},
-            {"id": "triage", "type": "pulse.triage", "label": "Triage", "icon": "globe", "tint": "accent"},
-            {"id": "gates", "type": "pulse.gates", "label": "Gates", "icon": "line.3.horizontal.decrease.circle", "tint": "orange"},
-            {"id": "synthesis", "type": "pulse.synthesis", "label": "Synthesis", "icon": "sparkles", "tint": "purple"},
-            {"id": "claim_audit", "type": "pulse.claim_audit", "label": "Claim audit", "icon": "checkmark.shield", "tint": "cyan"},
-            {"id": "cover_art", "type": "pulse.cover_art", "label": "Cover art", "icon": "photo", "tint": "purple", "config": {"style": "rotating"}},
-            {"id": "inject", "type": "pulse.inject", "label": "Inject", "icon": "arrow.down.to.line", "tint": "green"},
+            {"id": "triage", "type": "pulse.triage", "label": "Gather candidates", "icon": "globe", "tint": "accent"},
+            {"id": "gates", "type": "pulse.gates", "label": "Filter by interest", "icon": "line.3.horizontal.decrease.circle", "tint": "orange"},
+            {"id": "synthesis", "type": "pulse.synthesis", "label": "Write cards", "icon": "sparkles", "tint": "purple"},
+            {"id": "claim_audit", "type": "pulse.claim_audit", "label": "Check the facts", "icon": "checkmark.shield", "tint": "cyan"},
+            {"id": "cover_art", "type": "pulse.cover_art", "label": "Generate covers", "icon": "photo", "tint": "purple", "config": {"style": "rotating"}},
+            {"id": "inject", "type": "pulse.inject", "label": "Publish to feed", "icon": "arrow.down.to.line", "tint": "green"},
         ],
         "edges": [
             {"from": "schedule", "to": "triage"},
@@ -147,7 +148,7 @@ def init():
             complete = True
             for version_row in conn.execute("SELECT id, workflow_id, definition FROM workflow_versions WHERE state IN ('active','draft')").fetchall():
                 workflow_id = version_row["workflow_id"]
-                if workflow_id not in workflow_triggers.JOB_FOR_WORKFLOW:
+                if workflow_triggers.job_for(workflow_id) is None:
                     continue
                 if workflow_id not in crons:
                     crons[workflow_id] = _job_cron(workflow_id)
@@ -174,11 +175,37 @@ def _version(row: sqlite3.Row) -> dict:
             "definition": json.loads(row["definition"]), "created_at": row["created_at"], "promoted_at": row["promoted_at"]}
 
 
+def _overlay_projection(definition: dict, workflow_id: str) -> dict:
+    if not workflow_registry.profile_for(workflow_id).get("locked"):
+        return definition
+    projection = workflow_projection.definition_for(workflow_id)
+    if projection is None:
+        return definition
+    stored = {node["id"]: node for node in definition.get("nodes") or []}
+    nodes = []
+    for node in projection["nodes"]:
+        match = stored.get(node["id"])
+        if match and match.get("type") == node["type"] and isinstance(match.get("config"), dict):
+            node = {**node, "config": match["config"]}
+        nodes.append(node)
+    out = {**projection, "nodes": nodes}
+    positions = definition.get("positions")
+    if isinstance(positions, dict):
+        out["positions"] = positions
+    return out
+
+
 def active(workflow_id: str) -> dict:
     row = _version_row(workflow_id)
     if not row:
-        raise KeyError(workflow_id)
+        projection = workflow_projection.definition_for(workflow_id)
+        if projection is None:
+            raise KeyError(workflow_id)
+        return {"id": f"projected-{workflow_id}", "workflow_id": workflow_id, "version": 0,
+                "state": "active", "definition": _sync_trigger_config(projection, workflow_id),
+                "created_at": None, "promoted_at": None}
     version = _version(row)
+    version["definition"] = _overlay_projection(version["definition"], workflow_id)
     version["definition"] = _sync_trigger_config(version["definition"], workflow_id)
     return version
 
@@ -257,7 +284,7 @@ def _trigger_config(definition: dict) -> dict | None:
 
 
 def _trigger_schedule_plan(workflow_id: str, definition: dict) -> tuple[str, str] | None:
-    job_id = workflow_triggers.JOB_FOR_WORKFLOW.get(workflow_id)
+    job_id = workflow_triggers.job_for(workflow_id)
     config = _trigger_config(definition)
     if not job_id or config is None:
         return None
@@ -267,8 +294,10 @@ def _trigger_schedule_plan(workflow_id: str, definition: dict) -> tuple[str, str
     if cron == live:
         return None
     if live is not None and workflow_triggers.config_for(live) is None:
-        row = _version_row(workflow_id)
-        stored = _trigger_config(_version(row)["definition"]) if row else None
+        try:
+            stored = _trigger_config(active(workflow_id)["definition"])
+        except KeyError:
+            stored = None
         if config == stored:
             return None
     scheduler.ensure_job_cron_allowed(job_id, cron)

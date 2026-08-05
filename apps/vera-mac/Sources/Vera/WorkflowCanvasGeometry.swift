@@ -53,7 +53,7 @@ enum WorkflowCardGeometry {
     static let spliceRange: CGFloat = 46
     static let wireHoverRange: CGFloat = 14
 
-    static func bounds(of definition: PulseWorkflowDefinition) -> CGRect? {
+    static func bounds(of definition: WorkflowDefinition) -> CGRect? {
         let rects = definition.nodes.compactMap { node in
             definition.positions[node.id].map { point in
                 CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
@@ -72,24 +72,24 @@ enum WorkflowCardGeometry {
         CGPoint(x: center.x + size.width / 2, y: center.y)
     }
 
-    static func inputPort(for id: String, in definition: PulseWorkflowDefinition,
+    static func inputPort(for id: String, in definition: WorkflowDefinition,
                           offsets: [String: CGSize] = [:]) -> CGPoint? {
         position(of: id, in: definition, offsets: offsets).map(inputPort)
     }
 
-    static func outputPort(for id: String, in definition: PulseWorkflowDefinition,
+    static func outputPort(for id: String, in definition: WorkflowDefinition,
                            offsets: [String: CGSize] = [:]) -> CGPoint? {
         position(of: id, in: definition, offsets: offsets).map(outputPort)
     }
 
-    static func position(of id: String, in definition: PulseWorkflowDefinition,
+    static func position(of id: String, in definition: WorkflowDefinition,
                          offsets: [String: CGSize] = [:]) -> CGPoint? {
         guard let point = definition.positions[id] else { return nil }
         let shift = offsets[id] ?? .zero
         return CGPoint(x: point.x + shift.width, y: point.y + shift.height)
     }
 
-    static func nearestInputPort(to point: CGPoint, in definition: PulseWorkflowDefinition,
+    static func nearestInputPort(to point: CGPoint, in definition: WorkflowDefinition,
                                  excluding sourceID: String,
                                  within radius: CGFloat = portHitRadius,
                                  blocked: Set<String> = []) -> String? {
@@ -105,9 +105,9 @@ enum WorkflowCardGeometry {
     }
 }
 
-func nearestWorkflowEdge(to point: CGPoint, in definition: PulseWorkflowDefinition,
-                         within range: CGFloat = WorkflowCardGeometry.spliceRange) -> PulseWorkflowEdge? {
-    var best: (edge: PulseWorkflowEdge, distance: CGFloat)?
+func nearestWorkflowEdge(to point: CGPoint, in definition: WorkflowDefinition,
+                         within range: CGFloat = WorkflowCardGeometry.spliceRange) -> WorkflowEdge? {
+    var best: (edge: WorkflowEdge, distance: CGFloat)?
     for edge in definition.edges {
         guard let start = WorkflowCardGeometry.outputPort(for: edge.from, in: definition),
               let end = WorkflowCardGeometry.inputPort(for: edge.to, in: definition) else { continue }
@@ -133,7 +133,7 @@ func workflowWirePoint(_ start: CGPoint, _ end: CGPoint, t: CGFloat) -> CGPoint 
     edgePoint(start, end, t: t)
 }
 
-func workflowWireMidpoint(_ edge: PulseWorkflowEdge, in definition: PulseWorkflowDefinition) -> CGPoint? {
+func workflowWireMidpoint(_ edge: WorkflowEdge, in definition: WorkflowDefinition) -> CGPoint? {
     guard let start = WorkflowCardGeometry.outputPort(for: edge.from, in: definition),
           let end = WorkflowCardGeometry.inputPort(for: edge.to, in: definition) else { return nil }
     return workflowWirePoint(start, end, t: 0.5)

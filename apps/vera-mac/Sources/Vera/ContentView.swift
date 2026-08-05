@@ -12,7 +12,7 @@ struct ContentView: View {
     @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
     @State private var search = ""
-    @StateObject private var pulseWorkflow = PulseWorkflowStore()
+    @StateObject private var workflowEditor = WorkflowEditorStore()
 
     /// The toolbar modality picker's view of `store.section`: any non-agentic surface reads
     /// as Chat; picking a mode routes to that mode's home surface.
@@ -24,7 +24,7 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             NavigationSplitView {
-                Sidebar(search: $search, pulseWorkflow: pulseWorkflow)
+                Sidebar(search: $search, workflowEditor: workflowEditor)
                     .navigationSplitViewColumnWidth(min: 210, ideal: 248, max: 320)
             } detail: {
                 HStack(spacing: 0) {
@@ -34,7 +34,7 @@ struct ContentView: View {
                         case .pulse: PulseView()
                         case .memory: MemoryView()
                         case .knowledge: KnowledgeView()
-                        case .agentic: AgenticView(pulseWorkflow: pulseWorkflow)
+                        case .agentic: AgenticView(workflowEditor: workflowEditor)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -84,7 +84,7 @@ struct Placeholder: View {
 private struct Sidebar: View {
     @EnvironmentObject var store: ChatStore
     @Binding var search: String
-    @ObservedObject var pulseWorkflow: PulseWorkflowStore
+    @ObservedObject var workflowEditor: WorkflowEditorStore
 
     private var agenticTab: Bool { store.section == .agentic }
 
@@ -115,8 +115,8 @@ private struct Sidebar: View {
 
     var body: some View {
         Group {
-            if agenticTab, store.agenticFlowID == "pulse" {
-                PulseWorkflowPalette(store: pulseWorkflow, searchText: $search) {
+            if agenticTab, store.agenticFlowID != nil {
+                WorkflowPalette(store: workflowEditor, searchText: $search) {
                     store.agenticFlowID = nil
                 }
             } else {

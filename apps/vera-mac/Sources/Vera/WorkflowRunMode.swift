@@ -32,7 +32,7 @@ func runDurationText(_ interval: TimeInterval) -> String {
     return "\(seconds / 60)m \(seconds % 60)s"
 }
 
-struct PulseWorkflowNodeRun: Hashable {
+struct WorkflowNodeRun: Hashable {
     var nodeID: String
     var state: String
     var input: [String: WorkflowConfigValue]
@@ -64,7 +64,7 @@ struct PulseWorkflowNodeRun: Hashable {
         return "\(lead.1) \(lead.0.replacingOccurrences(of: "_", with: " "))"
     }
 
-    static func parse(_ raw: Any) -> PulseWorkflowNodeRun? {
+    static func parse(_ raw: Any) -> WorkflowNodeRun? {
         guard let object = raw as? [String: Any],
               let id = object["id"] as? String,
               let state = object["state"] as? String else { return nil }
@@ -73,7 +73,7 @@ struct PulseWorkflowNodeRun: Hashable {
                 .filter { $0.value is NSNumber || $0.value is String }
                 .mapValues(WorkflowConfigValue.parse)
         }
-        return PulseWorkflowNodeRun(nodeID: id, state: state,
+        return WorkflowNodeRun(nodeID: id, state: state,
                                     input: summary(object["input"]),
                                     output: summary(object["output"]),
                                     error: object["error"] as? String,
@@ -82,7 +82,7 @@ struct PulseWorkflowNodeRun: Hashable {
     }
 }
 
-struct PulseWorkflowVisualRun: Hashable {
+struct WorkflowVisualRun: Hashable {
     var cardID: String
     var imageURL: String?
     var accept: Bool?
@@ -108,12 +108,12 @@ struct PulseWorkflowVisualRun: Hashable {
         }
     }
 
-    static func parse(_ raw: Any) -> PulseWorkflowVisualRun? {
+    static func parse(_ raw: Any) -> WorkflowVisualRun? {
         guard let object = raw as? [String: Any],
               let cardID = object["card_id"] as? String,
               let state = object["state"] as? String else { return nil }
         let review = object["review"] as? [String: Any] ?? [:]
-        return PulseWorkflowVisualRun(cardID: cardID,
+        return WorkflowVisualRun(cardID: cardID,
                                       imageURL: object["image_url"] as? String,
                                       accept: review["accept"] as? Bool,
                                       score: (review["score"] as? NSNumber)?.doubleValue,
@@ -123,22 +123,22 @@ struct PulseWorkflowVisualRun: Hashable {
     }
 }
 
-struct PulseWorkflowRun: Hashable {
+struct WorkflowRun: Hashable {
     var id: String
     var state: String
     var startedAt: Date
     var finishedAt: Date?
     var error: String?
-    var version: PulseWorkflowVersion?
-    var nodes: [PulseWorkflowNodeRun]
-    var visualRuns: [PulseWorkflowVisualRun]
+    var version: WorkflowVersion?
+    var nodes: [WorkflowNodeRun]
+    var visualRuns: [WorkflowVisualRun]
 
-    func nodeRun(_ nodeID: String) -> PulseWorkflowNodeRun? {
+    func nodeRun(_ nodeID: String) -> WorkflowNodeRun? {
         nodes.last { $0.nodeID == nodeID }
     }
 
-    var cardEvidence: [PulseWorkflowVisualRun] {
-        var latest: [String: PulseWorkflowVisualRun] = [:]
+    var cardEvidence: [WorkflowVisualRun] {
+        var latest: [String: WorkflowVisualRun] = [:]
         var order: [String] = []
         for record in visualRuns {
             if latest[record.cardID] == nil { order.append(record.cardID) }
@@ -147,26 +147,26 @@ struct PulseWorkflowRun: Hashable {
         return order.compactMap { latest[$0] }
     }
 
-    static func parse(_ raw: Any) -> PulseWorkflowRun? {
+    static func parse(_ raw: Any) -> WorkflowRun? {
         guard let object = raw as? [String: Any],
               let id = object["id"] as? String,
               let state = object["state"] as? String,
               let startedAt = workflowEpoch(object["started_at"]) else { return nil }
-        var version: PulseWorkflowVersion?
+        var version: WorkflowVersion?
         if let versionRaw = object["version"] {
-            guard let parsed = PulseWorkflowVersion.parse(versionRaw) else { return nil }
+            guard let parsed = WorkflowVersion.parse(versionRaw) else { return nil }
             version = parsed
         }
-        let nodes = (object["nodes"] as? [Any] ?? []).compactMap(PulseWorkflowNodeRun.parse)
-        let visual = (object["visual_runs"] as? [Any] ?? []).compactMap(PulseWorkflowVisualRun.parse)
-        return PulseWorkflowRun(id: id, state: state, startedAt: startedAt,
+        let nodes = (object["nodes"] as? [Any] ?? []).compactMap(WorkflowNodeRun.parse)
+        let visual = (object["visual_runs"] as? [Any] ?? []).compactMap(WorkflowVisualRun.parse)
+        return WorkflowRun(id: id, state: state, startedAt: startedAt,
                                 finishedAt: workflowEpoch(object["finished_at"]),
                                 error: object["error"] as? String,
                                 version: version,
                                 nodes: nodes, visualRuns: visual)
     }
 
-    static func classify(_ raw: Any?) -> (run: PulseWorkflowRun?, unreadable: Bool) {
+    static func classify(_ raw: Any?) -> (run: WorkflowRun?, unreadable: Bool) {
         guard let raw, !(raw is NSNull) else { return (nil, false) }
         guard let run = parse(raw) else { return (nil, true) }
         return (run, false)
@@ -174,9 +174,9 @@ struct PulseWorkflowRun: Hashable {
 }
 
 struct WorkflowRunNodeCard: View {
-    let node: PulseWorkflowNode
+    let node: WorkflowNode
     var spec: WorkflowCatalogNode?
-    var run: PulseWorkflowNodeRun?
+    var run: WorkflowNodeRun?
     var selected: Bool
     var hasInput: Bool = true
     var triggerJob: SchedulerJob?
@@ -243,7 +243,7 @@ struct WorkflowRunNodeCard: View {
 }
 
 struct WorkflowRunInspector: View {
-    @ObservedObject var store: PulseWorkflowStore
+    @ObservedObject var store: WorkflowEditorStore
     var snapshot = false
 
     var body: some View {
@@ -281,7 +281,7 @@ struct WorkflowRunInspector: View {
         .frame(width: 286).frame(maxHeight: .infinity, alignment: .topLeading).background(Theme.bg)
     }
 
-    private func content(_ selected: PulseWorkflowNode, spec: WorkflowCatalogNode?) -> some View {
+    private func content(_ selected: WorkflowNode, spec: WorkflowCatalogNode?) -> some View {
         let run = store.latestRun?.nodeRun(selected.id)
         let isTrigger = spec?.category == "trigger"
         return VStack(alignment: .leading, spacing: 16) {
@@ -361,7 +361,7 @@ struct WorkflowRunInspector: View {
         }
     }
 
-    private func evidenceRow(_ record: PulseWorkflowVisualRun) -> some View {
+    private func evidenceRow(_ record: WorkflowVisualRun) -> some View {
         HStack(alignment: .top, spacing: 9) {
             evidenceThumb(record)
             VStack(alignment: .leading, spacing: 3) {
@@ -381,7 +381,7 @@ struct WorkflowRunInspector: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    @ViewBuilder private func evidenceThumb(_ record: PulseWorkflowVisualRun) -> some View {
+    @ViewBuilder private func evidenceThumb(_ record: WorkflowVisualRun) -> some View {
         let placeholder = RoundedRectangle(cornerRadius: 7).fill(Theme.surface)
             .overlay(Image(systemName: "photo").font(.system(size: 12)).foregroundStyle(Theme.textSecondary))
         if !snapshot, let url = record.imageURL.flatMap(URL.init(string:)) {
@@ -414,7 +414,7 @@ struct WorkflowRunInspector: View {
 struct WorkflowRunEmptyState: View {
     var icon = "clock.arrow.circlepath"
     var title = "No recorded runs"
-    var note = "The next Pulse run will appear here, node by node."
+    var note = "This workflow's next run will appear here, node by node."
 
     var body: some View {
         ZStack {
@@ -437,8 +437,8 @@ struct WorkflowRunEmptyState: View {
     }
 }
 
-extension PulseWorkflowStore {
-    static func runFixture() -> PulseWorkflowStore {
+extension WorkflowEditorStore {
+    static func runFixture() -> WorkflowEditorStore {
         let store = fixture()
         store.mode = .run
         let json = """
@@ -480,7 +480,7 @@ extension PulseWorkflowStore {
          ]}
         """
         if let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) {
-            store.latestRun = PulseWorkflowRun.parse(object)
+            store.latestRun = WorkflowRun.parse(object)
         }
         store.triggerJob = SchedulerJob(id: "pulse", label: "Pulse briefing run", cron: "0 5 * * *",
                                         enabled: true, envLocked: false, gated: nil,
@@ -492,8 +492,8 @@ extension PulseWorkflowStore {
     }
 }
 
-struct PulseWorkflowRunShot: View {
-    @StateObject private var store = PulseWorkflowStore.runFixture()
+struct WorkflowRunShot: View {
+    @StateObject private var store = WorkflowEditorStore.runFixture()
     @State private var searchText = ""
 
     var body: some View {
@@ -505,11 +505,11 @@ struct PulseWorkflowRunShot: View {
                     Spacer()
                 }
                 .padding(.horizontal, 14).frame(height: 42)
-                PulseWorkflowPalette(store: store, searchText: $searchText, snapshot: true)
+                WorkflowPalette(store: store, searchText: $searchText, snapshot: true)
             }
             .frame(width: 248).background(Theme.sidebar)
             Divider().overlay(Theme.hairline)
-            PulseWorkflowEditor(store: store, snapshot: true)
+            WorkflowEditor(store: store, snapshot: true)
         }
     }
 }

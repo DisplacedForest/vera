@@ -185,6 +185,7 @@ struct WorkflowProfile: Hashable {
     let insertableCategories: [String]
     let pairs: [WorkflowProfilePair]
     let triggers: [String]
+    let locked: Bool
 
     var pairTypes: [String] { pairs.flatMap(\.types) }
 
@@ -211,7 +212,7 @@ struct WorkflowProfile: Hashable {
             }
         }
         return WorkflowProfile(id: id, spine: spine, insertableCategories: categories, pairs: pairs,
-                               triggers: triggers)
+                               triggers: triggers, locked: object["locked"] as? Bool ?? false)
     }
 
     private static func stringList(_ raw: Any?) -> [String]? {
@@ -257,7 +258,7 @@ struct WorkflowCatalog: Hashable {
         node(for: type)?.category == "trigger"
     }
 
-    func triggerIDs(in definition: PulseWorkflowDefinition) -> Set<String> {
+    func triggerIDs(in definition: WorkflowDefinition) -> Set<String> {
         Set(definition.nodes.filter { isTriggerType($0.type) }.map(\.id))
     }
 

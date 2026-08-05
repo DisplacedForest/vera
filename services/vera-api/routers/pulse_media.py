@@ -5,6 +5,8 @@ import re
 import sqlite3
 import uuid
 
+from urllib.parse import urlsplit
+
 import aiohttp
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
@@ -37,8 +39,12 @@ def sniff_mime(data: bytes) -> str | None:
     return None
 
 
-def save_image(data: bytes, mime: str = "image/png") -> str | None:
-    name = f"{uuid.uuid4().hex}.{_EXT.get(mime, 'png')}"
+def save_image(data: bytes) -> str | None:
+    mime = sniff_mime(data)
+    if not mime:
+        log.error("pulse media save rejected a non-image payload (%d bytes)", len(data))
+        return None
+    name = f"{uuid.uuid4().hex}.{_EXT[mime]}"
     try:
         d = media_dir()
         os.makedirs(d, exist_ok=True)
@@ -83,13 +89,27 @@ def _absolute(url) -> bool:
     return isinstance(url, str) and url.startswith(("http://", "https://"))
 
 
+def _origin(url: str) -> tuple | None:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    port = parts.port or {"http": 80, "https": 443}[parts.scheme]
+    return parts.scheme, parts.hostname, port
+
+
 def _token_for(url: str, body: MigrateBody) -> str | None:
-    if body.token and body.source_base and url.startswith(body.source_base):
-        return body.token
-    return None
+    if not (body.token and body.source_base):
+        return None
+    want, got = _origin(body.source_base), _origin(url)
+    if not want or not got or want != got:
+        return None
+    return body.token
 
 
-async def _fetch(url: str, token: str | None) -> tuple[bytes, str] | None:
+async def _fetch(url: str, token: str | None) -> bytes | None:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with aiohttp.ClientSession() as s:
@@ -100,17 +120,14 @@ async def _fetch(url: str, token: str | None) -> tuple[bytes, str] | None:
                 data = await r.read()
     except Exception:
         return None
-    mime = sniff_mime(data) if data else None
-    if not mime:
-        return None
-    return data, mime
+    return data if data and sniff_mime(data) else None
 
 
 async def _rehome(url: str, token: str | None) -> tuple[str, str | None]:
-    got = await _fetch(url, token)
-    if not got:
+    data = await _fetch(url, token)
+    if not data:
         return "missing", None
-    ref = save_image(got[0], got[1])
+    ref = save_image(data)
     if not ref:
         return "error", None
     return "rehomed", ref

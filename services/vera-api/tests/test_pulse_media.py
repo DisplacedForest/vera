@@ -29,9 +29,12 @@ def test_save_and_serve_round_trip(tmp_path):
         assert f.read() == PNG
 
 
-def test_save_derives_extension_from_mime():
-    ref = pulse_media.save_image(JPG, "image/jpeg")
-    assert ref.endswith(".jpg")
+def test_save_derives_extension_from_magic_bytes():
+    assert pulse_media.save_image(JPG).endswith(".jpg")
+
+
+def test_save_rejects_non_image_payloads():
+    assert pulse_media.save_image(b"<html><body>error page</body></html>" * 100) is None
 
 
 def test_save_failure_is_explicit(monkeypatch):
@@ -58,9 +61,7 @@ def _insert(cid, image_url=None, inline=None, **extra):
 
 def _fake_fetch(reachable):
     async def fetch(url, token):
-        if url in reachable:
-            return reachable[url], "image/png"
-        return None
+        return reachable.get(url)
     return fetch
 
 
@@ -137,15 +138,27 @@ def test_migration_scopes_token_to_source_base(monkeypatch):
 
     async def fetch(url, token):
         seen[url] = token
-        return PNG, "image/png"
+        return PNG
 
     _insert("c1", image_url="http://legacy.example/x",
-            inline=[{"n": 1, "url": "http://thirdparty.example/y", "caption": "", "sourceN": 0}])
+            inline=[{"n": 1, "url": "http://thirdparty.example/y", "caption": "", "sourceN": 0},
+                    {"n": 2, "url": "http://legacy.example.attacker.test/z", "caption": "", "sourceN": 0}])
     monkeypatch.setattr(pulse_media, "_fetch", fetch)
     asyncio.run(pulse_media.migrate(pulse_media.MigrateBody(
         token="sekret", source_base="http://legacy.example")))
     assert seen["http://legacy.example/x"] == "sekret"
     assert seen["http://thirdparty.example/y"] is None
+    assert seen["http://legacy.example.attacker.test/z"] is None
+
+
+def test_token_scoping_compares_parsed_origins():
+    body = pulse_media.MigrateBody(token="t", source_base="https://legacy.example")
+    assert pulse_media._token_for("https://legacy.example/a/b", body) == "t"
+    assert pulse_media._token_for("https://legacy.example:443/a", body) == "t"
+    assert pulse_media._token_for("https://legacy.example.attacker.test/a", body) is None
+    assert pulse_media._token_for("http://legacy.example/a", body) is None
+    assert pulse_media._token_for("https://legacy.example:8443/a", body) is None
+    assert pulse_media._token_for("not a url", body) is None
 
 
 def test_migration_without_source_base_never_sends_token(monkeypatch):
@@ -153,7 +166,7 @@ def test_migration_without_source_base_never_sends_token(monkeypatch):
 
     async def fetch(url, token):
         seen["token"] = token
-        return PNG, "image/png"
+        return PNG
 
     _insert("c1", image_url="http://legacy.example/x")
     monkeypatch.setattr(pulse_media, "_fetch", fetch)
@@ -165,7 +178,7 @@ def test_migration_save_failure_preserves_the_original_url(monkeypatch):
     good = "http://legacy.example/api/v1/files/aa/content"
     _insert("c1", image_url=good)
     monkeypatch.setattr(pulse_media, "_fetch", _fake_fetch({good: PNG}))
-    monkeypatch.setattr(pulse_media, "save_image", lambda data, mime="image/png": None)
+    monkeypatch.setattr(pulse_media, "save_image", lambda data: None)
     out = asyncio.run(pulse_media.migrate(pulse_media.MigrateBody()))
     assert out["errors"] == 1
     assert out["cards_rewritten"] == 0 and out["images_missing"] == 0

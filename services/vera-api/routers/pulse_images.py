@@ -164,39 +164,24 @@ _OG_PATTERNS = [
 ]
 
 
-def _img_kind(b):
-    """Sniff image type from magic bytes → (ext, mime). Defaults to png."""
-    if b[:3] == b"\xff\xd8\xff":
-        return "jpg", "image/jpeg"
-    if b[:8] == b"\x89PNG\r\n\x1a\n":
-        return "png", "image/png"
-    if b[:6] in (b"GIF87a", b"GIF89a"):
-        return "gif", "image/gif"
-    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
-        return "webp", "image/webp"
-    return "png", "image/png"
-
-
 def _clean_caption(s):
     return re.sub(r"\s+", " ", (s or "").replace("|", " ")).strip()[:120]
 
 
 async def _download(url):
-    """Fetch an image URL → (bytes, mime) or (None, None)."""
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(
                 url, headers={"User-Agent": _UA}, timeout=aiohttp.ClientTimeout(total=25)
             ) as r:
                 if r.status != 200:
-                    return None, None
+                    return None
                 data = await r.read()
         if len(data) < 2048:  # skip 1x1 trackers / broken thumbs
-            return None, None
-        ext, mime = _img_kind(data)
-        return data, mime
+            return None
+        return data
     except Exception:
-        return None, None
+        return None
 
 
 async def _fetch_og_image(page_url):
@@ -238,10 +223,10 @@ async def _gather_images(idx, entity_query, top_sources):
             break
         if not h.img_src or h.img_src in seen:
             continue
-        data, mime = await _download(h.img_src)
+        data = await _download(h.img_src)
         if not data:
             continue
-        url = save_image(data, mime)
+        url = save_image(data)
         if url:
             images.append({"url": url, "caption": _clean_caption(h.title), "srcN": 0})
             seen.add(h.img_src)
@@ -252,10 +237,10 @@ async def _gather_images(idx, entity_query, top_sources):
         og = await _fetch_og_image(src_url)
         if not og or og in seen:
             continue
-        data, mime = await _download(og)
+        data = await _download(og)
         if not data:
             continue
-        url = save_image(data, mime)
+        url = save_image(data)
         if url:
             images.append({"url": url, "caption": _clean_caption(title), "srcN": n})
             seen.add(og)

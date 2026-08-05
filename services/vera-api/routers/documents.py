@@ -75,8 +75,32 @@ async def delete_collection(cid: str):
     return {"ok": True}
 
 
+async def _read_capped(upload: UploadFile, limit: int) -> bytes:
+    parts = []
+    total = 0
+    while True:
+        piece = await upload.read(1 << 20)
+        if not piece:
+            break
+        total += len(piece)
+        if total > limit:
+            raise HTTPException(
+                status_code=507,
+                detail=f"storage cap exceeded: the upload passes the remaining "
+                       f"{limit} byte budget (DOCUMENTS_MAX_BYTES)")
+        parts.append(piece)
+    return b"".join(parts)
+
+
 async def _ingest(cid: str, upload: UploadFile, replace_fid: str | None = None) -> dict:
-    data = await upload.read()
+    freed = 0
+    if replace_fid:
+        existing = store.get_file(replace_fid)
+        if not existing:
+            raise HTTPException(status_code=404, detail="file not found")
+        freed = existing["size"]
+    remaining = max(0, store.storage_cap() - store.storage_used() + freed)
+    data = await _read_capped(upload, remaining)
     name = upload.filename or "upload"
     try:
         if replace_fid:

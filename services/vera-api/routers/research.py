@@ -58,19 +58,21 @@ def _parse_list(txt: str) -> list[str]:
         return [l.strip("-*0123456789. ").strip() for l in txt.splitlines() if len(l.strip()) > 8][:5]
 
 
-async def _rag_sources(query: str) -> list[dict]:
+async def _rag_sources(query: str, errors: list[str]) -> list[dict]:
     from . import documents_store
     out: list[dict] = []
     try:
         res = await documents_store.query(query, None, top_k=6,
                                           char_budget=6 * PER_SOURCE_CHARS)
-        if res.get("status") != "ok":
+        status = res.get("status")
+        if status != "ok":
+            errors.append(f"local knowledge {status}: {res.get('detail', '')}".strip())
             return out
         for p in res.get("passages", []):
             out.append({"title": f"{p['collection']}: {p['file']} (local knowledge)",
                         "url": "local", "content": p["text"]})
-    except Exception:
-        pass
+    except Exception as e:
+        errors.append(f"local knowledge: {e}")
     return out
 
 
@@ -102,7 +104,7 @@ async def _gather(req: ResearchRequest, subqs: list[str], errors: list[str]) -> 
     for sq in subqs:
         await _search_one(sq, req.pages_per_q, seen, sources, errors)
     if req.use_rag:
-        sources.extend(await _rag_sources(req.query))
+        sources.extend(await _rag_sources(req.query, errors))
     sources = sources[:MAX_SOURCES]
     for i, s in enumerate(sources, 1):
         s["n"] = i

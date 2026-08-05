@@ -91,6 +91,15 @@ async def _embeddings_post(url: str, payload: dict) -> dict:
             return await r.json()
 
 
+def _valid_vector(v, dim: int | None) -> bool:
+    if not isinstance(v, list) or not v:
+        return False
+    if dim is not None and len(v) != dim:
+        return False
+    return all(isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+               for x in v)
+
+
 async def embed_texts(texts: list[str]) -> list[list[float]]:
     cfg = _embeddings_cfg()
     if not cfg or not cfg.get("url"):
@@ -99,7 +108,10 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
                                {"model": cfg.get("model", ""), "input": texts})
     rows = sorted(d.get("data") or [], key=lambda x: x.get("index", 0))
     vecs = [r.get("embedding") for r in rows]
-    if len(vecs) != len(texts) or any(not isinstance(v, list) or not v for v in vecs):
+    if len(vecs) != len(texts):
+        raise ValueError("embeddings endpoint returned a malformed response")
+    dim = len(vecs[0]) if isinstance(vecs[0], list) else None
+    if any(not _valid_vector(v, dim) for v in vecs):
         raise ValueError("embeddings endpoint returned a malformed response")
     return vecs
 
@@ -219,6 +231,7 @@ def _collection_row(c, row) -> dict:
 
 def list_collections() -> list[dict]:
     init()
+    _refresh_stale()
     with _conn() as c:
         rows = c.execute("SELECT * FROM collection ORDER BY created_at, id").fetchall()
         return [_collection_row(c, r) for r in rows]
@@ -226,6 +239,7 @@ def list_collections() -> list[dict]:
 
 def get_collection(cid: str) -> dict | None:
     init()
+    _refresh_stale()
     with _conn() as c:
         row = c.execute("SELECT * FROM collection WHERE id=?", (cid,)).fetchone()
         return _collection_row(c, row) if row else None
@@ -308,41 +322,58 @@ def add_file(cid: str, name: str, data: bytes) -> dict:
     fmt = file_format(name)
     if fmt not in SUPPORTED_FORMATS:
         raise ValueError(f"unsupported format '{fmt}' (supported: {', '.join(SUPPORTED_FORMATS)})")
-    if storage_used() + len(data) > storage_cap():
-        raise StorageCapExceeded(
-            f"storage cap exceeded: {storage_used() + len(data)} bytes would pass the "
-            f"{storage_cap()} byte cap (DOCUMENTS_MAX_BYTES)")
     fid = uuid.uuid4().hex
     ts = _now()
-    _write_source(fid, data)
-    with _conn() as c:
-        c.execute(
-            "INSERT INTO file(id, collection_id, name, format, size, sha256, state, error, "
-            "embed_fingerprint, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (fid, cid, name, fmt, len(data), hashlib.sha256(data).hexdigest(),
-             "pending", None, None, ts, ts))
+    try:
+        with _conn() as c:
+            used = int(c.execute("SELECT COALESCE(SUM(size), 0) AS t FROM file").fetchone()["t"])
+            if used + len(data) > storage_cap():
+                raise StorageCapExceeded(
+                    f"storage cap exceeded: {used + len(data)} bytes would pass the "
+                    f"{storage_cap()} byte cap (DOCUMENTS_MAX_BYTES)")
+            c.execute(
+                "INSERT INTO file(id, collection_id, name, format, size, sha256, state, error, "
+                "embed_fingerprint, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (fid, cid, name, fmt, len(data), hashlib.sha256(data).hexdigest(),
+                 "pending", None, None, ts, ts))
+            _write_source(fid, data)
+    except StorageCapExceeded:
+        raise
+    except Exception:
+        _remove_source(fid)
+        raise
     return get_file(fid)
 
 
 def replace_file(fid: str, name: str, data: bytes) -> dict | None:
     init()
-    with _conn() as c:
-        row = c.execute("SELECT * FROM file WHERE id=?", (fid,)).fetchone()
-        if not row:
-            return None
     fmt = file_format(name)
     if fmt not in SUPPORTED_FORMATS:
         raise ValueError(f"unsupported format '{fmt}' (supported: {', '.join(SUPPORTED_FORMATS)})")
-    if storage_used() - row["size"] + len(data) > storage_cap():
-        raise StorageCapExceeded(
-            f"storage cap exceeded: replacing would pass the {storage_cap()} byte cap "
-            f"(DOCUMENTS_MAX_BYTES)")
-    _write_source(fid, data)
-    with _conn() as c:
-        c.execute("DELETE FROM chunk WHERE file_id=?", (fid,))
-        c.execute("UPDATE file SET name=?, format=?, size=?, sha256=?, state='pending', "
-                  "error=NULL, embed_fingerprint=NULL, updated_at=? WHERE id=?",
-                  (name, fmt, len(data), hashlib.sha256(data).hexdigest(), _now(), fid))
+    tmp = _source_path(fid) + ".tmp"
+    try:
+        with _conn() as c:
+            row = c.execute("SELECT * FROM file WHERE id=?", (fid,)).fetchone()
+            if not row:
+                return None
+            used = int(c.execute("SELECT COALESCE(SUM(size), 0) AS t FROM file").fetchone()["t"])
+            if used - row["size"] + len(data) > storage_cap():
+                raise StorageCapExceeded(
+                    f"storage cap exceeded: replacing would pass the {storage_cap()} byte cap "
+                    f"(DOCUMENTS_MAX_BYTES)")
+            c.execute("DELETE FROM chunk WHERE file_id=?", (fid,))
+            c.execute("UPDATE file SET name=?, format=?, size=?, sha256=?, state='stale', "
+                      "error=NULL, embed_fingerprint=NULL, updated_at=? WHERE id=?",
+                      (name, fmt, len(data), hashlib.sha256(data).hexdigest(), _now(), fid))
+            os.makedirs(FILES_DIR, exist_ok=True)
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, _source_path(fid))
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
     return get_file(fid)
 
 
@@ -384,10 +415,11 @@ def _refresh_stale():
                   (_now(), embed_fingerprint()))
 
 
-def _set_state(fid: str, state: str, error: str | None):
+def _set_state_if_unchanged(fid: str, sha: str, state: str, error: str | None) -> bool:
     with _conn() as c:
-        c.execute("UPDATE file SET state=?, error=?, updated_at=? WHERE id=?",
-                  (state, error, _now(), fid))
+        cur = c.execute("UPDATE file SET state=?, error=?, updated_at=? WHERE id=? AND sha256=?",
+                        (state, error, _now(), fid, sha))
+        return cur.rowcount > 0
 
 
 async def index_file(fid: str) -> dict:
@@ -400,7 +432,10 @@ async def index_file(fid: str) -> dict:
         return {"status": "unconfigured",
                 "detail": "no embeddings endpoint: enable the Embeddings integration or set "
                           "VERA_EMBED_URL"}
-    _set_state(fid, "indexing", None)
+    sha = row["sha256"]
+    fingerprint = embed_fingerprint()
+    if not _set_state_if_unchanged(fid, sha, "indexing", None):
+        return {"status": "superseded"}
     try:
         data = read_source(fid)
         text = await asyncio.to_thread(extract_text, row["name"], data)
@@ -409,15 +444,19 @@ async def index_file(fid: str) -> dict:
             raise ValueError("no extractable text")
         vecs = await embed_texts(chunks)
         with _conn() as c:
+            cur = c.execute("UPDATE file SET state='ready', error=NULL, embed_fingerprint=?, "
+                            "updated_at=? WHERE id=? AND sha256=?",
+                            (fingerprint, _now(), fid, sha))
+            if cur.rowcount == 0:
+                return {"status": "superseded"}
             c.execute("DELETE FROM chunk WHERE file_id=?", (fid,))
             c.executemany("INSERT INTO chunk(file_id, seq, text, vector) VALUES (?,?,?,?)",
                           [(fid, i, t, json.dumps(v)) for i, (t, v) in enumerate(zip(chunks, vecs))])
-            c.execute("UPDATE file SET state='ready', error=NULL, embed_fingerprint=?, "
-                      "updated_at=? WHERE id=?", (embed_fingerprint(), _now(), fid))
         return {"status": "ready", "chunks": len(chunks)}
     except Exception as e:
         reason = str(e)[:300] or type(e).__name__
-        _set_state(fid, "failed", reason)
+        if not _set_state_if_unchanged(fid, sha, "failed", reason):
+            return {"status": "superseded"}
         return {"status": "failed", "error": reason}
 
 
@@ -444,6 +483,27 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
+def _top_chunks(qv: list[float], collection_ids: list[str] | None, top_k: int) -> list:
+    import heapq
+    sql = ("SELECT ch.file_id, ch.seq, ch.text, ch.vector, f.name AS file_name, "
+           "f.collection_id, co.name AS collection_name "
+           "FROM chunk ch JOIN file f ON f.id = ch.file_id "
+           "JOIN collection co ON co.id = f.collection_id WHERE f.state='ready'")
+    params: list = []
+    if collection_ids is not None:
+        sql += f" AND f.collection_id IN ({','.join('?' * len(collection_ids))})"
+        params = list(collection_ids)
+    with _conn() as c:
+        def scored():
+            for r in c.execute(sql, params):
+                try:
+                    yield (_cosine(qv, json.loads(r["vector"])), dict(r))
+                except Exception:
+                    continue
+        return heapq.nsmallest(max(1, top_k), scored(),
+                               key=lambda s: (-s[0], s[1]["file_id"], s[1]["seq"]))
+
+
 async def query(text: str, collection_ids: list[str] | None = None,
                 top_k: int = 8, char_budget: int = 6000) -> dict:
     init()
@@ -452,31 +512,16 @@ async def query(text: str, collection_ids: list[str] | None = None,
                 "detail": "no embeddings endpoint: enable the Embeddings integration or set "
                           "VERA_EMBED_URL"}
     _refresh_stale()
+    if collection_ids is not None and not collection_ids:
+        return {"status": "ok", "passages": []}
     try:
         qv = (await embed_texts([text]))[0]
     except Exception as e:
         return {"status": "error", "passages": [], "detail": str(e)[:300]}
-    sql = ("SELECT ch.file_id, ch.seq, ch.text, ch.vector, f.name AS file_name, "
-           "f.collection_id, co.name AS collection_name "
-           "FROM chunk ch JOIN file f ON f.id = ch.file_id "
-           "JOIN collection co ON co.id = f.collection_id WHERE f.state='ready'")
-    params: list = []
-    if collection_ids:
-        sql += f" AND f.collection_id IN ({','.join('?' * len(collection_ids))})"
-        params = list(collection_ids)
-    with _conn() as c:
-        rows = c.execute(sql, params).fetchall()
-    scored = []
-    for r in rows:
-        try:
-            vec = json.loads(r["vector"])
-        except (TypeError, ValueError):
-            continue
-        scored.append((_cosine(qv, vec), r))
-    scored.sort(key=lambda s: (-s[0], s[1]["file_id"], s[1]["seq"]))
+    top = await asyncio.to_thread(_top_chunks, qv, collection_ids, top_k)
     passages = []
     spent = 0
-    for score, r in scored[:max(1, top_k)]:
+    for score, r in top:
         chunk = r["text"]
         remaining = char_budget - spent
         if remaining <= 0:

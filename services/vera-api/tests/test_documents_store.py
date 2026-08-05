@@ -105,7 +105,7 @@ def test_index_failure_carries_reason_and_reindex_recovers(docs_store, fake_embe
     assert got["state"] == "failed" and got["error"]
     assert docs_store.get_collection(col["id"])["index_state"] == "failed"
     docs_store.replace_file(f["id"], "good.txt", b"beta beta recovered")
-    assert docs_store.get_file(f["id"])["state"] == "pending"
+    assert docs_store.get_file(f["id"])["state"] == "stale"
     res = asyncio.run(docs_store.index_file(f["id"]))
     assert res["status"] == "ready"
     assert docs_store.get_file(f["id"])["state"] == "ready"
@@ -169,6 +169,56 @@ def test_query_empty_is_distinct_from_unconfigured(docs_store, fake_embeddings):
     col = docs_store.create_collection("Empty")
     q = asyncio.run(docs_store.query("alpha", [col["id"]]))
     assert q["status"] == "ok" and q["passages"] == []
+
+
+def test_query_empty_collection_list_returns_nothing(docs_store, fake_embeddings):
+    col = docs_store.create_collection("Scoped")
+    f = docs_store.add_file(col["id"], "a.txt", b"alpha")
+    asyncio.run(docs_store.index_file(f["id"]))
+    q = asyncio.run(docs_store.query("alpha", []))
+    assert q["status"] == "ok" and q["passages"] == []
+
+
+def test_malformed_embeddings_degrade_cleanly(docs_store, fake_embeddings, monkeypatch):
+    col = docs_store.create_collection("Malformed")
+    f = docs_store.add_file(col["id"], "a.txt", b"alpha")
+
+    async def bad_post(url, payload):
+        texts = payload["input"]
+        return {"data": [{"index": i, "embedding": ["oops", None]}
+                         for i in range(len(texts))]}
+
+    monkeypatch.setattr(docs_store, "_embeddings_post", bad_post)
+    res = asyncio.run(docs_store.index_file(f["id"]))
+    assert res["status"] == "failed" and "malformed" in res["error"]
+    assert docs_store.get_file(f["id"])["state"] == "failed"
+    q = asyncio.run(docs_store.query("alpha", None))
+    assert q["status"] == "error" and "malformed" in q["detail"] and q["passages"] == []
+
+
+def test_index_supersede_guard_on_replace(docs_store, fake_embeddings):
+    col = docs_store.create_collection("Race")
+    f = docs_store.add_file(col["id"], "a.txt", b"alpha original")
+
+    real_embed = docs_store.embed_texts
+    state = {}
+
+    async def racing_embed(texts):
+        if "done" not in state:
+            state["done"] = True
+            docs_store.replace_file(f["id"], "a.txt", b"alpha replaced content")
+        return await real_embed(texts)
+
+    import unittest.mock
+    with unittest.mock.patch.object(docs_store, "embed_texts", racing_embed):
+        res = asyncio.run(docs_store.index_file(f["id"]))
+    assert res["status"] == "superseded"
+    got = docs_store.get_file(f["id"])
+    assert got["state"] == "stale"
+    res = asyncio.run(docs_store.index_file(f["id"]))
+    assert res["status"] == "ready"
+    q = asyncio.run(docs_store.query("alpha", [col["id"]]))
+    assert "replaced" in q["passages"][0]["text"]
 
 
 def test_query_scopes_to_requested_collections(docs_store, fake_embeddings):

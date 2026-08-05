@@ -15,13 +15,17 @@ def test_rag_sources_reads_the_document_store(docs_store, fake_embeddings):
     col = docs_store.create_collection("Library")
     f = docs_store.add_file(col["id"], "notes.txt", b"alpha alpha findings")
     asyncio.run(docs_store.index_file(f["id"]))
-    out = asyncio.run(research._rag_sources("alpha"))
+    errors = []
+    out = asyncio.run(research._rag_sources("alpha", errors))
+    assert errors == []
     assert len(out) == 1
     assert out[0]["url"] == "local"
     assert "Library" in out[0]["title"] and "notes.txt" in out[0]["title"]
     assert "alpha" in out[0]["content"]
 
 
-def test_rag_sources_empty_when_unconfigured(docs_store):
+def test_rag_sources_surface_unconfigured_state(docs_store):
     from routers import research
-    assert asyncio.run(research._rag_sources("alpha")) == []
+    errors = []
+    assert asyncio.run(research._rag_sources("alpha", errors)) == []
+    assert len(errors) == 1 and "unconfigured" in errors[0]

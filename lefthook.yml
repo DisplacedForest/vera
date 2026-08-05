@@ -1,0 +1,11 @@
+pre-commit:
+  parallel: true
+  commands:
+    leak-gate:
+      run: scripts/leak-gate.sh
+    copy-check:
+      run: scripts/check-copy.sh
+pre-push:
+  commands:
+    check:
+      run: mise run check

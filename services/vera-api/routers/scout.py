@@ -29,7 +29,7 @@ def _envi(name, default):
 ENGAGEMENT_FLOOR = _envf("SCOUT_ENGAGEMENT_FLOOR", "0.5")  # decayed engagement to count an interest live
 MAX_NODES = _envi("SCOUT_MAX_NODES", "12")                 # cap on nodes scouted per run
 EXCLUDED_TYPES = {t.strip() for t in                       # node types never scouted
-                  os.environ.get("SCOUT_EXCLUDED_TYPES", "person,watch").split(",") if t.strip()}
+                  os.environ.get("SCOUT_EXCLUDED_TYPES", "person").split(",") if t.strip()}
 
 _DORMANT = {"dormant", "resolved"}
 
@@ -39,7 +39,7 @@ def _is_live(node, now):
     (people are conversation context, not searchable topics) and dormant or resolved nodes
     are excluded; otherwise a node qualifies on its type's open condition (project/thread) or,
     for any other type, on decayed engagement clearing ENGAGEMENT_FLOOR."""
-    if node.get("type") in EXCLUDED_TYPES:
+    if node.get("type") == "watch" or node.get("type") in EXCLUDED_TYPES:
         return False
     state = node.get("state")
     if state in _DORMANT:

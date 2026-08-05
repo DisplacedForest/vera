@@ -49,7 +49,8 @@ def test_selects_engaged_interest_skips_dormant():
     assert "buried" not in picked
 
 
-def test_watch_nodes_never_seed():
+def test_watch_nodes_never_seed(monkeypatch):
+    monkeypatch.setattr(scout, "EXCLUDED_TYPES", {"person"})
     nodes = [
         _node(id="due", type="watch", state="active", next_check=NOW - 10, engagement=0.0),
         _node(id="engaged", type="watch", state="active", next_check=NOW - 10,

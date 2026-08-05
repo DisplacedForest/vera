@@ -1,0 +1,28 @@
+[tasks.api-test]
+dir = "services/vera-api"
+run = "python -m pytest -q"
+
+[tasks.mac-build]
+dir = "apps/vera-mac"
+run = "swift build"
+
+[tasks.leak-gate]
+run = "scripts/leak-gate.sh"
+
+[tasks.copy-check]
+run = "scripts/check-copy.sh"
+
+[tasks.lint]
+depends = ["leak-gate", "copy-check"]
+
+[tasks.test]
+depends = ["api-test"]
+
+[tasks.check]
+depends = ["lint", "test", "mac-build"]
+
+[tasks.ci]
+depends = ["check"]
+
+[tasks.security]
+run = "semgrep scan --config auto --error services scripts"

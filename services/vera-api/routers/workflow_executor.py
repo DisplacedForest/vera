@@ -1,5 +1,17 @@
 from . import vein_engine
 from . import workflow_registry
+from . import workflow_triggers
+
+
+def _without_triggers(definition: dict) -> dict:
+    nodes = definition.get("nodes") or []
+    trigger_ids = {node["id"] for node in nodes if workflow_triggers.is_trigger(node.get("type"))}
+    if not trigger_ids:
+        return definition
+    return {**definition,
+            "nodes": [node for node in nodes if node["id"] not in trigger_ids],
+            "edges": [edge for edge in (definition.get("edges") or [])
+                      if edge["from"] not in trigger_ids and edge["to"] not in trigger_ids]}
 
 
 NODE_IMPLS: dict[str, dict] = {}
@@ -71,6 +83,7 @@ def _order(definition: dict):
 
 
 async def execute(definition: dict, ctx: RunContext, recorder=None) -> list:
+    definition = _without_triggers(definition)
     ordered, upstream, downstream = _order(definition)
     if not ordered:
         return []

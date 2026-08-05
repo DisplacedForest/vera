@@ -91,9 +91,10 @@ enum WorkflowCardGeometry {
 
     static func nearestInputPort(to point: CGPoint, in definition: PulseWorkflowDefinition,
                                  excluding sourceID: String,
-                                 within radius: CGFloat = portHitRadius) -> String? {
+                                 within radius: CGFloat = portHitRadius,
+                                 blocked: Set<String> = []) -> String? {
         var best: (id: String, distance: CGFloat)?
-        for node in definition.nodes where node.id != sourceID {
+        for node in definition.nodes where node.id != sourceID && !blocked.contains(node.id) {
             guard let port = inputPort(for: node.id, in: definition) else { continue }
             let distance = hypot(point.x - port.x, point.y - port.y)
             if distance <= radius, distance < (best?.distance ?? .greatestFiniteMagnitude) {

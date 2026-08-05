@@ -78,14 +78,14 @@ def test_flow_node_is_valid_in_a_generic_workflow(node_type):
 
 def test_filter_config_rejects_unknown_operator():
     definition = _inserted("flow.filter", "gates", "synthesis")
-    definition["nodes"][2]["config"] = {"operator": "regex"}
+    next(n for n in definition["nodes"] if n["id"] == "x")["config"] = {"operator": "regex"}
     with pytest.raises(ValueError, match="operator"):
         workflow_registry.validate_definition("pulse", definition)
 
 
 def test_text_config_field_rejects_non_string():
     definition = _inserted("flow.llm_step", "gates", "synthesis")
-    definition["nodes"][2]["config"] = {"prompt": 7}
+    next(n for n in definition["nodes"] if n["id"] == "x")["config"] = {"prompt": 7}
     with pytest.raises(ValueError, match="prompt must be text"):
         workflow_registry.validate_definition("pulse", definition)
 

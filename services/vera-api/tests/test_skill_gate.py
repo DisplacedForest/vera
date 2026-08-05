@@ -50,4 +50,3 @@ def test_confirm_applies_and_audits(writes):
     assert len(writes) == 1 and writes[0]["name"] == "Hormuz Baseline 2026"
     log = action_store.recent_log(20)
     assert any(r["verb"] == "authoring.skill_upsert" and r["status"] == "applied" for r in log)
-

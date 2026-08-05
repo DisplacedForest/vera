@@ -82,8 +82,7 @@ _PULSE_STAGES = [
 # Per-flow canvas face: presentation label (the registry label stays the formal name),
 # icon/tint (SF Symbol + the app's chart-palette tint names), thematic group, the
 # surfaces the flow feeds, and the tools it is known to use (static attribution; the
-# activity feed adds per-event attribution on top). Flows with `stages` drill in;
-# `stage_layout` is "pipeline" (linear) or "fan" (branches).
+# activity feed adds per-event attribution on top). Flows with `stages` drill in.
 FLOW_FACE: dict[str, dict] = {
     "pulse":          {"label": "Pulse briefing", "icon": "newspaper", "tint": "accent",
                        "group": "Ambient", "feeds": ["pulse_feed"],
@@ -170,7 +169,6 @@ async def graph():
             "id": job_id,
             "label": face.get("label", label),
             "title": label,
-            "kind": "job",
             "icon": face["icon"],
             "tint": face["tint"],
             "group": face["group"],
@@ -184,7 +182,7 @@ async def graph():
         if job_id == "pulse":
             try:
                 active = workflow_store.active("pulse")
-                flow["stage_layout"] = active["definition"].get("layout", "pipeline")
+                flow["stage_layout"] = "pipeline"
                 flow["stages"] = active["definition"].get("nodes") or []
                 flow["workflow"] = {"version": active["version"], "state": active["state"], "editable": True}
                 flow["stage_state"] = _pulse_stage_state()

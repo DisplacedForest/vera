@@ -3882,16 +3882,15 @@ enum SelfTest {
             {"flows": [
               {"id": "pulse", "label": "Pulse briefing", "title": "Pulse briefing run", "kind": "job",
                "icon": "newspaper", "tint": "accent", "group": "Ambient", "feeds": ["pulse_feed"],
-               "tools": ["websearch"], "running": false, "stage_layout": "pipeline",
+               "tools": ["websearch"], "running": false,
                "stages": [{"id": "triage", "label": "Triage", "icon": "globe", "tint": "accent"}],
                "stage_state": {"state": "ok", "rounds": 2, "proposed": 9,
                                "gates": {"dedup": 3}, "injected": 6,
                                "warnings": ["starved run: 6/8"], "finished_at": 1750000000}},
-              {"id": "memory_groom", "label": "Memory groom", "kind": "job", "icon": "archivebox",
+              {"id": "memory_groom", "label": "Memory groom", "icon": "archivebox",
                "tint": "purple", "group": "Memory", "feeds": ["memory"], "tools": [],
                "running": true,
-               "stages": [{"id": "learn", "label": "Learn", "icon": "sparkles", "tint": "accent",
-                           "feeds": ["memory"]}]}
+               "stages": [{"id": "learn", "label": "Learn", "icon": "sparkles", "tint": "accent"}]}
             ],
             "surfaces": [{"id": "pulse_feed", "label": "Pulse feed", "icon": "newspaper",
                           "stat": "6 cards today"},
@@ -3903,8 +3902,8 @@ enum SelfTest {
                   let gp = graph.flow("pulse"), gp.stages.count == 1,
                   gp.pulseState?.gates["dedup"] == 3, gp.pulseState?.injected == 6,
                   gp.pulseState?.warnings.count == 1,
-                  let groom = graph.flow("memory_groom"), groom.kind == "job", groom.running,
-                  groom.stages.first?.feeds == ["memory"],
+                  let groom = graph.flow("memory_groom"), groom.running,
+                  groom.stages.first?.id == "learn",
                   graph.surfaces[0].stat == "6 cards today", graph.surfaces[1].stat == nil else {
                 print("SELFTEST ERROR: agentic graph parse"); exit(1)
             }

@@ -12,7 +12,6 @@ struct GraphStage: Identifiable, Sendable, Hashable {
     var label: String
     var icon: String
     var tint: String
-    var feeds: [String]
 }
 
 /// The distilled last pulse run, for per-stage state on the pulse drill-in.
@@ -34,14 +33,12 @@ struct GraphFlow: Identifiable, Sendable, Hashable {
     let id: String
     var label: String           // canvas label ("Pulse briefing")
     var title: String           // formal name ("Pulse briefing run")
-    var kind: String            // job
     var icon: String
     var tint: String
     var group: String
     var feeds: [String]
     var tools: [String]
     var running: Bool
-    var stageLayout: String?    // pipeline
     var stages: [GraphStage]
     var pulseState: PulseStageState?
 }
@@ -73,8 +70,7 @@ struct AgenticGraph: Sendable, Hashable {
                 return GraphStage(id: sid,
                                   label: (s["label"] as? String) ?? sid,
                                   icon: (s["icon"] as? String) ?? "circle",
-                                  tint: (s["tint"] as? String) ?? "gray",
-                                  feeds: (s["feeds"] as? [String]) ?? [])
+                                  tint: (s["tint"] as? String) ?? "gray")
             }
             var pulseState: PulseStageState?
             if let st = f["stage_state"] as? [String: Any], let state = st["state"] as? String {
@@ -95,14 +91,12 @@ struct AgenticGraph: Sendable, Hashable {
                 id: id,
                 label: (f["label"] as? String) ?? id,
                 title: (f["title"] as? String) ?? (f["label"] as? String) ?? id,
-                kind: (f["kind"] as? String) ?? "job",
                 icon: (f["icon"] as? String) ?? "clock",
                 tint: (f["tint"] as? String) ?? "gray",
                 group: (f["group"] as? String) ?? "Other",
                 feeds: (f["feeds"] as? [String]) ?? [],
                 tools: (f["tools"] as? [String]) ?? [],
                 running: (f["running"] as? Bool) ?? false,
-                stageLayout: f["stage_layout"] as? String,
                 stages: stages,
                 pulseState: pulseState)
         }
@@ -119,21 +113,19 @@ struct AgenticGraph: Sendable, Hashable {
 
     /// Demo topology for screenshots — mirrors the live manifest shape.
     static func mock() -> AgenticGraph {
-        func stage(_ id: String, _ label: String, _ icon: String, _ tint: String,
-                   feeds: [String] = []) -> GraphStage {
-            GraphStage(id: id, label: label, icon: icon, tint: tint, feeds: feeds)
+        func stage(_ id: String, _ label: String, _ icon: String, _ tint: String) -> GraphStage {
+            GraphStage(id: id, label: label, icon: icon, tint: tint)
         }
         func flow(_ id: String, _ label: String, _ icon: String, _ tint: String, _ group: String,
-                  feeds: [String], tools: [String] = [], kind: String = "job",
-                  running: Bool = false, layout: String? = nil,
-                  stages: [GraphStage] = []) -> GraphFlow {
-            GraphFlow(id: id, label: label, title: label, kind: kind, icon: icon, tint: tint,
+                  feeds: [String], tools: [String] = [],
+                  running: Bool = false, stages: [GraphStage] = []) -> GraphFlow {
+            GraphFlow(id: id, label: label, title: label, icon: icon, tint: tint,
                       group: group, feeds: feeds, tools: tools, running: running,
-                      stageLayout: layout, stages: stages, pulseState: nil)
+                      stages: stages, pulseState: nil)
         }
         var pulse = flow("pulse", "Pulse briefing", "newspaper", "accent", "Ambient",
                          feeds: ["pulse_feed"], tools: ["websearch", "vera-image"],
-                         layout: "pipeline", stages: [
+                         stages: [
                             stage("triage", "Triage", "globe", "accent"),
                             stage("gates", "Gates", "line.3.horizontal.decrease.circle", "orange"),
                             stage("synthesis", "Synthesis", "sparkles", "purple"),

@@ -45,7 +45,7 @@ def test_every_registry_job_is_a_flow():
     out = _graph()
     assert {f["id"] for f in out["flows"]} == set(REGISTRY)
     for f in out["flows"]:
-        for key in ("label", "title", "kind", "icon", "tint", "group", "feeds", "tools", "running"):
+        for key in ("label", "title", "icon", "tint", "group", "feeds", "tools", "running"):
             assert key in f, f"flow {f['id']} missing {key}"
         assert f["label"]
         assert f["running"] is False

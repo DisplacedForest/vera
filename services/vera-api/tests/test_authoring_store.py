@@ -71,4 +71,3 @@ def test_revert_rejects_non_skill_targets():
     from fastapi import HTTPException
     with pytest.raises(HTTPException):
         asyncio.run(authoring.revert(authoring.RevertBody(rev_id=rid)))
-

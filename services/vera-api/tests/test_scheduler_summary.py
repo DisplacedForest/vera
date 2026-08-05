@@ -53,6 +53,17 @@ def test_healthcheck_summary():
     assert "2 services down" in down and "voice, searxng" in down
 
 
+def test_journal_resolve_summary_counts_watches():
+    out = summarize_outcome("journal_resolve", {"resolved": ["a", "b"]})
+    assert "2 watches" in out
+    _no_record_markers(out)
+    one = summarize_outcome("journal_resolve", {"resolved": ["a"]})
+    assert "1 watch" in one and "watches" not in one
+    quiet = summarize_outcome("journal_resolve", {"resolved": []})
+    assert "nothing due" in quiet
+    _no_record_markers(quiet)
+
+
 def test_gated_run_is_plain_skip():
     out = summarize_outcome("weather", {"ok": False, "disabled": True, "detail": "the weather vein is off"})
     assert out == "Skipped: the weather vein is off"

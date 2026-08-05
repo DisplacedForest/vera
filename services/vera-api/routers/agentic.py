@@ -98,6 +98,8 @@ FLOW_FACE: dict[str, dict] = {
                              "tint": "purple", "group": "Memory", "feeds": ["memory"], "tools": []},
     "weight_fit":     {"label": "Weight fit", "icon": "chart.xyaxis.line", "tint": "purple",
                        "group": "Memory", "feeds": ["memory"], "tools": []},
+    "journal_resolve": {"label": "Journal resolution", "icon": "checkmark.circle",
+                        "tint": "purple", "group": "Memory", "feeds": ["memory"], "tools": []},
 }
 
 # A job with no authored face still renders (and the test suite flags the omission).

@@ -15,7 +15,6 @@ from pydantic import BaseModel
 router = APIRouter()
 
 JOURNAL_PATH = os.environ.get("VERA_JOURNAL_PATH", "/data/journal/JOURNAL.md")
-DUE_CAP = int(os.environ.get("JOURNAL_DUE_CAP", "3"))  # due entries acted on per tick
 
 
 # --------------------------------------------------------------------------- document

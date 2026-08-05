@@ -113,6 +113,31 @@ def test_fire_skips_overlapping_run(monkeypatch):
         sch._running.discard("weather")
 
 
+def test_journal_resolve_registered_daily():
+    assert "journal_resolve" in sch.REGISTRY
+    j = sch._effective("journal_resolve", None)
+    assert j["enabled"] is True
+    assert j["cron"] == "15 4 * * *"
+    assert j["gated"] is None
+
+
+def test_journal_resolve_fires_through_registry(monkeypatch, tmp_path):
+    from routers import profile_graph_store as pg
+    monkeypatch.setattr(pg, "DB_PATH", str(tmp_path / "graph.db"))
+    pg.init()
+    pg.upsert_node(id="due", type="watch", label="Strait of Hormuz", state="active",
+                   resolve_condition="strait reopens", next_check=1_750_000_000,
+                   facts=[pg.make_fact("condition observed", source="resolution:obs")])
+    pg.upsert_node(id="unmet", type="watch", label="Harvest", state="active",
+                   resolve_condition="harvest lands", next_check=1_750_000_000)
+    asyncio.run(sch._fire("journal_resolve"))
+    assert pg.get_node("due")["state"] == "resolved"
+    assert pg.get_node("unmet")["state"] == "active"
+    row = store.overrides()["journal_resolve"]
+    assert row["last_ok"] == 1
+    assert "1 watch" in row["last_detail"]
+
+
 def _save_pipeline_vein(monkeypatch, tmp_path, kind="rivergauge"):
     from routers import vein_defs
     monkeypatch.setattr(vein_defs, "CUSTOM_DIR", str(tmp_path / "veins.d"))

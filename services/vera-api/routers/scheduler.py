@@ -73,6 +73,11 @@ async def _job_weight_fit():
     return {"installed": coeffs is not None, "coeffs": coeffs}
 
 
+async def _job_journal_resolve():
+    from . import editor
+    return {"resolved": editor.resolve_due()}
+
+
 # id -> (label, default cron, handler). The shipped schedule; everything overridable.
 REGISTRY: dict[str, tuple[str, str, object]] = {
     "pulse":          ("Pulse briefing run",        "0 5 * * *",    _job_pulse),
@@ -81,6 +86,7 @@ REGISTRY: dict[str, tuple[str, str, object]] = {
     "home_digest":    ("Home rhythm digest",        "0 2 * * *",    _job_home_digest),
     "conversation_extract": ("Conversation extraction into the Profile Graph", "45 4 * * *", _job_conversation_extract),
     "weight_fit":     ("Ranking weight fit from feedback", "30 4 * * 0",  _job_weight_fit),
+    "journal_resolve": ("Journal due-watch resolution",    "15 4 * * *",  _job_journal_resolve),
 }
 
 
@@ -233,6 +239,12 @@ def summarize_outcome(job_id: str, result) -> str:
             line += f" {_plural(len(warnings), 'warning')}."
         return line
 
+
+    if job_id == "journal_resolve":
+        n = len(r.get("resolved") or [])
+        if not n:
+            return "Journal pass: nothing due."
+        return f"Journal pass: {n} {'watch' if n == 1 else 'watches'} resolved."
 
     if job_id == "updates":
         total = int(r.get("total") or 0)

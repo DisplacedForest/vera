@@ -159,6 +159,17 @@ def test_token_scoping_compares_parsed_origins():
     assert pulse_media._token_for("http://legacy.example/a", body) is None
     assert pulse_media._token_for("https://legacy.example:8443/a", body) is None
     assert pulse_media._token_for("not a url", body) is None
+    assert pulse_media._token_for("https://legacy.example:notaport/a", body) is None
+    assert pulse_media._token_for("https://legacy.example:99999999/a", body) is None
+
+
+def test_migration_survives_malformed_port_urls(monkeypatch):
+    _insert("c1", image_url="https://legacy.example:notaport/image")
+    monkeypatch.setattr(pulse_media, "_fetch", _fake_fetch({}))
+    out = asyncio.run(pulse_media.migrate(pulse_media.MigrateBody(
+        token="sekret", source_base="https://legacy.example")))
+    assert out["ok"] is True and out["images_missing"] == 1
+    assert pulse_store.get_card("c1")["image_url"] is None
 
 
 def test_migration_without_source_base_never_sends_token(monkeypatch):

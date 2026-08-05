@@ -92,11 +92,11 @@ def _absolute(url) -> bool:
 def _origin(url: str) -> tuple | None:
     try:
         parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            return None
+        port = parts.port or {"http": 80, "https": 443}[parts.scheme]
     except ValueError:
         return None
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        return None
-    port = parts.port or {"http": 80, "https": 443}[parts.scheme]
     return parts.scheme, parts.hostname, port
 
 

@@ -7,7 +7,8 @@ from routers import vera_memory_store as vm
 
 
 def _git(*args, cwd):
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=20)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=20, env=env)
 
 
 @pytest.fixture

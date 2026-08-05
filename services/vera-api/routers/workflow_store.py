@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import threading
 import time
 import uuid
 
@@ -212,7 +213,15 @@ def save_draft(version_id: str, definition: dict) -> dict:
     return get_version(version_id)
 
 
+_promote_lock = threading.Lock()
+
+
 def promote(version_id: str) -> dict:
+    with _promote_lock:
+        return _promote_locked(version_id)
+
+
+def _promote_locked(version_id: str) -> dict:
     draft = get_version(version_id)
     if not draft or draft["state"] != "draft":
         raise ValueError("draft not found")
@@ -230,9 +239,11 @@ def promote(version_id: str) -> dict:
             scheduler.set_job_cron(*plan)
         except Exception:
             with _conn() as conn:
-                conn.execute("UPDATE workflow_versions SET state='draft', promoted_at=NULL WHERE id=?", (version_id,))
-                if previous:
-                    conn.execute("UPDATE workflow_versions SET state='active' WHERE id=?", (previous["id"],))
+                reverted = conn.execute("UPDATE workflow_versions SET state='draft', promoted_at=NULL WHERE id=? AND state='active'",
+                                        (version_id,)).rowcount
+                if reverted and previous:
+                    conn.execute("UPDATE workflow_versions SET state='active' WHERE id=? AND state='archived'",
+                                 (previous["id"],))
             raise ValueError("the schedule could not be applied, so the promotion was rolled back")
     return get_version(version_id)
 
@@ -250,17 +261,17 @@ def _trigger_schedule_plan(workflow_id: str, definition: dict) -> tuple[str, str
     config = _trigger_config(definition)
     if not job_id or config is None:
         return None
-    current = None
-    row = _version_row(workflow_id)
-    if row:
-        current = _trigger_config(_version(row)["definition"])
-    if config == current:
-        return None
     cron = workflow_triggers.cron_for(config)
     from . import scheduler
-    scheduler.ensure_job_cron_allowed(job_id, cron)
-    if cron == scheduler.job_cron(job_id):
+    live = scheduler.job_cron(job_id)
+    if cron == live:
         return None
+    if live is not None and workflow_triggers.config_for(live) is None:
+        row = _version_row(workflow_id)
+        stored = _trigger_config(_version(row)["definition"]) if row else None
+        if config == stored:
+            return None
+    scheduler.ensure_job_cron_allowed(job_id, cron)
     return (job_id, cron)
 
 

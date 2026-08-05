@@ -93,6 +93,24 @@ def test_exotic_pinned_schedule_survives_an_unrelated_promotion(monkeypatch):
     assert scheduler.job_cron("pulse") == "30 6 * * 1-5"
 
 
+def test_promotion_applies_the_schedule_the_canvas_declares():
+    scheduler_store.set_override("pulse", cron="0 6 * * *")
+    draft = workflow_store.create_draft("pulse")
+    definition = draft["definition"]
+    assert _trigger(definition)["config"] == {"mode": "daily", "time": "06:00"}
+    _trigger(definition)["config"] = {"mode": "daily", "time": "05:00"}
+    workflow_store.save_draft(draft["id"], definition)
+    workflow_store.promote(draft["id"])
+    assert scheduler.job_cron("pulse") == "0 5 * * *"
+
+
+def test_promotion_reasserts_a_stale_canvas_schedule():
+    draft = workflow_store.create_draft("pulse")
+    scheduler_store.set_override("pulse", cron="0 6 * * *")
+    workflow_store.promote(draft["id"])
+    assert scheduler.job_cron("pulse") == "0 5 * * *"
+
+
 def test_failed_schedule_write_rolls_back_the_promotion(monkeypatch):
     draft = workflow_store.create_draft("pulse")
     definition = draft["definition"]

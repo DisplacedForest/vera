@@ -10,7 +10,7 @@ the Plugins and MCP managers live in Settings.
 swift run                       # dev build + launch
 swift build                     # compile check
 .build/debug/Vera --selftest    # headless: native transport, persistence, and optional live checks
-.build/debug/Vera --shot out.png --view chat|pulse|journal|memory|agentic|veins|settings-plugins|settings-mcp|settings|onboarding   # render a screenshot
+.build/debug/Vera --shot out.png --view chat|pulse|journal|memory|agentic|veins|settings-plugins|settings-mcp|settings|settings-advanced|onboarding   # render a screenshot
 .build/debug/Vera --dump-context   # print the assembled per-request system context, section by section
 ```
 Config lives in `~/.vera/config.json`, editable in-app via Settings (⌘,): `model_base`,
@@ -31,6 +31,14 @@ locally after macOS permission. Web search and deep research call the configured
 (`vera_api_base`); with no vera-api URL set they are unavailable and their rows show the
 unconfigured hint. Deep research runs on its own 300-second deadline, and its report renders
 with citation chips and a numbered sources row that persist with the conversation.
+
+Advanced model controls (Settings, Model, Advanced) tune per-model request parameters:
+sampling, tokens and stops, reasoning, streaming, a context-length ceiling, and custom
+chat-template-kwargs entries. Overrides are stored per endpoint profile and model in
+`native_chat.parameterOverrides`; unset controls are omitted from the payload, capability
+gating follows the model's profile (including the reasoning flag), and
+`VERA_CHAT_TEMPLATE_KWARGS` still replaces the kwargs object wholesale when set. The
+section's Last request panel shows the resolved parameter set for the most recent send.
 
 Config-driven tools extend the same registry. A JSON declaration dropped in
 `~/.vera/tools.d/` loads at startup and again on every Settings save, and a valid one joins

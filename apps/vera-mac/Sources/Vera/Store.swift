@@ -39,6 +39,8 @@ final class ChatStore: ObservableObject {
     @Published var showCanvas: Bool = false
     @Published var artifactLibrary: [Artifact] = []   // persisted across sessions
     @Published var chatConfigurationError: String?
+    @Published var lastRequestTrace: NativeRequestTrace?
+    @Published var parameterRejection: NativeParameterRejectionPrompt?
     @Published private(set) var pendingToolConfirmation: NativeToolConfirmationRequest?
 
     private var config: OWUIConfig?
@@ -1280,6 +1282,19 @@ final class ChatStore: ObservableObject {
         let imageLimit: Int?
     }
 
+    struct BridgeTurnFailure: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    struct NativeParameterRejectionPrompt: Identifiable, Equatable {
+        let rejection: ModelParameterRejection
+        let model: String
+        let detail: String
+        let conversationID: String
+        var id: String { conversationID + "|" + rejection.key }
+    }
+
     var activeCapabilityResolution: ModelCapabilityCatalog.Resolution? {
         guard let nativeConfig else { return nil }
         return ModelCapabilityCatalog.resolve(
@@ -1400,7 +1415,7 @@ final class ChatStore: ObservableObject {
             return
         }
 
-        guard let nativeTransport, let nativeConfig else {
+        guard nativeTransport != nil, let nativeConfig else {
             let reply = Message(role: .assistant, text: "", state: .interrupted,
                                 failure: "Configure a model endpoint ending in /v1 and select a model")
             conversations[idx].messages.append(reply)
@@ -1413,6 +1428,44 @@ final class ChatStore: ObservableObject {
         let replyIndex = conversations[idx].messages.count - 1
         let userIndex = conversations[idx].messages.count - 2
         try? repository.saveMessage(reply, conversationID: id, ordinal: replyIndex)
+        performTurn(
+            conversationID: id, userText: text, records: records, routeNote: routeNote,
+            userIndex: userIndex, replyIndex: replyIndex)
+    }
+
+    func applyNativeOptions(_ cfg: NativeChatConfig) {
+        nativeConfig = cfg
+        nativeTransport = NativeChatClient(config: cfg)
+    }
+
+    func retryLastTurn(conversationID: String? = nil) {
+        guard !generating, let repository else { return }
+        guard let id = conversationID ?? selectedID,
+              let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
+        let messages = conversations[idx].messages
+        guard let replyIndex = messages.indices.last, replyIndex >= 1,
+              messages[replyIndex].role == .assistant,
+              messages[replyIndex].state == .interrupted,
+              messages[replyIndex - 1].role == .user else { return }
+        let userIndex = replyIndex - 1
+        let user = messages[userIndex]
+        conversations[idx].messages[replyIndex].text = ""
+        conversations[idx].messages[replyIndex].failure = nil
+        conversations[idx].messages[replyIndex].state = .streaming
+        conversations[idx].messages[replyIndex].modelID = nativeConfig?.model
+        try? repository.saveMessage(
+            conversations[idx].messages[replyIndex], conversationID: id, ordinal: replyIndex)
+        performTurn(
+            conversationID: id, userText: user.text, records: user.attachments,
+            routeNote: user.routeNote, userIndex: userIndex, replyIndex: replyIndex)
+    }
+
+    private func performTurn(
+        conversationID id: String, userText text: String, records: [MessageAttachment],
+        routeNote: MessageRouteNote?, userIndex: Int, replyIndex: Int
+    ) {
+        guard let repository, let nativeTransport, let nativeConfig else { return }
+        parameterRejection = nil
         streamStatus = "Thinking…"
         generating = true
         let toolLoop = NativeToolLoop(
@@ -1432,6 +1485,9 @@ final class ChatStore: ObservableObject {
         let persona = scopes.persona
         let ownerName = nativeOwnerName ?? config?.ownerName
         let activeTools = nativeToolRegistry.active(enabledIDs: enabledToolIDs)
+        lastRequestTrace = NativeRequestTrace.make(
+            model: nativeConfig.model, streaming: nativeConfig.streaming,
+            options: nativeConfig.options, timestamp: Date())
         Task {
             defer {
                 generating = false
@@ -1445,8 +1501,8 @@ final class ChatStore: ObservableObject {
                 }
                 if routeNote?.route == .bridged {
                     guard let bridgeConfig else {
-                        throw NativeChatClient.ClientError.server(
-                            "The vision bridge is no longer configured. Your message and attachment are saved; nothing was sent.")
+                        throw BridgeTurnFailure(
+                            message: "The vision bridge is no longer configured. Your message and attachment are saved; nothing was sent.")
                     }
                     streamStatus = "Describing the attachment…"
                     let bridge = VisionBridge(
@@ -1462,8 +1518,8 @@ final class ChatStore: ObservableObject {
                                 (record.name, try await bridge.describe(name: record.name, dataURL: dataURL)))
                         }
                     } catch {
-                        throw NativeChatClient.ClientError.server(
-                            "The vision bridge couldn't describe the attachment: \(error.localizedDescription). Your message and attachment are saved locally; nothing was sent to the model.")
+                        throw BridgeTurnFailure(
+                            message: "The vision bridge couldn't describe the attachment: \(error.localizedDescription). Your message and attachment are saved locally; nothing was sent to the model.")
                     }
                     let disclosure = VisionBridgeDisclosure.block(
                         descriptions: descriptions, bridgeModel: bridgeConfig.model)
@@ -1512,7 +1568,8 @@ final class ChatStore: ObservableObject {
                     contracts: contracts))
                 let history = NativeChatHistoryBuilder.build(
                     messages: turnMessages, systemPrompt: assembled.prompt,
-                    imageLoader: imageLoader, capabilities: capabilityProfile)
+                    imageLoader: imageLoader, capabilities: capabilityProfile,
+                    contextCeiling: nativeConfig.options.contextCeiling)
                 for try await snapshot in toolLoop.stream(
                     messages: history, model: nativeConfig.model, enabledToolIDs: enabledToolIDs
                 ) {
@@ -1570,6 +1627,12 @@ final class ChatStore: ObservableObject {
                 }
             } catch {
                 streamStatus = nil
+                if let rejection = ModelParameterRejectionClassifier.classify(
+                    error: error, options: nativeConfig.options) {
+                    parameterRejection = NativeParameterRejectionPrompt(
+                        rejection: rejection, model: nativeConfig.model,
+                        detail: error.localizedDescription, conversationID: id)
+                }
                 if let i = conversations.firstIndex(where: { $0.id == id }),
                    replyIndex < conversations[i].messages.count {
                     conversations[i].messages[replyIndex].state = .interrupted

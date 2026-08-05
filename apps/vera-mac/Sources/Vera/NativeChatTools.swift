@@ -387,7 +387,8 @@ enum NativeChatHistoryBuilder {
     static func build(
         messages: [Message], systemPrompt: String,
         imageLoader: ((MessageAttachment) -> String?)? = nil,
-        capabilities: ModelCapabilityProfile? = nil
+        capabilities: ModelCapabilityProfile? = nil,
+        contextCeiling: Int? = nil
     ) -> [NativeChatMessage] {
         var history: [NativeChatMessage] = []
         let prompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -444,7 +445,35 @@ enum NativeChatHistoryBuilder {
         if let capabilities, capabilities.acceptsImages {
             history = capped(history, limit: max(capabilities.maxImagesPerRequest, 1))
         }
+        if let contextCeiling {
+            history = trimmed(history, ceiling: contextCeiling)
+        }
         return history
+    }
+
+    static let approximateCharactersPerToken = 4
+    static let approximateCharactersPerImage = 4000
+
+    static func trimmed(_ history: [NativeChatMessage], ceiling: Int) -> [NativeChatMessage] {
+        let budget = ceiling * approximateCharactersPerToken
+        func cost(_ message: NativeChatMessage) -> Int {
+            message.content.count
+                + message.images.count * approximateCharactersPerImage
+                + message.toolCalls.reduce(0) { $0 + $1.name.count + $1.arguments.count }
+        }
+        var result = history
+        var total = result.reduce(0) { $0 + cost($1) }
+        while total > budget {
+            guard let index = result.firstIndex(where: { $0.role != "system" }) else { break }
+            guard result.count - index > 1 else { break }
+            let dropped = result.remove(at: index)
+            total -= cost(dropped)
+            while index < result.count - 1, result[index].role != "user" {
+                let follower = result.remove(at: index)
+                total -= cost(follower)
+            }
+        }
+        return result
     }
 
     private static func capped(_ history: [NativeChatMessage], limit: Int) -> [NativeChatMessage] {

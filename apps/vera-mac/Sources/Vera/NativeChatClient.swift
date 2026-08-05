@@ -6,16 +6,18 @@ struct NativeChatConfig: Sendable, Equatable {
     let model: String
     let chatTemplateKwargs: String?
     let streaming: Bool
+    let options: NativeChatRequestOptions
 
     init(
         baseURL: URL, apiKey: String?, model: String, chatTemplateKwargs: String?,
-        streaming: Bool = true
+        streaming: Bool = true, options: NativeChatRequestOptions = .none
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.model = model
         self.chatTemplateKwargs = chatTemplateKwargs
         self.streaming = streaming
+        self.options = options
     }
 
     var completionsURL: URL { baseURL.appendingPathComponent("chat/completions") }
@@ -225,7 +227,15 @@ struct NativeChatClient: NativeChatTransport, Sendable {
             payload["tools"] = tools.map(\.requestObject)
             payload["tool_choice"] = "auto"
         }
-        if let kwargs = config.chatTemplateKwargsObject() { payload["chat_template_kwargs"] = kwargs }
+        for entry in config.options.topLevel
+        where !ModelParameterCatalog.reservedWireKeys.contains(entry.key) {
+            payload[entry.key] = entry.payloadAny
+        }
+        if let kwargs = config.options.kwargsObject() {
+            payload["chat_template_kwargs"] = kwargs
+        } else if let kwargs = config.chatTemplateKwargsObject() {
+            payload["chat_template_kwargs"] = kwargs
+        }
         var request = URLRequest(url: config.completionsURL)
         request.httpMethod = "POST"
         request.timeoutInterval = 120

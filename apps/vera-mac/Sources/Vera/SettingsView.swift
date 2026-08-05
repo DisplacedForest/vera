@@ -57,6 +57,9 @@ private struct ModelTab: View {
             Section("Vision bridge") {
                 NativeVisionBridgeEditor()
             }
+            Section {
+                NativeAdvancedControlsEditor()
+            }
             SaveSection()
         }
         .formStyle(.grouped)
@@ -284,6 +287,7 @@ struct NativeCapabilityEditor: View {
                 }
                 Toggle("Supports tool calls", isOn: capabilityBinding(\.supportsTools))
                 Toggle("Supports streaming replies", isOn: capabilityBinding(\.supportsStreaming))
+                Toggle("Supports reasoning controls", isOn: capabilityBinding(\.supportsReasoning))
             }
         }
     }

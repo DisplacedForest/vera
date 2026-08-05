@@ -67,7 +67,7 @@ def init():
             c.execute("ALTER TABLE cards ADD COLUMN user_id TEXT")
             c.execute("UPDATE cards SET user_id=? WHERE user_id IS NULL", (DEFAULT_USER,))
         if "provenance" not in cols:
-            # how the card was triggered — "scheduled" (pulse/run) | "heartbeat" (for-you).
+            # how the card was triggered — "scheduled" (pulse/run).
             c.execute("ALTER TABLE cards ADD COLUMN provenance TEXT")
             c.execute("UPDATE cards SET provenance='scheduled' WHERE provenance IS NULL")
         if "category" not in cols:

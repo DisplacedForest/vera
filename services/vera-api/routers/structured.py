@@ -8,26 +8,6 @@ class _Out(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-class Decide(_Out):
-    learn: list = []
-
-
-class ForYouCandidate(_Out):
-    surface: bool = False
-    interest: str = ""
-    topic: str = ""
-    query: str = ""
-
-
-class Relevance(_Out):
-    related: bool = False
-    link: str = ""
-
-
-class Substance(_Out):
-    briefing_worthy: bool = False
-
-
 class Glosses(_Out):
     glosses: dict = {}
 

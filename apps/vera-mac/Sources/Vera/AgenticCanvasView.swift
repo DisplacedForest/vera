@@ -67,7 +67,6 @@ func flowStatus(_ flow: GraphFlow, job: SchedulerJob?) -> FlowStatus {
 /// renderer share one source of truth.
 struct OrganismLayout {
     static let flowSize = CGSize(width: 196, height: 92)
-    static let heartbeatSize = CGSize(width: 208, height: 110)
     static let surfaceSize = CGSize(width: 188, height: 66)
     static let groupLabelHeight: CGFloat = 16
     static let nodeGap: CGFloat = 10
@@ -82,7 +81,6 @@ struct OrganismLayout {
     var leftSide: Set<String> = []
 
     init(graph: AgenticGraph, viewport: CGSize) {
-        // Group flows preserving manifest order; the heartbeat anchors the right side.
         var groups: [(name: String, flows: [GraphFlow])] = []
         for flow in graph.flows {
             if let i = groups.firstIndex(where: { $0.name == flow.group }) {
@@ -95,16 +93,11 @@ struct OrganismLayout {
         var right: [(name: String, flows: [GraphFlow])] = []
         func stackHeight(_ side: [(name: String, flows: [GraphFlow])]) -> CGFloat {
             side.reduce(0) { acc, g in
-                let labeled = !(g.flows.count == 1 && g.flows[0].kind == "heartbeat")
-                let nodes = g.flows.reduce(CGFloat(0)) { a, f in
-                    a + (f.kind == "heartbeat" ? Self.heartbeatSize.height : Self.flowSize.height) + Self.nodeGap
+                let nodes = g.flows.reduce(CGFloat(0)) { a, _ in
+                    a + Self.flowSize.height + Self.nodeGap
                 }
-                return acc + (labeled ? Self.groupLabelHeight : 0) + nodes + Self.groupGap
+                return acc + Self.groupLabelHeight + nodes + Self.groupGap
             }
-        }
-        // The heartbeat anchors the top of the right column; everything else balances.
-        if let i = groups.firstIndex(where: { $0.flows.contains { $0.kind == "heartbeat" } }) {
-            right.append(groups.remove(at: i))
         }
         for group in groups {
             if stackHeight(left) <= stackHeight(right) {
@@ -119,22 +112,18 @@ struct OrganismLayout {
         let leftX: CGFloat = 28
         let width = max(viewport.width, 960)
         let centerX = max(leftX + Self.flowSize.width + 96, (width - Self.surfaceSize.width) / 2)
-        let rightX = max(centerX + Self.surfaceSize.width + 96, width - Self.heartbeatSize.width - 28)
-        size = CGSize(width: max(width, rightX + Self.heartbeatSize.width + 28), height: contentH)
+        let rightX = max(centerX + Self.surfaceSize.width + 96, width - Self.flowSize.width - 28)
+        size = CGSize(width: max(width, rightX + Self.flowSize.width + 28), height: contentH)
 
         func place(_ side: [(name: String, flows: [GraphFlow])], x: CGFloat, isLeft: Bool) {
             var y = topPad
             for group in side {
-                let labeled = !(group.flows.count == 1 && group.flows[0].kind == "heartbeat")
-                if labeled {
-                    groupLabels.append((group.name, CGPoint(x: x + 2, y: y)))
-                    y += Self.groupLabelHeight
-                }
+                groupLabels.append((group.name, CGPoint(x: x + 2, y: y)))
+                y += Self.groupLabelHeight
                 for flow in group.flows {
-                    let s = flow.kind == "heartbeat" ? Self.heartbeatSize : Self.flowSize
-                    flowRects[flow.id] = CGRect(origin: CGPoint(x: x, y: y), size: s)
+                    flowRects[flow.id] = CGRect(origin: CGPoint(x: x, y: y), size: Self.flowSize)
                     if isLeft { leftSide.insert(flow.id) }
-                    y += s.height + Self.nodeGap
+                    y += Self.flowSize.height + Self.nodeGap
                 }
                 y += Self.groupGap
             }
@@ -382,11 +371,6 @@ struct FlowNode: View {
                 }
             }
             .padding(.top, 8)
-            if flow.kind == "heartbeat" {
-                Text(branchSummary).font(.system(size: 10))
-                    .foregroundStyle(Theme.textSecondary).lineLimit(1)
-                    .padding(.top, 8)
-            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -412,14 +396,6 @@ struct FlowNode: View {
         return Theme.accent.opacity(breathing ? 0.45 : 0.15)
     }
 
-    private var branchSummary: String {
-        let n = flow.stages.count
-        if flow.running, let live = flow.branchState.max(by: { $0.value.ts < $1.value.ts }) {
-            let label = flow.stages.first { $0.id == live.key }?.label.lowercased() ?? live.key
-            return "\(n) branches · \(label) just ran"
-        }
-        return "\(n) branches"
-    }
 }
 
 /// One surface node on the spine — quieter than flows (sidebar tone), with a live stat.

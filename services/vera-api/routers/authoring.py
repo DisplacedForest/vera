@@ -7,11 +7,6 @@ from . import authoring_store as store
 
 router = APIRouter()
 
-HEARTBEAT_SKILL_ID = "heartbeat"
-HB_NAME = "Vera Heartbeat"
-HB_DESC = "Vera's standing proactive instructions (self-authored; read each heartbeat tick)."
-
-
 def _slug(s):
     return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-") or "skill"
 
@@ -40,17 +35,6 @@ async def author_skill(b: SkillBody):
         raise HTTPException(400, err.get("error", "invalid skill proposal"))
     return {"proposed": True, "token": ok["token"], "preview": ok["preview"],
             "message": "proposed, awaiting confirmation"}
-
-
-class HeartbeatBody(BaseModel):
-    content: str
-
-
-@router.post("/authoring/heartbeat", tags=["authoring"])
-async def author_heartbeat(b: HeartbeatBody):
-    store.snapshot(f"skill:{HEARTBEAT_SKILL_ID}", b.content, note="heartbeat")
-    await _skill_upsert(HEARTBEAT_SKILL_ID, HB_NAME, HB_DESC, b.content)
-    return {"id": HEARTBEAT_SKILL_ID}
 
 
 @router.get("/authoring/skills", tags=["authoring"])

@@ -6,7 +6,7 @@ evolving world-model, kept current against her stale training cutoff.
 
 Three tiers:
   - 'core'    -> durable, high-impact beliefs. Rendered into a capped digest the OWUI inlet filter
-                injects into EVERY request (chat, Pulse, heartbeat). The "map."
+                injects into EVERY request (chat, Pulse). The "map."
   - 'archive' -> full detail, unbounded; pulled on demand via the `recall` tool.
   - 'scratch' -> ephemeral working notes (her scribble pad). TTL'd, NEVER injected; the groomer
                 purges expired ones (and can promote keepers to archive/core first).

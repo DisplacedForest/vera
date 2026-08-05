@@ -4,7 +4,6 @@ a = Analysis(
     binaries=[],
     datas=[
         ("SOUL.md", "."),
-        ("HEARTBEAT.md", "."),
         ("BUILDER.md", "."),
         ("routers/leak_patterns.txt", "routers"),
         ("../../VERSION", "."),

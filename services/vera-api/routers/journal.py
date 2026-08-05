@@ -132,8 +132,7 @@ def _archive_dir():
 
 
 def archive_entry(section_text, now=None):
-    """Cold storage: append the resolved entry to the current month's rollover file.
-    Never read back into any prompt; the heartbeat outcome log is the audit trail."""
+    """Cold storage: append the resolved entry to the current month's rollover file."""
     os.makedirs(_archive_dir(), exist_ok=True)
     path = os.path.join(_archive_dir(), f"{archive_month(now or time.time())}.md")
     with open(path, "a", encoding="utf-8") as f:

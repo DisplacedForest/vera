@@ -259,7 +259,7 @@ enum Shot {
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
-        } else if view == "agentic-pulse" || view == "agentic-heartbeat"
+        } else if view == "agentic-pulse"
                     || view == "agentic-inspector" || view == "agentic-inspector-long" {
             content = AnyView(
                 AgenticDetailShot(variant: view)

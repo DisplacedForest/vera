@@ -574,24 +574,6 @@ enum NativeCapabilityTools {
         """,
         """
         {
-          "name": "author_heartbeat",
-          "title": "Update the heartbeat document",
-          "description": "Replace the heartbeat continuity document with new content. Read carefully before rewriting: this replaces the whole document.",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "content": {"type": "string", "description": "Full replacement content"}
-            },
-            "required": ["content"],
-            "additionalProperties": false
-          },
-          "endpoint": "/authoring/heartbeat",
-          "method": "POST",
-          "confirmation": "required"
-        }
-        """,
-        """
-        {
           "name": "journal_read",
           "title": "Read the journal",
           "description": "Read standing journal entries. Pass months as a number of months of history to include, written as a string.",

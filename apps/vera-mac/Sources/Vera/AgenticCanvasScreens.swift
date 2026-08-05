@@ -110,9 +110,6 @@ struct AgenticCanvasView: View {
             if let warning = st.warnings.first { return ("\(text). \(warning).", true) }
             return ("\(text).", false)
         }
-        if flow.kind == "heartbeat" {
-            return ("Each tick reads HEARTBEAT.md and decides which branches to take.", false)
-        }
         return nil
     }
 
@@ -184,9 +181,7 @@ struct AgenticCanvasView: View {
 
     @ViewBuilder
     private func drillView(_ flow: GraphFlow, graph: AgenticGraph, viewport: CGSize) -> some View {
-        if flow.stageLayout == "fan" {
-            HeartbeatDrill(flow: flow, graph: graph, viewport: viewport)
-        } else if flow.id == "pulse" {
+        if flow.id == "pulse" {
             PulseWorkflowEditor(store: pulseWorkflow)
         } else {
             PulseDrill(flow: flow, graph: graph, viewport: viewport, detail: pulseRun.detail)
@@ -231,30 +226,12 @@ struct AgenticCanvasView: View {
            let tool = event.tool, let flow = graph.flow(tool) {
             return flow.feeds.map { (flow.id, $0) }
         }
-        if event.source == "heartbeat",
-           let hb = graph.flows.first(where: { $0.kind == "heartbeat" }) {
-            let branch = ["learn": "learn", "refine": "refine",
-                          "propose": "propose", "confirmed": "propose", "dismissed": "propose",
-                          "watch": "watch", "foryou": "foryou", "foryou_skip": "foryou"][event.kind]
-            let feeds = hb.stages.first { $0.id == branch }?.feeds ?? []
-            return feeds.map { (hb.id, $0) }
-        }
-        // Free-lane actions are autonomous by definition (today only the heartbeat runs
-        // that lane), so they travel the heartbeat's edge to the Actions surface.
-        if event.source == "action", event.kind == "auto",
-           let hb = graph.flows.first(where: { $0.kind == "heartbeat" }),
-           hb.feeds.contains("actions") {
-            return [(hb.id, "actions")]
-        }
         return []
     }
 
     /// Inspector activity: this node's recent events.
     private func nodeEvents(_ flow: GraphFlow) -> [ActivityEvent] {
-        activity.events.filter { event in
-            if flow.kind == "heartbeat" { return event.source == "heartbeat" || event.tool == flow.id }
-            return event.tool == flow.id
-        }
+        activity.events.filter { $0.tool == flow.id }
     }
 }
 
@@ -600,108 +577,6 @@ struct StageDetailPanel: View {
     }
 }
 
-// MARK: - Heartbeat drill-in
-
-/// The heartbeat fan: the trigger node branching into learn / refine / propose /
-/// watches / for you, each connected to the surface it feeds. Branch state is the
-/// latest outcome each branch produced.
-struct HeartbeatDrill: View {
-    let flow: GraphFlow
-    let graph: AgenticGraph
-    let viewport: CGSize
-
-    private let branchSize = CGSize(width: 210, height: 86)
-    private let triggerSize = OrganismLayout.heartbeatSize
-
-    var body: some View {
-        let rows = max(flow.stages.count, 1)
-        let stackH = CGFloat(rows) * (branchSize.height + 22) - 22
-        let height = max(stackH + 64, viewport.height)
-        let branchX: CGFloat = 380
-        let surfaceX = branchX + branchSize.width + 150
-        let width = max(viewport.width, surfaceX + OrganismLayout.surfaceSize.width + 28)
-        let topY = (height - stackH) / 2
-
-        ZStack(alignment: .topLeading) {
-            DotGrid()
-            Canvas { ctx, _ in
-                let triggerPort = CGPoint(x: 28 + triggerSize.width, y: height / 2)
-                for (i, stage) in flow.stages.enumerated() {
-                    let midY = topY + CGFloat(i) * (branchSize.height + 22) + branchSize.height / 2
-                    let active = flow.branchState[stage.id] != nil
-                    ctx.stroke(edgePath(triggerPort, CGPoint(x: branchX, y: midY)),
-                               with: .color(active ? Theme.accent.opacity(0.30) : .white.opacity(0.10)),
-                               lineWidth: 1.5)
-                    if let surfaceID = stage.feeds.first,
-                       graph.surfaces.contains(where: { $0.id == surfaceID }) {
-                        ctx.stroke(edgePath(CGPoint(x: branchX + branchSize.width, y: midY),
-                                            CGPoint(x: surfaceX, y: midY)),
-                                   with: .color(.white.opacity(0.10)), lineWidth: 1.5)
-                    }
-                }
-            }
-            FlowNode(flow: flow, job: nil, animated: false)
-                .frame(width: triggerSize.width, height: triggerSize.height)
-                .position(x: 28 + triggerSize.width / 2, y: height / 2)
-            ForEach(Array(flow.stages.enumerated()), id: \.element.id) { i, stage in
-                let y = topY + CGFloat(i) * (branchSize.height + 22)
-                BranchNode(stage: stage, outcome: flow.branchState[stage.id])
-                    .frame(width: branchSize.width, height: branchSize.height)
-                    .position(x: branchX + branchSize.width / 2, y: y + branchSize.height / 2)
-                if let surfaceID = stage.feeds.first,
-                   let surface = graph.surfaces.first(where: { $0.id == surfaceID }) {
-                    SurfaceNode(surface: surface)
-                        .frame(width: OrganismLayout.surfaceSize.width,
-                               height: OrganismLayout.surfaceSize.height)
-                        .position(x: surfaceX + OrganismLayout.surfaceSize.width / 2,
-                                  y: y + branchSize.height / 2)
-                }
-            }
-        }
-        .frame(width: width, height: height, alignment: .topLeading)
-    }
-}
-
-/// One heartbeat branch face: label, latest outcome, when.
-struct BranchNode: View {
-    let stage: GraphStage
-    let outcome: BranchOutcome?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(graphTint(stage.tint).opacity(0.14))
-                    .frame(width: 24, height: 24)
-                    .overlay(Image(systemName: stage.icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(graphTint(stage.tint)))
-                Text(stage.label).font(.system(size: 13, weight: .semibold))
-                Spacer(minLength: 0)
-                Circle()
-                    .fill(outcome == nil ? Theme.textSecondary.opacity(0.5)
-                                         : Color.green)
-                    .frame(width: 7, height: 7)
-            }
-            if let outcome {
-                Text(outcome.detail.isEmpty ? outcome.kind : outcome.detail)
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-                Text(relativeTime(outcome.ts)).font(.system(size: 10.5))
-                    .foregroundStyle(Theme.textSecondary.opacity(0.8))
-            } else {
-                Text("no recent activity").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.hairline, lineWidth: 1))
-        .overlay(alignment: .leading) { PortDot().offset(x: -3.5) }
-        .overlay(alignment: .trailing) { PortDot().offset(x: 3.5) }
-    }
-}
-
 // MARK: - Inspector
 
 /// Everything the old job cards could do, scoped to the selected node: run now,
@@ -777,12 +652,12 @@ struct InspectorContent: View {
                     lastRun(job)
                 }
                 if let onDrill {
-                    section(flow.stageLayout == "fan" ? "Branches" : "Pipeline") {
+                    section("Pipeline") {
                         Button(action: onDrill) {
                             HStack(spacing: 6) {
                                 Image(systemName: "point.3.connected.trianglepath.dotted")
                                     .font(.system(size: 11))
-                                Text(flow.stageLayout == "fan" ? "Open the branch map" : "Open the pipeline")
+                                Text("Open the pipeline")
                                     .font(.system(size: 12, weight: .medium))
                             }
                             .foregroundStyle(Theme.accent)

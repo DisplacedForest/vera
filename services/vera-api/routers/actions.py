@@ -293,7 +293,7 @@ def _norm_url(u: str) -> str:
 class Auto(BaseModel):
     verb: str
     args: dict = {}
-    source: str = "heartbeat"
+    source: str = "vera"
     actor: str = "vera"
 
 

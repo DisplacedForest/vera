@@ -2,7 +2,6 @@ STORE_PATHS = {
     "ACTION_DB_PATH": "actions.db",
     "AUTHORING_DB_PATH": "authoring.db",
     "FEEDBACK_PATH": "feedback.jsonl",
-    "HEARTBEAT_DB_PATH": "heartbeat.db",
     "HOME_EVENTS_DB_PATH": "home_events.db",
     "HOME_MODEL_DB_PATH": "home_model.db",
     "HOME_RECONCILE_DB_PATH": "home_reconcile.db",

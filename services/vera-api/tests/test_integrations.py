@@ -199,7 +199,7 @@ def test_scheduler_jobs_inherit_feature_gates(monkeypatch):
     _put("home_assistant", features={"home_modeling": ig.FeatureUpdate(enabled=True, ack=True)})
     j = sch._effective("home_model", None)
     assert j["enabled"] is True and j["gated"] is None
-    for ungated in ("pulse", "heartbeat"):  # weather is vein-gated now
+    for ungated in ("pulse", "conversation_extract"):  # weather is vein-gated now
         assert sch._effective(ungated, None)["gated"] is None
 
 

@@ -17,7 +17,7 @@ def init():
         c.execute(
             """CREATE TABLE IF NOT EXISTS revision (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                target TEXT,        -- e.g. 'skill:heartbeat'
+                target TEXT,        -- e.g. 'skill:notes'
                 content TEXT,
                 note TEXT,
                 ts INTEGER

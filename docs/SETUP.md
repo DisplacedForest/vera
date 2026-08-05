@@ -8,7 +8,7 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 |---|---|---|
 | An OpenAI-compatible LLM server | llama.cpp / llama-swap / vLLM / Ollama / a hosted API — anything serving `/v1` | Yes |
 | **Vera.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
-| **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, knowledge collections, heartbeat, scheduler, actions) | Optional |
+| **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, knowledge collections, scheduler, actions) | Optional |
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
 | Satellite services (voice, image, vision, coder) | Reference implementations of documented HTTP contracts | No |
 
@@ -260,7 +260,6 @@ vera-api runs all recurring work itself — no external cron. Defaults:
 |---|---|---|
 | Pulse briefing | daily 5:00 | — (core; needs your LLM) |
 | Home modeling (3 nightly jobs) | 2:00–3:30 | Home Assistant's home-modeling consent |
-| Heartbeat tick | every 20 min | `HEARTBEAT_ENABLED` kill switch |
 | Vein runs (`vein_<kind>`) | each definition's `schedule` | that vein's enable state |
 
 Pipeline veins register their jobs dynamically — one per definition, appearing and disappearing with the definition file — and the standard override convention applies (`SCHEDULE_VEIN_<KIND>`, `SCHEDULE_VEIN_<KIND>_ENABLED`).
@@ -273,11 +272,7 @@ Opening the Pulse flow switches the existing app sidebar to the node library ser
 
 A Run toggle on the same canvas overlays the latest recorded run, per node state, output counts, and duration, and selecting a node shows its recorded input, output, timing, and any error in place of the config fields.
 
-Everything autonomous is auditable in one place: `GET /agentic/activity?hours=24` returns a normalized, newest-first feed merging heartbeat outcomes, scheduled job runs, and the action audit log. The app renders it as the **Activity** pane of the Agentic tab, refreshed every 30 seconds, and recent events animate along their edges on the canvas. A missing backing store contributes nothing instead of erroring, so the feed works on any subset of the stack.
-
-The heartbeat tick also resolves Vera's **journal** watches: a due watch node whose resolve condition and date are both met transitions to resolved deterministically (no model recheck, so a watch can never become immortal). The journal itself is a view over the Profile Graph's watch and project nodes, rendered read-only in the app's Journal view and at `GET /journal`; the legacy self-authored markdown at `VERA_JOURNAL_PATH` (default `/data/journal/JOURNAL.md`) remains only as a fallback until the graph holds nodes. With no watch nodes and no fallback file, the step and the view are empty. Chat steers the journal through the `self_author.py` tool's `read_journal` / `journal_commit` functions (a commit lands a watch node), so install that tool if you want "keep an eye on X" and "what are you watching" to work in conversation.
-
-With the Mealie integration enabled, the heartbeat can also **curate recipes autonomously**: when Vera finds a recipe genuinely worth keeping she imports it herself through `POST /actions/auto` — no confirmation card. This free lane accepts only verbs explicitly enrolled as `autonomous` in the action registry (today: `kitchen.mealie_import`, which the registry permits because it is low-risk and reversible by deleting the recipe). Imports are capped at 2 per tick and 3 per rolling day, duplicate URLs are skipped, every execution lands in the action audit log with `auto=true`, and each import posts a System card with the recipe link. Without Mealie configured the lane simply never produces anything; `HEARTBEAT_ENABLED=false` stops it along with the rest of the tick.
+Everything autonomous is auditable in one place: `GET /agentic/activity?hours=24` returns a normalized, newest-first feed merging scheduled job runs and the action audit log. The app renders it as the **Activity** pane of the Agentic tab, refreshed every 30 seconds, and recent events animate along their edges on the canvas. A missing backing store contributes nothing instead of erroring, so the feed works on any subset of the stack.
 
 ## 7. Verifying the install
 

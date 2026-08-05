@@ -190,14 +190,11 @@ struct PulseCard: Identifiable, Hashable {
     var kind: String = "research" // research feed vs an ambient vein
     var severity: String? = nil   // ambient severity — notice|alert|critical (nil = neutral)
     var action: PulseAction? = nil // a confirm-able action this card proposes
-    var provenance: String = "scheduled" // "scheduled" (morning run) | "heartbeat" (noticed for you)
+    var provenance: String = "scheduled"
     var read: Bool = false        // has this person opened this card's detail?
     var category: String? = nil
     var changeSet: [GroomOp] = [] // reversible memory-tending diff (audit + restore)
     var items: [PulseDigestItem] = [] // multi-item digest rows (per-row approve/skip)
-
-    /// Surfaced by the heartbeat noticing something for this person (vs the scheduled run).
-    var noticedForYou: Bool { provenance == "heartbeat" }
 
     static func mock() -> [PulseCard] {
         // The feed is research-grade only. Weather/Signal watch live in chips now, not here.
@@ -210,10 +207,10 @@ struct PulseCard: Identifiable, Hashable {
                   subtitle: "Pulse", tint: "#5b4636"),
             .init(id: "p5", title: "Winemaking",
                   preview: "Sur lie aging with weekly bâtonnage builds mid-palate weight without oak. Worth trying on the next white batch.",
-                  subtitle: "Pulse", tint: "#5a4a6b", provenance: "heartbeat"),
+                  subtitle: "Pulse", tint: "#5a4a6b"),
             .init(id: "p6", title: "Around town",
                   preview: "Two things worth a look this weekend downtown. A maker's market Saturday and live music at the amphitheater Sunday evening.",
-                  subtitle: "Pulse", tint: "#4a5a6b", provenance: "heartbeat"),
+                  subtitle: "Pulse", tint: "#4a5a6b"),
         ]
     }
 

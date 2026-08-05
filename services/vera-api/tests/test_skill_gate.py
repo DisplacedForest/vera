@@ -21,7 +21,7 @@ def writes(monkeypatch):
 def test_spec_verb_validates_and_is_gated():
     v = sp.SPEC["authoring.skill_upsert"]["validate"]
     assert v({"name": "X", "content": "c"}) is None
-    assert v({"name": "X", "content": "c", "id": "heartbeat"})
+    assert v({"name": "X", "content": "c", "id": "heartbeat"}) is None
     assert v({"name": "", "content": "c"})
     assert v({"name": "X", "content": ""})
     assert sp.SPEC["authoring.skill_upsert"]["risk"] == "high"
@@ -51,8 +51,3 @@ def test_confirm_applies_and_audits(writes):
     log = action_store.recent_log(20)
     assert any(r["verb"] == "authoring.skill_upsert" and r["status"] == "applied" for r in log)
 
-
-def test_heartbeat_authoring_is_unaffected(writes):
-    res = asyncio.run(authoring.author_heartbeat(authoring.HeartbeatBody(content="new standing instructions")))
-    assert res["id"] == "heartbeat"
-    assert len(writes) == 1 and writes[0]["sid"] == "heartbeat"

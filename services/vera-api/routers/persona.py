@@ -63,7 +63,7 @@ def home_region_is_us() -> bool:
 
 def personalize(text: str) -> str:
     """Fill {owner}/{location} placeholders in a prompt/seed document; output stays
-    brace-free for .format() safety. Used for SOUL.md, HEARTBEAT.md, and any other
+    brace-free for .format() safety. Used for SOUL.md and any other
     shipped text that names the household."""
     return text.replace("{owner}", owner()).replace("{location}", location())
 

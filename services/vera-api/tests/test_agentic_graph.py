@@ -3,8 +3,8 @@
 Covers the manifest contract the Mac app renders from: every registry job appears
 as a flow with a complete face, every feed targets a declared surface, drill-in
 stages ride the manifest, pulse stage state distills the structured run status,
-heartbeat branch state reads the outcome log, surface stats answer live and
-degrade to None (never a 500) when a backing store can't answer.
+surface stats answer live and degrade to None (never a 500) when a backing store
+can't answer.
 """
 import asyncio
 import os
@@ -16,7 +16,6 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from routers import action_store  # noqa: E402
 from routers import agentic  # noqa: E402
-from routers import heartbeat_store  # noqa: E402
 from routers import pulse_store  # noqa: E402
 from routers import scheduler_store  # noqa: E402
 from routers import vera_memory_store  # noqa: E402
@@ -26,7 +25,6 @@ from routers.scheduler import REGISTRY  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch, tmp_path):
-    monkeypatch.setattr(heartbeat_store, "DB_PATH", str(tmp_path / "heartbeat.db"))
     monkeypatch.setattr(action_store, "DB_PATH", str(tmp_path / "actions.db"))
     monkeypatch.setattr(scheduler_store, "DB_PATH", str(tmp_path / "scheduler.db"))
     monkeypatch.setattr(pulse_store, "DB_PATH", str(tmp_path / "pulse.db"))
@@ -91,10 +89,6 @@ def test_drill_in_topology():
     assert pulse["stage_layout"] == "pipeline"
     assert [s["id"] for s in pulse["stages"]] == [
         "triage", "gates", "synthesis", "claim_audit", "cover_art", "inject"]
-    hb = _flow(out, "heartbeat")
-    assert hb["kind"] == "heartbeat"
-    assert hb["stage_layout"] == "fan"
-    assert [s["id"] for s in hb["stages"]] == ["learn", "refine", "propose", "watch", "foryou"]
     # Simple jobs carry no stages: the manifest decides depth.
     assert "stages" not in _flow(out, "home_model")
 
@@ -147,18 +141,6 @@ def test_pulse_running_lifts_flow_running():
     assert _flow(_graph(), "pulse")["running"] is True
 
 
-def test_heartbeat_branch_state_latest_per_branch():
-    heartbeat_store.log("learn", "old topic")
-    heartbeat_store.log("learn", "new topic")
-    heartbeat_store.log("foryou_skip", "considered, skipped")
-    heartbeat_store.log("confirmed", "ha.service:climate.office")
-    bs = _flow(_graph(), "heartbeat")["branch_state"]
-    assert bs["learn"]["detail"] == "new topic"
-    assert bs["foryou"]["kind"] == "foryou_skip"
-    assert bs["propose"]["kind"] == "confirmed"
-    assert "refine" not in bs  # never fired: no state, never fake data
-
-
 def test_surface_stats_live():
     from routers.scheduler import TZ
     from datetime import datetime
@@ -175,9 +157,8 @@ def test_surface_stats_live():
 
 
 def test_missing_stores_degrade_to_none_stats():
-    for mod in (pulse_store, action_store, vera_memory_store, heartbeat_store):
+    for mod in (pulse_store, action_store, vera_memory_store):
         setattr(mod, "DB_PATH", "/dev/null/nope/x.db")
     out = _graph()
     assert {f["id"] for f in out["flows"]} == set(REGISTRY)  # topology survives
     assert all(s["stat"] is None for s in out["surfaces"])
-    assert _flow(out, "heartbeat")["branch_state"] == {}

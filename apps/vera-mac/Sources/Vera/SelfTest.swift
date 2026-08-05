@@ -366,6 +366,7 @@ enum SelfTest {
         runNativeMedia()
         await runCapabilityRouting()
         await runPulseContinuation()
+        runKnowledge()
         guard let cfg = OWUIConfig.load() else {
             print("SELFTEST OK (offline). No OWUI config (~/.vera/config.json), live checks skipped")
             exit(0)
@@ -4610,5 +4611,167 @@ enum SelfTest {
             print("install error: \(error)")
             exit(1)
         }
+    }
+}
+
+extension SelfTest {
+    static func runKnowledge() {
+        let colJSON: [String: Any] = ["id": "c1", "name": "Papers", "description": "research",
+                                      "file_count": 3, "index_state": "ready",
+                                      "created_at": 100, "updated_at": 200]
+        guard let col = KnowledgeCollection.parse(colJSON), col.id == "c1", col.name == "Papers",
+              col.fileCount == 3, col.indexState == "ready",
+              col.updatedAt == Date(timeIntervalSince1970: 200) else {
+            print("SELFTEST ERROR: knowledge collection parse"); exit(1)
+        }
+        guard KnowledgeCollection.parse(["name": "x"]) == nil,
+              let sparse = KnowledgeCollection.parse(["id": "c2", "name": "Bare"]),
+              sparse.description.isEmpty, sparse.fileCount == 0, sparse.indexState == "empty" else {
+            print("SELFTEST ERROR: knowledge collection tolerant parse"); exit(1)
+        }
+        let fileJSON: [String: Any] = ["id": "f1", "name": "a.pdf", "format": "pdf", "size": 2048,
+                                       "state": "failed", "error": "no extractable text",
+                                       "updated_at": 300]
+        guard let file = KnowledgeFile.parse(fileJSON), file.state == "failed",
+              file.error == "no extractable text", file.size == 2048 else {
+            print("SELFTEST ERROR: knowledge file parse"); exit(1)
+        }
+        guard let passage = KnowledgePassage.parse(
+            ["collection_id": "c1", "collection": "Papers", "file_id": "f1", "file": "a.pdf",
+             "chunk": 2, "score": 0.91, "text": "body"]),
+            passage.chunk == 2, passage.score == 0.91, passage.collection == "Papers" else {
+            print("SELFTEST ERROR: knowledge passage parse"); exit(1)
+        }
+        guard KnowledgePassage.parse(["score": 1]) == nil else {
+            print("SELFTEST ERROR: knowledge passage requires text"); exit(1)
+        }
+
+        let files = [
+            KnowledgeFile(id: "1", name: "beta.txt", format: "txt", size: 10, state: "ready",
+                          error: nil, updatedAt: Date(timeIntervalSince1970: 30)),
+            KnowledgeFile(id: "2", name: "Alpha.md", format: "md", size: 30, state: "failed",
+                          error: "boom", updatedAt: Date(timeIntervalSince1970: 10)),
+            KnowledgeFile(id: "3", name: "gamma.pdf", format: "pdf", size: 20, state: "pending",
+                          error: nil, updatedAt: Date(timeIntervalSince1970: 20)),
+        ]
+        guard KnowledgeFiltering.apply(files, search: "alp", sort: .name).map(\.id) == ["2"],
+              KnowledgeFiltering.apply(files, search: "", sort: .name).map(\.id) == ["2", "1", "3"],
+              KnowledgeFiltering.apply(files, search: "", sort: .date).map(\.id) == ["1", "3", "2"],
+              KnowledgeFiltering.apply(files, search: "", sort: .size).map(\.id) == ["2", "3", "1"],
+              KnowledgeFiltering.apply(files, search: "", sort: .state).map(\.id) == ["2", "3", "1"] else {
+            print("SELFTEST ERROR: knowledge filtering and sorting"); exit(1)
+        }
+        guard KnowledgeFiltering.stateRank("failed") < KnowledgeFiltering.stateRank("indexing"),
+              KnowledgeFiltering.stateRank("stale") < KnowledgeFiltering.stateRank("ready"),
+              KnowledgeStateBadge.label("failed") == "Failed",
+              KnowledgeStateBadge.label("weird") == "Weird" else {
+            print("SELFTEST ERROR: knowledge state mapping"); exit(1)
+        }
+
+        let passages = [
+            KnowledgePassage(collectionID: "c1", collection: "Papers", fileID: "f1", file: "a.pdf",
+                             chunk: 0, score: 0.9, text: "First passage."),
+            KnowledgePassage(collectionID: "c1", collection: "Papers", fileID: "f2", file: "b.md",
+                             chunk: 4, score: 0.8, text: "Second passage."),
+        ]
+        let assembly = KnowledgeGrounding.assemble(passages)
+        guard assembly.sources.count == 2,
+              assembly.sources[0].n == 1, assembly.sources[1].n == 2,
+              assembly.sources[0].title == "Papers: a.pdf",
+              assembly.sources.allSatisfy({ $0.url == "knowledge" }),
+              assembly.block.contains("[1] Papers / a.pdf (part 1)"),
+              assembly.block.contains("[2] Papers / b.md (part 5)"),
+              assembly.block.contains("First passage."),
+              assembly.block.contains("[n] citations") else {
+            print("SELFTEST ERROR: knowledge grounding assembly"); exit(1)
+        }
+
+        guard KnowledgeGrounding.decodeSelection(nil) == [],
+              KnowledgeGrounding.decodeSelection("not json") == [],
+              KnowledgeGrounding.encodeSelection([]) == nil,
+              KnowledgeGrounding.decodeSelection(KnowledgeGrounding.encodeSelection(["a", "b"])) == ["a", "b"] else {
+            print("SELFTEST ERROR: knowledge grounding selection codec"); exit(1)
+        }
+
+        let grounded = NativeContextAssembler.assemble(NativeContextInput(
+            persona: "p", timestamp: Date(timeIntervalSince1970: 0), timeZone: .current,
+            knowledgeGrounding: assembly.block))
+        guard grounded.sections.contains(where: { $0.name == "knowledge" }),
+              grounded.prompt.contains("KNOWLEDGE GROUNDING"),
+              grounded.prompt.contains("[1] Papers / a.pdf (part 1)") else {
+            print("SELFTEST ERROR: knowledge context section"); exit(1)
+        }
+        let ungrounded = NativeContextAssembler.assemble(NativeContextInput(
+            persona: "p", timestamp: Date(timeIntervalSince1970: 0), timeZone: .current))
+        guard !ungrounded.sections.contains(where: { $0.name == "knowledge" }) else {
+            print("SELFTEST ERROR: empty grounding must add no section"); exit(1)
+        }
+
+        let offset = KnowledgeGrounding.assemble(passages, startAt: 21)
+        guard offset.sources.map(\.n) == [21, 22],
+              offset.block.contains("[21] Papers / a.pdf (part 1)"),
+              offset.block.contains("[22] Papers / b.md (part 5)") else {
+            print("SELFTEST ERROR: knowledge numbering offset"); exit(1)
+        }
+
+        var groundedReply = Message(role: .assistant, text: "Grounded answer.")
+        groundedReply.sources = assembly.sources
+        guard NativeMemoryExtractionPolicy.disposition(
+            user: "what does the manual say", assistant: groundedReply,
+            conversationExcluded: false) == .grounded else {
+            print("SELFTEST ERROR: grounded replies must be ineligible for memory extraction"); exit(1)
+        }
+        var localRAGReply = Message(role: .assistant, text: "Research answer.")
+        localRAGReply.sources = [PulseSource(n: 1, title: "Papers (local knowledge)", url: "local")]
+        guard NativeMemoryExtractionPolicy.disposition(
+            user: "researched question", assistant: localRAGReply,
+            conversationExcluded: false) == .grounded else {
+            print("SELFTEST ERROR: research replies with local knowledge sources must be grounded"); exit(1)
+        }
+        var researchReply = Message(role: .assistant, text: "Web answer.")
+        researchReply.sources = [PulseSource(n: 1, title: "Site", url: "https://example.com")]
+        guard NativeMemoryExtractionPolicy.disposition(
+            user: "what is on the site", assistant: researchReply,
+            conversationExcluded: false) == .eligible else {
+            print("SELFTEST ERROR: research sources alone must stay eligible"); exit(1)
+        }
+        var mixedReply = Message(role: .assistant, text: "Both.")
+        mixedReply.sources = [PulseSource(n: 1, title: "Site", url: "https://example.com")]
+            + offset.sources
+        guard NativeMemoryExtractionPolicy.disposition(
+            user: "mix", assistant: mixedReply, conversationExcluded: false) == .grounded else {
+            print("SELFTEST ERROR: merged research and knowledge sources must stay grounded"); exit(1)
+        }
+
+        guard KnowledgeGroundingStatus.retrieving.label == "Searching knowledge",
+              KnowledgeGroundingStatus.grounded(1).label == "1 passage",
+              KnowledgeGroundingStatus.grounded(3).label == "3 passages",
+              KnowledgeGroundingStatus.empty.label == "No relevant passages",
+              KnowledgeGroundingStatus.unconfigured.label == "Knowledge unavailable",
+              KnowledgeGroundingStatus.error("x").label == "Knowledge lookup failed" else {
+            print("SELFTEST ERROR: knowledge grounding status labels"); exit(1)
+        }
+
+        do {
+            let repository = try LocalChatRepository(inMemory: true)
+            var convo = Conversation(id: "conv-k", title: "Grounded", messages: [],
+                                     updatedAt: Date(timeIntervalSince1970: 500))
+            convo.isPersisted = true
+            convo.grounding = ["c1", "c2"]
+            try repository.saveConversation(convo)
+            let listed = try repository.listConversations()
+            guard listed.first(where: { $0.id == "conv-k" })?.grounding == ["c1", "c2"] else {
+                print("SELFTEST ERROR: grounding persistence round trip"); exit(1)
+            }
+            convo.grounding = []
+            try repository.saveConversation(convo)
+            guard try repository.listConversations()
+                .first(where: { $0.id == "conv-k" })?.grounding == [] else {
+                print("SELFTEST ERROR: grounding clears to empty"); exit(1)
+            }
+        } catch {
+            print("SELFTEST ERROR: grounding persistence threw: \(error)"); exit(1)
+        }
+        print("selftest: knowledge OK")
     }
 }

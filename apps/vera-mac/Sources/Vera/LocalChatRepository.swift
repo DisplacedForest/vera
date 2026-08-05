@@ -217,6 +217,11 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                 table.add(column: "instructions", .text)
             }
         }
+        migrator.registerMigration("knowledgeGroundingV10") { db in
+            try db.alter(table: "conversations") { table in
+                table.add(column: "grounding_json", .text)
+            }
+        }
         try migrator.migrate(database)
     }
 
@@ -253,7 +258,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     func listConversations() throws -> [Conversation] {
         try database.read { db in
             try Row.fetchAll(db, sql: """
-                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions
+                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json
                 FROM conversations
                 ORDER BY pinned DESC, updated_at DESC
                 """).map(Self.decodeConversation)
@@ -263,7 +268,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
     func conversation(originType: String, originID: String) throws -> Conversation? {
         try database.read { db in
             try Row.fetchOne(db, sql: """
-                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions
+                SELECT id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json
                 FROM conversations
                 WHERE origin_type = ? AND origin_id = ?
                 """, arguments: [originType, originID]).map(Self.decodeConversation)
@@ -275,8 +280,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         try database.write { db in
             try db.execute(sql: """
                 INSERT INTO conversations
-                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, arguments: [
                     conversation.id,
                     conversation.title,
@@ -287,6 +292,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                     conversation.originType,
                     conversation.originID,
                     conversation.instructions,
+                    KnowledgeGrounding.encodeSelection(conversation.grounding),
                 ])
             try db.execute(sql: """
                 INSERT INTO messages
@@ -353,14 +359,15 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
         try database.write { db in
             try db.execute(sql: """
                 INSERT INTO conversations
-                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, title, created_at, updated_at, pinned, memory_excluded, origin_type, origin_id, instructions, grounding_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
                     updated_at = excluded.updated_at,
                     pinned = excluded.pinned,
                     memory_excluded = excluded.memory_excluded,
-                    instructions = excluded.instructions
+                    instructions = excluded.instructions,
+                    grounding_json = excluded.grounding_json
                 """, arguments: [
                     conversation.id,
                     conversation.title,
@@ -371,6 +378,7 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
                     conversation.originType,
                     conversation.originID,
                     conversation.instructions,
+                    KnowledgeGrounding.encodeSelection(conversation.grounding),
                 ])
         }
     }
@@ -865,7 +873,8 @@ final class LocalChatRepository: ChatRepository, NativeMemoryRepository, NativeP
             memoryExcluded: row["memory_excluded"],
             originType: row["origin_type"],
             originID: row["origin_id"],
-            instructions: row["instructions"])
+            instructions: row["instructions"],
+            grounding: KnowledgeGrounding.decodeSelection(row["grounding_json"]))
     }
 
     private static func decode<T: Decodable>(_ raw: String?, as type: T.Type) -> T? {

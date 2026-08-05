@@ -7,7 +7,6 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 | Piece | What it is | Required? |
 |---|---|---|
 | An OpenAI-compatible LLM server | llama.cpp / llama-swap / vLLM / Ollama / a hosted API — anything serving `/v1` | Yes |
-| [Open WebUI](https://github.com/open-webui/open-webui) | Transitional tool and skill surfaces | No |
 | **Vera.app** (this repo) | The native macOS client with direct streaming text chat and local history | Recommended |
 | **vera-api** (this repo) | One FastAPI container that lights up the ambient and experimental surfaces (Pulse, veins, weather, kitchen, research, knowledge collections, heartbeat, scheduler, actions) | Optional |
 | Integrations (Home Assistant, Grocy, Mealie, Overseerr, Unraid, SearXNG, Reddit, Embeddings) | Each unlocks a capability | No |
@@ -18,8 +17,7 @@ This is the end-to-end path from nothing to a working installation: backend, cha
 ## 1. Prerequisites
 
 - **An LLM endpoint** — any standard OpenAI-compatible `/v1` server with a capable instruct model.
-- **Docker** (optional) on any Linux/macOS host for vera-api or Open WebUI.
-- **Open WebUI** (optional) for the transitional tool and skill surfaces that have not moved into the native engine.
+- **Docker** (optional) on any Linux/macOS host for vera-api.
 
 ## 2. vera-api
 
@@ -49,7 +47,6 @@ docker compose logs vera-api | head -60
 | Block | Variables | What it unlocks |
 |---|---|---|
 | Core LLM | `VERA_BASE`, `VERA_MODEL` | Everything generated: Pulse briefings, card text, judges |
-| Open WebUI | `OWUI_BASE`, `OWUI_KEY` | Transitional server-side tool and skill surfaces, and the app's legacy voice transport, while one is still connected |
 | Web search | `SEARXNG_BASE` (+ optional `PLAYWRIGHT_WS`) | Research, Pulse sourcing, watcher veins, and the Mac app's web search and deep research chat tools (the app reaches them through its `vera_api_base` setting, never SearXNG directly) |
 | Identity | `VERA_OWNER_ID`, `VERA_OWNER_NAME`, `HOME_LOCATION_NAME`, `HOME_TZ`, `WEATHER_LAT`/`LON`, `TEMPERATURE_UNIT` | Personalization, the owner id that cards/read marks/profiles are keyed by (defaults to `owner`), schedules in your timezone, weather anchoring |
 | Dream/coder | `DREAM_BASE`, `DREAM_MODEL`, `DREAM_TOOL_PROTOCOL` | Nightly knowledge consolidation + fact verification |
@@ -64,21 +61,16 @@ Two conventions:
 - **Endpoints are `*_BASE`, credentials are `*_KEY`.** Older names still work; the config report flags them with their replacement.
 - **Unset means off, visibly.** A capability without its endpoint reports itself as not configured — it never fakes output and never affects other capabilities.
 
-Integrations (Home Assistant and the rest) can be set in `.env` for headless installs; the app's integration store in step 4 is the recommended path.
+Integrations (Home Assistant and the rest) can be set in `.env` for headless installs; the app's integration store in step 3 is the recommended path.
 
-## 3. Wire Open WebUI (optional)
+### Reference corpus sync and backups
 
-Vera attaches to Open WebUI as a set of tools (model-invokable capabilities) and functions (every-turn pipeline filters):
+Two host scripts cover the standing ops work, and each documents its own environment in its header:
 
-1. **Tools** — in Open WebUI: Workspace → Tools → create, then paste each file from `services/owui-tools/` you want (start with `vera_memory.py` and `deep_research.py`; add `kitchen.py`, `media_request.py`, `home_knowledge.py`, `propose_action.py`, `see_image.py`, `self_author.py` as you enable their backends). In each tool's valve settings, set `vera_api_url` to your vera-api base.
-2. **Functions** — Admin → Functions → create, paste from `services/owui-functions/` (the memory filter; `vision_autosee.py` if you run a vision endpoint), enable them.
-3. **The model** — give your Vera model the tools you imported (model settings → tools) so chat can invoke them.
+- `scripts/rag-sync.py` reconciles a folder tree of reference documents into vera-api document collections: it walks `REFERENCE_ROOT/<domain>/`, uploads new and changed files, removes deleted ones, and is safe to re-run. It needs the vera-api base URL, passed as `--vera-api-base` or read from `VERA_API_BASE`, and has no default. `scripts/vera-rag-sync.sh` is the cron wrapper: it exports `REFERENCE_ROOT`, and when `VERA_API_BASE` is not already in the environment it reads it from the deployed vera-api env file (`VERA_API_ENV_FILE`).
+- `scripts/vera-backup.sh` is a reference nightly backup. It streams vera-api's `/data` stores out of the running container, so everything the engine owns (documents, veins, Pulse, memory, scheduler, and workflow state) is captured from the named volume rather than from host paths, then archives the container's config alongside it and writes checksums and a manifest.
 
-Open WebUI tools and features do not apply to native text chat. Native chat sends the saved system prompt, selected model, and completed local conversation history directly to `POST /v1/chat/completions`. It uses only the standard OpenAI `tools`, streamed `tool_calls`, assistant tool-call, and `tool` result fields. No Open WebUI fallback or model-specific text convention is used. Endpoints that return text only continue to work as text chat.
-
-The Mac app no longer performs any Open WebUI wiring; the manual steps above are the only way to attach these transitional server-side surfaces.
-
-## 4. The Mac app
+## 3. The Mac app
 
 **From a release** (macOS 26 Tahoe or later; earlier macOS can run releases up to 0.2.x): download `Vera.app.zip` from the [latest release](https://github.com/DisplacedForest/vera/releases/latest), unzip, and drag `Vera.app` to Applications. The app is ad-hoc signed (no notarization), so macOS quarantines the first launch — right-click → **Open** once, and it runs normally from then on. The app checks Releases and can update itself in place.
 
@@ -90,7 +82,7 @@ swift build -c release
 scripts/deploy.sh    # packages Vera.app, ad-hoc signs it, installs it to /Applications
 ```
 
-First launch runs **onboarding**. Give the endpoint a friendly saved name, enter its OpenAI-compatible URL ending in `/v1`, and add an optional API key. The key is stored in the Mac keychain. Discover models, inspect every returned identifier, choose one explicitly, review the local system prompt, decide whether to enable local memory, and inspect the native tool picker. The guide can be skipped and resumed from Settings, Endpoints. A valid configuration from an earlier release migrates into a saved endpoint and opens the app normally. Native conversations and approved memory live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history and memory off. Existing Open WebUI history and memory remain untouched.
+First launch runs **onboarding**. Give the endpoint a friendly saved name, enter its OpenAI-compatible URL ending in `/v1`, and add an optional API key. The key is stored in the Mac keychain. Discover models, inspect every returned identifier, choose one explicitly, review the local system prompt, decide whether to enable local memory, and inspect the native tool picker. The guide can be skipped and resumed from Settings, Endpoints. A valid configuration from an earlier release migrates into a saved endpoint and opens the app normally. Native conversations and approved memory live in `~/.vera/vera.sqlite`. A fresh native install starts with empty history and memory off.
 
 Settings, Models keeps the last successful discovery result, shows the active model and whether it was restored, recommended, or chosen by you, and distinguishes an empty response, unusable model entries, authentication failure, network failure, and malformed data. Refresh never clears a known selection just because discovery fails. Settings, Persona holds the prompt library: personas with one active selection, user context, and reusable prompts, each with revision history and markdown import and export. Settings, Tools clearly separates callable tools from unavailable integrations and persists enabled choices. Apple Reminders starts disabled. Enabling it deliberately requests macOS Reminders access. Denied or unavailable tools are omitted from model requests even when their saved preference remains on.
 
@@ -110,7 +102,7 @@ python3 scripts/migrate_owui_knowledge.py \
 ```
 
 Drop `--dry-run` to run it for real (the flags also read from `OWUI_BASE`, `OWUI_API_KEY`,
-and `VERA_API_BASE`). The script recreates each knowledge base as a vera-api collection,
+and `VERA_API_BASE`, the same base URL the reference corpus sync uses). The script recreates each knowledge base as a vera-api collection,
 downloads every stored file, and uploads it through the documents ingestion endpoints, so
 the native engine re-chunks and re-embeds everything with your configured embeddings
 integration; no vectors are copied and the Open WebUI instance is never modified. It
@@ -119,7 +111,7 @@ otherwise. Re-running is safe: files already present with identical content are 
 and the report lists everything created, uploaded, skipped, or failed. Chat history is not
 migrated; the native store starts fresh by design.
 
-Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api, the standalone bridge service, or Open WebUI. They are available only during an explicit chat turn. Pulse, dreaming, scheduled work, voice, and other autonomous paths cannot invoke them.
+Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api or the standalone bridge service. They are available only during an explicit chat turn. Pulse, dreaming, scheduled work, voice, and other autonomous paths cannot invoke them.
 
 Each call renders as a pending, succeeded, or failed activity chip. Expand it to inspect the JSON request and result. Activity is stored with local conversation history without endpoint credentials or authorization headers. Unknown tools, disabled or unavailable tools, invalid JSON arguments, and calls past the loop limits do not execute. Their bounded error result is returned to the model. A turn stops after four tool rounds or eight total calls. A tool failure, malformed stream, endpoint outage, or exhausted limit keeps received text and activity and marks the assistant turn interrupted when no final answer arrives.
 
@@ -196,7 +188,7 @@ Settings, Memory controls the optional native personal-memory feature. It starts
 
 All generated changes wait in the Memory review queue. Vera does not automatically create, update, merge, suppress, or prune approved memory. Episodic memory requires an absolute expiry date, stops appearing in recall after that date, and is removed by an automatic groom once the date has passed, with each removal recorded in the audit trail. A conversation can be excluded from suggestions through its sidebar menu.
 
-See [Native memory](NATIVE_MEMORY.md) for the recall budgets, privacy boundary, retained Adaptive Memory behavior, and intentional differences.
+See [Native memory](NATIVE_MEMORY.md) for the recall budgets, the privacy boundary, and the behavior it guarantees.
 
 ### Conversation ingestion (opt-in)
 
@@ -204,14 +196,14 @@ vera-api's Profile Graph learns from conversation transcripts. Alongside the sch
 
 When vera-api is configured, Pulse and the other ambient surfaces continue operating independently. The two opt-in surfaces afterward each live inside the feature they drive:
 
-- **Plugins** — the integration store, a tab in **Settings** (⌘,). Each card is one integration: enter URL + key, **Test**, **Save & Enable**. The app writes vera-api's config and performs the OWUI wiring in the same step. Experimental features (whole-house event modeling, media curation) sit behind their parent integration with an explicit consent sheet — off until consented.
+- **Plugins** — the integration store, a tab in **Settings** (⌘,). Each card is one integration: enter URL + key, **Test**, **Save & Enable**. The app writes vera-api's config in the same step. Experimental features (whole-house event modeling, media curation) sit behind their parent integration with an explicit consent sheet — off until consented.
 - **Veins** — Pulse's ambient monitors, opened from the **Veins** button in the Pulse header. **Vera ships with none**: a vein is something you build for your own life — a river gauge, a service-status watch, a geopolitics bar, whatever deserves an ambient eye — and your catalog starts empty. Every vein is a schema-validated JSON definition living one file per vein at `/data/veins.d/<kind>.json`, managed through the API (`GET /pulse/veins/schema` serves the contract, `POST /pulse/veins` creates). A vein carries a `pipeline` of blocks (the built-ins `web_search`, `http_fetch`, `ha_state`, `trip_band`, `llm_judge`, `llm_compose`, `situation_cluster`, `present`, plus code-backed blocks capabilities register, plus any Python modules you drop in the data volume's `blocks.d/` — the code extension point for bespoke sources, each calling `vein_engine.register` at import) and a cron `schedule`, and the vein engine runs it: dropping a valid definition file in place is all it takes to have a running ambient monitor, and a definition marked `standing` keeps one always-present card updated in place instead of alerting. Each pipeline vein registers a scheduler job as `vein_<kind>`, `POST /pulse/veins/{kind}/run` fires it on demand (`dry_run=true` returns the would-be cards without posting), and the engine owns quiet discipline: one card per distinct situation (updated, never stacked), a seen-memory so watchers don't re-alert on a standing story (`VEIN_SEEN_DECAY_DAYS`, default 7), and a schedule floor for LLM-bearing pipelines (`VEIN_LLM_FLOOR_MINUTES`, default 30; engine state in `VEIN_ENGINE_DB_PATH`). Per-vein enable/options state lives separately in `/data/veins.json`. The Veins pane shows only what this deployment can actually run: a vein whose definition requires an integration appears once that integration is connected (`GET /pulse/veins/catalog` returns exposed veins, `?all=true` adds the requirement-unmet ones for the pane's Add-a-vein browse sheet), and removing the integration hides the vein again while keeping its settings. Veins you author yourself always show, whatever their requirements. You don't have to write definitions by hand: `POST /pulse/veins/builder/turn` runs the authoring conversation against whatever model `VERA_BASE`/`VERA_MODEL` name (describe what you want watched; each turn returns prose plus a schema-validated draft), and `POST /pulse/veins/builder/dry_run` executes an unsaved draft once and returns what would have posted, persisting nothing. With no model configured both endpoints report disabled cleanly. After a vein exists, its Configure sheet can reopen it in the builder to edit the definition in place or delete it outright (`PUT /pulse/veins/{kind}/definition`, `DELETE /pulse/veins/{kind}`), so the whole lifecycle lives in the app.
 
 **Sharing veins.** A vein is a file, so it travels. Export one from its detail sheet (or `GET /pulse/veins/{kind}/export`) and you get a `<kind>.vein.json` with deployment specifics stripped: provider URLs, env-seeded option defaults, and any secret-shaped strings are cleared, so the file is safe to hand to anyone. Import one from the Add-a-vein sheet (or `POST /pulse/veins/import`): it validates against the schema, re-resolves requirements on your deployment, warns about anything unmet or any pipeline block this build lacks (the vein simply cannot enable until it exists), and lands the vein **disabled**. Review it, then enable it exactly like a vein you built yourself. A file from a newer deployment format is refused with a clear message rather than imported half-understood.
 
 Both are UI over vera-api's API — headless deployments can do everything with `curl`.
 
-## 5. Integrations, one by one
+## 4. Integrations, one by one
 
 Each integration unlocks its capability when its test passes; each degrades to "off" when absent. All are configurable from the integration store or `.env`:
 
@@ -227,7 +219,7 @@ Each integration unlocks its capability when its test passes; each degrades to "
 | Vision review | Reviews generated Pulse cover art and permits one retry | Any OpenAI-compatible vision-capable endpoint, including the primary-model endpoint when that model accepts images. Configure its base URL and model, then promote Pulse's visual-review workflow draft. |
 | Apple Reminders | Reminders lists read/write from chat, shared lists included | URL of the `vera-reminders` bridge (see satellite services below) |
 
-## 6. Satellite services (all optional)
+## 5. Satellite services (all optional)
 
 These are **documented HTTP contracts** with reference implementations in this repo. The references are MLX-based (Apple Silicon), but anything that implements the contract fills the slot:
 
@@ -248,8 +240,8 @@ to everyone.
 Tools and enable **Apple Reminders**. The native permission prompt appears, and standard
 OpenAI tool calls then reach EventKit directly inside the app. The separate Apple
 Reminders switch in Settings, Plugins controls the optional vera-api bridge wiring and
-does not expose the native chat schema. This path needs neither vera-api nor Open WebUI
-and runs only for an explicit chat ask.
+does not expose the native chat schema. This path does not need vera-api and runs only for
+an explicit chat ask.
 
 `services/vera-reminders` remains the headless reference for deployments with no Mac
 app. Run `scripts/deploy-vera-reminders.sh` on a signed-in Mac, approve the one-time
@@ -260,7 +252,7 @@ companion-services section; voice installs with one command (`scripts/deploy-ver
 runtime copy-out, both venvs, launchd agents), and the image/vision services ship launchd
 templates installed via `scripts/install-launchd.sh`.
 
-## 7. The scheduler
+## 6. The scheduler
 
 vera-api runs all recurring work itself — no external cron. Defaults:
 
@@ -281,13 +273,13 @@ Opening the Pulse flow switches the existing app sidebar to the node library ser
 
 A Run toggle on the same canvas overlays the latest recorded run, per node state, output counts, and duration, and selecting a node shows its recorded input, output, timing, and any error in place of the config fields.
 
-Everything autonomous is auditable in one place: `GET /agentic/activity?hours=24` returns a normalized, newest-first feed merging heartbeat outcomes, scheduled job runs, the action audit log, and Open WebUI automation runs (when OWUI's automations API is reachable). The app renders it as the **Activity** pane of the Agentic tab, refreshed every 30 seconds, and recent events animate along their edges on the canvas. A missing backing store or unreachable OWUI contributes nothing instead of erroring, so the feed works on any subset of the stack.
+Everything autonomous is auditable in one place: `GET /agentic/activity?hours=24` returns a normalized, newest-first feed merging heartbeat outcomes, scheduled job runs, and the action audit log. The app renders it as the **Activity** pane of the Agentic tab, refreshed every 30 seconds, and recent events animate along their edges on the canvas. A missing backing store contributes nothing instead of erroring, so the feed works on any subset of the stack.
 
 The heartbeat tick also resolves Vera's **journal** watches: a due watch node whose resolve condition and date are both met transitions to resolved deterministically (no model recheck, so a watch can never become immortal). The journal itself is a view over the Profile Graph's watch and project nodes, rendered read-only in the app's Journal view and at `GET /journal`; the legacy self-authored markdown at `VERA_JOURNAL_PATH` (default `/data/journal/JOURNAL.md`) remains only as a fallback until the graph holds nodes. With no watch nodes and no fallback file, the step and the view are empty. Chat steers the journal through the `self_author.py` tool's `read_journal` / `journal_commit` functions (a commit lands a watch node), so install that tool if you want "keep an eye on X" and "what are you watching" to work in conversation.
 
 With the Mealie integration enabled, the heartbeat can also **curate recipes autonomously**: when Vera finds a recipe genuinely worth keeping she imports it herself through `POST /actions/auto` — no confirmation card. This free lane accepts only verbs explicitly enrolled as `autonomous` in the action registry (today: `kitchen.mealie_import`, which the registry permits because it is low-risk and reversible by deleting the recipe). Imports are capped at 2 per tick and 3 per rolling day, duplicate URLs are skipped, every execution lands in the action audit log with `auto=true`, and each import posts a System card with the recipe link. Without Mealie configured the lane simply never produces anything; `HEARTBEAT_ENABLED=false` stops it along with the rest of the tick.
 
-## 8. Verifying the install
+## 7. Verifying the install
 
 1. `curl localhost:8089/health` — vera-api is up.
 2. The startup config report lists every endpoint you configured (and flags anything deprecated or missing).

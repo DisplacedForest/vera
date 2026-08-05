@@ -1,7 +1,7 @@
 """Heartbeat — the proactive primitive (the OpenClaw-style free-run loop).
 
 POST /heartbeat/tick: in a trimmed/isolated context (never Vera's main session), Vera reads her
-self-authored HEARTBEAT.md (an OWUI Skill) + live HA state + her world-model core + rhythm
+self-authored HEARTBEAT.md + live HA state + her world-model core + rhythm
 deviations + memory, then on her own judgment does any of:
   - LEARN (free): research something worth catching up on and write it to her world-model.
   - REFINE (free): rewrite her own HEARTBEAT.md.
@@ -44,12 +44,6 @@ from .pulse import (StatusCard, _active_users, _get_memories,
 from .websearch import SearchRequest, search as web_search
 
 router = APIRouter()
-OWUI_BASE = os.environ.get("OWUI_BASE", "").rstrip("/")
-
-
-def _headers():
-    return {"Authorization": f"Bearer {os.environ.get('OWUI_KEY', '')}",
-            "Content-Type": "application/json"}
 TZ = ZoneInfo(os.environ.get("HOME_TZ", "UTC"))
 CHECKLIST = os.path.join(os.path.dirname(__file__), "..", "HEARTBEAT.md")
 HB_DESC = "Vera's standing proactive instructions (self-authored; read each heartbeat tick)."
@@ -69,15 +63,10 @@ def _file_checklist() -> str:
 
 
 async def _heartbeat_doc() -> str:
-    """Vera's self-authored HEARTBEAT.md (the `heartbeat` OWUI Skill); fall back to the seed file."""
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"{OWUI_BASE}/api/v1/skills/id/heartbeat", headers=_headers(),
-                             timeout=aiohttp.ClientTimeout(total=15)) as r:
-                if r.status == 200:
-                    c = (await r.json()).get("content")
-                    if c:
-                        return c
+        s = authoring_store.skill_get(authoring.HEARTBEAT_SKILL_ID)
+        if s and s.get("content"):
+            return s["content"]
     except Exception:
         pass
     return _file_checklist()

@@ -1,41 +1,18 @@
 #!/usr/bin/env python3
-"""rag-sync — reconcile the reference corpus into OWUI knowledge collections.
+from __future__ import annotations
 
-The standing RAG pipeline. Walks $REFERENCE_ROOT/<domain>/, and for each domain
-reconciles its files into the matching OWUI collection using OWUI's incremental-sync
-endpoints — add new, replace changed, remove deleted. Idempotent: re-running with no
-disk changes does nothing. Drop a doc in a domain folder, run this (cron does it for
-you), and it becomes queryable RAG.
-
-A true reconcile, not a naive add-only ingest. Two facts
-verified against live OWUI 0.9.6 shape it:
-  - Built-in extraction handles PDFs server-side (no pdftotext needed) — we upload raw.
-  - The upload accepts a client-supplied `file_hash` in `metadata`; /sync/diff compares
-    the manifest checksum against that stored hash. So checksum == sha256(source file)
-    makes the diff deterministic across runs.
-
-Usage:
-  rag-sync.py --all                         # reconcile every mapped domain
-  rag-sync.py <domain-dir> "<Collection>"   # reconcile one domain into one collection
-  rag-sync.py --dry-run --all               # show the plan, change nothing
-
-Creds: an OWUI API key (env OWUI_KEY, used as a bearer token — what the cron uses, read
-from /mnt/user/appdata/vera-api/.env) OR email+password (env OWUI_EMAIL/OWUI_PASSWORD or
-~/.vera/config.json base/owui_email/owui_password). Reference root: env REFERENCE_ROOT
-(the /mnt/user/reference default is an example-deployment value — an Unraid share).
-"""
+import argparse
 import hashlib
 import json
 import os
 import sys
-import time
 import urllib.error
 import urllib.request
+import uuid
+from dataclasses import dataclass, field
 
 REFERENCE_ROOT = os.environ.get("REFERENCE_ROOT", "/mnt/user/reference")
 
-# domain folder -> OWUI collection display name. "medical" keeps the existing "First Aid"
-# collection (the live pilot). "security" is intentionally omitted — curate it deliberately.
 DOMAIN_COLLECTIONS = {
     "medical": "First Aid",
     "water": "Water",
@@ -48,57 +25,135 @@ DOMAIN_COLLECTIONS = {
     "navigation": "Navigation & Weather",
 }
 
-# files we never ingest (housekeeping, not reference content)
 SKIP_NAMES = {"COVERAGE.md", "README.md", ".DS_Store"}
 
-CONTENT_TYPES = {
-    ".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown",
-    ".html": "text/html", ".htm": "text/html", ".epub": "application/epub+zip",
-}
+ACCEPTED_EXTENSIONS = ("txt", "md", "pdf", "docx", "html")
 
 
-def _cfg():
-    p = os.path.expanduser("~/.vera/config.json")
-    c = json.load(open(p)) if os.path.exists(p) else {}
-    return (os.environ.get("OWUI_BASE", c.get("base")),
-            os.environ.get("OWUI_EMAIL", c.get("owui_email")),
-            os.environ.get("OWUI_PASSWORD", c.get("owui_password")),
-            os.environ.get("OWUI_KEY", c.get("owui_key")))
+@dataclass
+class Action:
+    kind: str
+    name: str
+    reason: str = ""
+    file_id: str = ""
 
 
-BASE, EMAIL, PW, KEY = _cfg()
+@dataclass
+class CollectionReport:
+    collection: str
+    created: bool = False
+    uploaded: list[str] = field(default_factory=list)
+    replaced: list[str] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)
+    skipped: list[tuple[str, str]] = field(default_factory=list)
+    failed: list[tuple[str, str]] = field(default_factory=list)
+
+    def render(self) -> str:
+        head = (f"== {self.collection} "
+                f"({'created' if self.created else 'exists'}) "
+                f"+{len(self.uploaded)} uploaded "
+                f"~{len(self.replaced)} replaced "
+                f"-{len(self.deleted)} deleted "
+                f"={len(self.skipped)} skipped "
+                f"x{len(self.failed)} failed")
+        lines = [head]
+        for name in self.uploaded:
+            lines.append(f"   + {name}")
+        for name in self.replaced:
+            lines.append(f"   ~ {name}")
+        for name in self.deleted:
+            lines.append(f"   - {name}")
+        for name, reason in self.skipped:
+            lines.append(f"   = {name} ({reason})")
+        for name, reason in self.failed:
+            lines.append(f"   x {name} ({reason})")
+        return "\n".join(lines)
 
 
-def _req(method, path, token=None, json_body=None, multipart=None):
-    url = BASE.rstrip("/") + path
-    if multipart:
-        boundary = "----verasync"
-        fname, data, ctype, meta = multipart
-        body = b""
-        body += f"--{boundary}\r\n".encode()
-        body += f'Content-Disposition: form-data; name="file"; filename="{os.path.basename(fname)}"\r\n'.encode()
-        body += f"Content-Type: {ctype}\r\n\r\n".encode() + data + b"\r\n"
-        if meta is not None:
-            body += f"--{boundary}\r\n".encode()
-            body += b'Content-Disposition: form-data; name="metadata"\r\n\r\n'
-            body += json.dumps(meta).encode() + b"\r\n"
-        body += f"--{boundary}--\r\n".encode()
-        r = urllib.request.Request(url, data=body, method=method)
-        r.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-    else:
-        r = urllib.request.Request(url, data=(json.dumps(json_body).encode() if json_body is not None else None), method=method)
-        r.add_header("Content-Type", "application/json")
-    if token:
-        r.add_header("Authorization", "Bearer " + token)
-    try:
-        with urllib.request.urlopen(r, timeout=600) as x:
-            return json.loads(x.read())
-    except urllib.error.HTTPError as e:
-        e.detail = e.read().decode()[:300]
-        raise
+@dataclass
+class Report:
+    collections: list[CollectionReport] = field(default_factory=list)
+
+    @property
+    def failed(self) -> list[tuple[str, str]]:
+        return [item for c in self.collections for item in c.failed]
+
+    def render(self) -> str:
+        lines = [c.render() for c in self.collections]
+        lines.append("")
+        lines.append(f"collections created: {sum(1 for c in self.collections if c.created)}")
+        lines.append(f"files uploaded: {sum(len(c.uploaded) for c in self.collections)}")
+        lines.append(f"files replaced: {sum(len(c.replaced) for c in self.collections)}")
+        lines.append(f"files deleted: {sum(len(c.deleted) for c in self.collections)}")
+        lines.append(f"files skipped: {sum(len(c.skipped) for c in self.collections)}")
+        lines.append(f"files failed: {len(self.failed)}")
+        return "\n".join(lines)
 
 
-def _sha256(path):
+class DocumentsApi:
+    def __init__(self, base: str):
+        self.base = base.rstrip("/")
+
+    def _request(self, method: str, path: str, body: bytes | None = None,
+                 content_type: str | None = None) -> dict:
+        headers = {}
+        if content_type:
+            headers["Content-Type"] = content_type
+        req = urllib.request.Request(self.base + path, data=body, headers=headers,
+                                     method=method)
+        with urllib.request.urlopen(req, timeout=600) as r:
+            raw = r.read()
+        return json.loads(raw) if raw else {}
+
+    def status(self) -> dict:
+        return self._request("GET", "/documents/status")
+
+    def collections(self) -> list[dict]:
+        return self._request("GET", "/documents/collections").get("collections", [])
+
+    def create_collection(self, name: str, description: str) -> dict:
+        payload = json.dumps({"name": name, "description": description}).encode("utf-8")
+        return self._request("POST", "/documents/collections", payload, "application/json")
+
+    def collection_files(self, cid: str) -> list[dict]:
+        return self._request("GET", f"/documents/collections/{cid}/files").get("files", [])
+
+    def upload(self, cid: str, name: str, data: bytes) -> dict:
+        boundary = uuid.uuid4().hex
+        safe = name.replace('"', "_")
+        body = (f"--{boundary}\r\nContent-Disposition: form-data; "
+                f'name="upload"; filename="{safe}"\r\n'
+                f"Content-Type: application/octet-stream\r\n\r\n").encode("utf-8")
+        body += data + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        return self._request("POST", f"/documents/collections/{cid}/files", body,
+                             f"multipart/form-data; boundary={boundary}")
+
+    def delete_file(self, fid: str) -> dict:
+        return self._request("DELETE", f"/documents/files/{fid}")
+
+    def reindex_file(self, fid: str) -> dict:
+        return self._request("POST", f"/documents/files/{fid}/reindex",
+                             b"{}", "application/json")
+
+
+def index_verdict(response: dict) -> tuple[bool, str]:
+    index: dict = {}
+    if isinstance(response, dict):
+        nested = response.get("index")
+        index = nested if isinstance(nested, dict) else response
+    status = str(index.get("status") or "unknown")
+    if status == "ready":
+        return True, ""
+    detail = str(index.get("error") or index.get("detail") or status)
+    return False, f"indexing {status}: {detail}" if detail != status else f"indexing {status}"
+
+
+def file_extension(name: str) -> str:
+    _, _, ext = name.rpartition(".")
+    return ext.lower() if "." in name else ""
+
+
+def sha256_of(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -106,119 +161,190 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def _collection(token, name, create=True):
-    cols = _req("GET", "/api/v1/knowledge/", token)
-    items = cols.get("items", cols) if isinstance(cols, dict) else cols
-    col = next((c for c in items if c.get("name") == name), None)
-    if col:
-        return col["id"], False
-    if not create:
-        return None, False
-    col = _req("POST", "/api/v1/knowledge/create", token,
-               json_body={"name": name, "description": f"{name} reference for Vera (RAG, offline)."})
-    return col["id"], True
-
-
-def _upload(token, fpath, checksum):
-    """Upload one file (raw; server extracts), stamping our checksum as file_hash.
-    Polls until OWUI has extracted content, then returns the new file id."""
-    ext = os.path.splitext(fpath)[1].lower()
-    ctype = CONTENT_TYPES.get(ext, "text/plain")
-    data = open(fpath, "rb").read()
-    up = _req("POST", "/api/v1/files/", token,
-              multipart=(os.path.basename(fpath), data, ctype, {"file_hash": checksum}))
-    fid = up["id"]
-    for _ in range(150):  # large/scanned PDFs extract slowly; wait up to ~5 min
-        rec = _req("GET", f"/api/v1/files/{fid}", token)
-        if (((rec or {}).get("data")) or {}).get("content"):
-            return fid
-        time.sleep(2)
-    # No text layer (e.g. a scanned PDF) or extraction failed — drop the orphan upload.
-    try:
-        _req("DELETE", f"/api/v1/files/{fid}", token)
-    except Exception:
-        pass
-    raise RuntimeError(f"no extracted content (no text layer?): {os.path.basename(fpath)}")
-
-
-def _manifest(domain_dir):
-    out = []
+def manifest(domain_dir: str) -> list[dict]:
+    out: list[dict] = []
     for name in sorted(os.listdir(domain_dir)):
-        fp = os.path.join(domain_dir, name)
-        if not os.path.isfile(fp) or name in SKIP_NAMES or name.startswith("."):
+        path = os.path.join(domain_dir, name)
+        if not os.path.isfile(path) or name in SKIP_NAMES or name.startswith("."):
             continue
-        out.append({"path": "", "filename": name, "checksum": _sha256(fp),
-                    "size": os.path.getsize(fp), "_fp": fp})
+        out.append({"name": name, "path": path, "size": os.path.getsize(path),
+                    "sha256": sha256_of(path)})
     return out
 
 
-def sync_domain(token, domain_dir, collection_name, dry_run=False):
-    if not os.path.isdir(domain_dir):
-        print(f"  ! {domain_dir}: not a directory — skipping"); return
-    manifest = _manifest(domain_dir)
-    cid, created = _collection(token, collection_name, create=not dry_run)
-    if cid is None:  # dry-run, collection doesn't exist yet — everything would be added
-        print(f"\n== {collection_name}  (would create)  [{len(manifest)} file(s) on disk] ==")
-        print(f"   plan: +{len(manifest)} add  ~0 update  -0 remove  =0 unchanged")
-        for m in manifest:
-            print(f"     + {m['filename']}")
-        return
-    tag = "created" if created else "exists"
-    print(f"\n== {collection_name}  ({tag}, {cid[:8]})  [{len(manifest)} file(s) on disk] ==")
+def plan(entries: list[dict], server_files: list[dict], supported: list[str],
+         file_cap: int) -> list[Action]:
+    by_name = {str(f.get("name")): f for f in server_files}
+    on_disk = {str(e["name"]) for e in entries}
+    actions: list[Action] = []
+    for entry in entries:
+        name = str(entry["name"])
+        ext = file_extension(name)
+        if ext not in supported:
+            actions.append(Action("skip", name, f"format '{ext or 'none'}' not in "
+                                                f"{', '.join(supported)}"))
+            continue
+        if file_cap and int(entry["size"]) > file_cap:
+            actions.append(Action("skip", name, f"{entry['size']} bytes passes the "
+                                                f"{file_cap} byte per-file cap"))
+            continue
+        server = by_name.get(name)
+        if server is None:
+            actions.append(Action("upload", name))
+            continue
+        if str(server.get("sha256") or "") != str(entry["sha256"]):
+            actions.append(Action("replace", name, "content changed on disk",
+                                  str(server.get("id") or "")))
+            continue
+        if str(server.get("state") or "") == "failed":
+            actions.append(Action("reindex", name, "previous indexing failed",
+                                  str(server.get("id") or "")))
+            continue
+        actions.append(Action("skip", name, "already present with identical content"))
+    for name, server in by_name.items():
+        if name not in on_disk:
+            actions.append(Action("delete", name, "no longer on disk",
+                                  str(server.get("id") or "")))
+    return actions
 
-    diff = _req("POST", f"/api/v1/knowledge/{cid}/sync/diff", token,
-                json_body={"manifest": [{"path": m["path"], "filename": m["filename"], "checksum": m["checksum"], "size": m["size"]} for m in manifest]})
-    added = diff.get("added", []); modified = diff.get("modified", [])
-    deleted = diff.get("deleted", []); unmod = diff.get("unmodified_count", 0)
-    print(f"   plan: +{len(added)} add  ~{len(modified)} update  -{len(deleted)} remove  ={unmod} unchanged")
-    if dry_run:
-        for a in added: print(f"     + {a['filename']}")
-        for m in modified: print(f"     ~ {m['filename']}")
-        for d in deleted: print(f"     - {d['filename']}")
-        return
 
-    by_name = {m["filename"]: m for m in manifest}
-    # Remove stale (changed) + deleted files FIRST. OWUI rejects adding a file whose
-    # content duplicates one already in the collection, so a replacement must drop its
-    # old version before the new one is added.
-    stale = [mod["stale_file_id"] for mod in modified]
-    cleanup_ids = stale + [d["file_id"] for d in deleted]
-    if cleanup_ids or diff.get("rmdir"):
-        _req("POST", f"/api/v1/knowledge/{cid}/sync/cleanup", token,
-             json_body={"file_ids": cleanup_ids, "dir_ids": diff.get("rmdir", [])})
-        for d in deleted: print(f"     - {d['filename']} -> removed")
-        if stale: print(f"     (cleared {len(stale)} stale version(s) before re-embed)")
-    # Then add new + replacement files. Each file is independent — one slow/scanned/
-    # duplicate doc must not abort the rest of the run.
-    for entry, mark in [(a, "+") for a in added] + [(mod, "~") for mod in modified]:
-        m = by_name[entry["filename"]]
+def http_detail(error: Exception) -> str:
+    if isinstance(error, urllib.error.HTTPError):
+        detail = ""
         try:
-            fid = _upload(token, m["_fp"], m["checksum"])
-            _req("POST", f"/api/v1/knowledge/{cid}/file/add", token, json_body={"file_id": fid})
-            print(f"     {mark} {entry['filename']} -> embedded")
-        except urllib.error.HTTPError as e:
-            print(f"     x {entry['filename']} -> add failed {e.code}: {getattr(e,'detail','')}")
-        except Exception as e:
-            print(f"     x {entry['filename']} -> {str(e)[:90]}")
+            detail = str(json.loads(error.read()).get("detail", ""))
+        except Exception:
+            pass
+        return f"HTTP {error.code} {detail}".strip()
+    return str(error)
 
 
-def main():
-    args = [a for a in sys.argv[1:]]
-    dry = "--dry-run" in args
-    args = [a for a in args if a != "--dry-run"]
-    if not (BASE and (KEY or (EMAIL and PW))):
-        print("missing OWUI creds (env OWUI_KEY, or OWUI_EMAIL/OWUI_PASSWORD, or ~/.vera/config.json)"); sys.exit(1)
-    token = KEY or _req("POST", "/api/v1/auths/signin", json_body={"email": EMAIL, "password": PW})["token"]
+def sync_collection(api: DocumentsApi, collection_name: str, domain_dir: str,
+                    targets: dict[str, dict], supported: list[str], file_cap: int,
+                    dry_run: bool) -> CollectionReport:
+    report = CollectionReport(collection=collection_name)
+    if not os.path.isdir(domain_dir):
+        report.failed.append((collection_name, f"{domain_dir} is not a directory"))
+        return report
+    try:
+        entries = manifest(domain_dir)
+    except OSError as e:
+        report.failed.append((collection_name, f"reading {domain_dir}: {e}"))
+        return report
 
-    if args and args[0] == "--all":
-        for domain, coll in DOMAIN_COLLECTIONS.items():
-            sync_domain(token, os.path.join(REFERENCE_ROOT, domain), coll, dry_run=dry)
-    elif len(args) == 2:
-        sync_domain(token, args[0], args[1], dry_run=dry)
+    target = targets.get(collection_name)
+    server_files: list[dict] = []
+    if target is None:
+        report.created = True
+        if not dry_run:
+            try:
+                target = api.create_collection(
+                    collection_name, f"{collection_name} reference corpus.")
+            except Exception as e:
+                report.failed.append((collection_name,
+                                      f"creating collection: {http_detail(e)}"))
+                return report
+            targets[collection_name] = target
     else:
-        print(__doc__); sys.exit(1)
-    print("\ndone.")
+        try:
+            server_files = api.collection_files(str(target["id"]))
+        except Exception as e:
+            report.failed.append((collection_name, f"listing files: {http_detail(e)}"))
+            return report
+
+    sources = {str(e["name"]): str(e["path"]) for e in entries}
+    for action in plan(entries, server_files, supported, file_cap):
+        label = f"{collection_name}/{action.name}"
+        if action.kind == "skip":
+            report.skipped.append((label, action.reason))
+            continue
+        if dry_run:
+            if action.kind == "upload":
+                report.uploaded.append(label)
+            elif action.kind == "replace":
+                report.replaced.append(label)
+            elif action.kind == "delete":
+                report.deleted.append(label)
+            else:
+                report.uploaded.append(f"{label} (reindexed)")
+            continue
+        try:
+            if action.kind == "delete":
+                api.delete_file(action.file_id)
+                report.deleted.append(label)
+                continue
+            if action.kind == "reindex":
+                ok, detail = index_verdict(api.reindex_file(action.file_id))
+                if ok:
+                    report.uploaded.append(f"{label} (reindexed)")
+                else:
+                    report.failed.append((label, detail))
+                continue
+            if action.kind == "replace":
+                api.delete_file(action.file_id)
+            with open(sources[action.name], "rb") as f:
+                data = f.read()
+            ok, detail = index_verdict(api.upload(str(target["id"]), action.name, data))
+            if not ok:
+                report.failed.append((label, detail))
+            elif action.kind == "replace":
+                report.replaced.append(label)
+            else:
+                report.uploaded.append(label)
+        except Exception as e:
+            report.failed.append((label, f"{action.kind}: {http_detail(e)}"))
+    return report
+
+
+def run(api: DocumentsApi, pairs: list[tuple[str, str]], dry_run: bool) -> Report:
+    status = api.status()
+    if not status.get("configured"):
+        raise SystemExit("the vera-api embeddings integration is not configured; set "
+                         "VERA_EMBED_URL (and model) on the vera-api service, then re-run")
+    supported = [str(f) for f in status.get("supported_formats", [])] or list(ACCEPTED_EXTENSIONS)
+    file_cap = int(status.get("file_cap", 0) or 0)
+    targets = {str(c["name"]): c for c in api.collections()}
+
+    report = Report()
+    for domain_dir, collection_name in pairs:
+        report.collections.append(
+            sync_collection(api, collection_name, domain_dir, targets, supported,
+                            file_cap, dry_run))
+    return report
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Reconcile the reference corpus into the vera-api document store. "
+                    "Adds new files, replaces changed ones, removes files deleted from "
+                    "disk, and reindexes files whose previous indexing failed. Running "
+                    "again with no disk changes does nothing.")
+    parser.add_argument("directory", nargs="?", help="one domain directory to sync")
+    parser.add_argument("collection", nargs="?", help="collection name for that directory")
+    parser.add_argument("--all", action="store_true",
+                        help=f"sync every mapped domain under {REFERENCE_ROOT} "
+                             "(env REFERENCE_ROOT)")
+    parser.add_argument("--vera-api-base", default=os.environ.get("VERA_API_BASE", ""),
+                        help="vera-api base URL (env VERA_API_BASE)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the plan without writing anything")
+    args = parser.parse_args(argv)
+
+    if not args.vera_api_base.strip():
+        parser.error("missing the vera-api base URL: pass --vera-api-base or set VERA_API_BASE")
+    if args.all:
+        pairs = [(os.path.join(REFERENCE_ROOT, domain), collection)
+                 for domain, collection in DOMAIN_COLLECTIONS.items()]
+    elif args.directory and args.collection:
+        pairs = [(args.directory, args.collection)]
+    else:
+        parser.error("pass --all, or a domain directory and a collection name")
+
+    report = run(DocumentsApi(args.vera_api_base), pairs, args.dry_run)
+    print("dry run: nothing was written" if args.dry_run else "sync complete")
+    print(report.render())
+    return 1 if report.failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

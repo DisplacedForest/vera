@@ -12,12 +12,22 @@ KEEP=14                      # nightly snapshots to retain
 STAMP="$(date +%F_%H%M)"
 DEST="$DEST_ROOT/$STAMP"
 APP="${VERA_APPDATA_ROOT:-/mnt/user/appdata}"
+CONTAINER="${VERA_CONTAINER:-vera-api}"
 mkdir -p "$DEST"
 
 log() { echo "[$(date +%T)] $*"; }
 fail=0
 
-# 1. OWUI sqlite DB — the crown jewel (memories, chats, functions, sk- keys). Consistent snapshot.
+if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]; then
+  if docker exec "$CONTAINER" tar czf - -C / data > "$DEST/vera-data.tgz" 2>/dev/null; then
+    log "OK   vera-data.tgz ($(du -h "$DEST/vera-data.tgz" | cut -f1))"
+  else
+    log "FAIL vera-data.tgz stream from $CONTAINER"; fail=1
+  fi
+else
+  log "FAIL $CONTAINER is not running; its native stores were not backed up"; fail=1
+fi
+
 if sqlite3 "$APP/open-webui/webui.db" ".backup '$DEST/webui.db'" 2>/dev/null; then
   sync
   if [ "$(sqlite3 "$DEST/webui.db" 'PRAGMA integrity_check' 2>/dev/null)" = "ok" ]; then
@@ -42,6 +52,7 @@ tar czf "$DEST/n8n.tgz" -C "$APP" n8n 2>/dev/null && log "OK   n8n.tgz ($(du -h 
 # Manifest + checksums (a backup you can't verify isn't a backup).
 ( cd "$DEST" && sha256sum -- * > SHA256SUMS 2>/dev/null )
 echo "vera-backup $STAMP  host=$(hostname)  status=$([ $fail -eq 0 ] && echo OK || echo PARTIAL)" > "$DEST/MANIFEST"
+echo "vera-data.tgz  source=$CONTAINER:/data  $([ -s "$DEST/vera-data.tgz" ] && echo present || echo missing)" >> "$DEST/MANIFEST"
 log "manifest + checksums written"
 
 # Retention: keep the newest $KEEP, prune older.

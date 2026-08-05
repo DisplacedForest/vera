@@ -14,7 +14,6 @@ log = logging.getLogger("vera.config")
 GROUPS: list[tuple[str, list[str]]] = [
     ("core llm",      ["VERA_BASE", "VERA_MODEL", "VERA_CHAT_TEMPLATE_KWARGS",
                        "VERA_THINK_KWARGS_ON", "VERA_THINK_KWARGS_OFF"]),
-    ("open-webui",    ["OWUI_BASE", "OWUI_KEY"]),
     ("web search",    ["SEARXNG_BASE", "PLAYWRIGHT_WS"]),
     ("dream/coder",   ["DREAM_BASE", "DREAM_MODEL", "DREAM_TOOL_PROTOCOL"]),
     ("research",      ["RESEARCH_MAX_ITERATIONS"]),

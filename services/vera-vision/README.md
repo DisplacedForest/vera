@@ -1,9 +1,9 @@
 # vera-vision
 
 Vision serving for Vera: **Qwen3-VL-8B (4-bit) via `mlx-vlm`** on an Apple Silicon host,
-OpenAI-compatible at `http://<vision host>:8082/v1`. Vera reaches it through the
-`see_image` OWUI tool (see `../owui-tools/see_image.py`), which routes an attached image to this
-endpoint and returns the description: no manual model switching.
+OpenAI-compatible at `http://<vision host>:8082/v1`. Vera reaches it as a vision endpoint:
+the Mac app's vision bridge routes an attached image here when the selected chat model
+cannot accept it, and vera-api uses it for Pulse cover-art review. No manual model switching.
 
 ## Run
 

@@ -176,8 +176,6 @@ async def _x_overseerr(args):
 
 
 async def _x_skill_upsert(args):
-    """Apply a confirmed OWUI-skill write: snapshot the revision, then upsert the skill. The
-    only sanctioned path by which the model's skill text reaches OWUI."""
     from . import authoring
     sid = (args.get("id") or "").strip() or authoring._slug(args.get("name") or "")
     content = args.get("content") or ""
@@ -187,7 +185,7 @@ async def _x_skill_upsert(args):
 
 
 EXECUTORS = {
-    "owui.skill_upsert": _x_skill_upsert,
+    "authoring.skill_upsert": _x_skill_upsert,
     "ha.service": _x_ha,
     "knowledge.set": _x_knowledge_set,
     "knowledge.delete": _x_knowledge_delete,

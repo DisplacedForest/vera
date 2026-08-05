@@ -1,9 +1,8 @@
 """Agentic activity feed tests. Standalone — run: pytest tests/test_agentic.py
 
 Covers the merge across heartbeat/action/scheduler stores, the normalized event
-shape, newest-first ordering, per-source failure isolation (a missing or broken
-store empties its contribution, never the feed), and the OWUI source staying
-silent while unconfigured.
+shape, newest-first ordering, and per-source failure isolation (a missing or broken
+store empties its contribution, never the feed).
 """
 import asyncio
 import os
@@ -23,8 +22,6 @@ def _clean(monkeypatch, tmp_path):
     monkeypatch.setattr(heartbeat_store, "DB_PATH", str(tmp_path / "heartbeat.db"))
     monkeypatch.setattr(action_store, "DB_PATH", str(tmp_path / "actions.db"))
     monkeypatch.setattr(scheduler_store, "DB_PATH", str(tmp_path / "scheduler.db"))
-    monkeypatch.setattr(agentic, "OWUI_BASE", "")
-    monkeypatch.setattr(agentic, "OWUI_KEY", "")
     yield
 
 
@@ -155,7 +152,3 @@ def test_broken_source_does_not_empty_feed(monkeypatch):
                         lambda hours: (_ for _ in ()).throw(RuntimeError("db corrupt")))
     events = _activity()["events"]
     assert [e["source"] for e in events] == ["heartbeat"]
-
-
-def test_owui_source_silent_when_unconfigured():
-    assert asyncio.run(agentic._owui_events(24, 0)) == []

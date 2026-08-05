@@ -2,7 +2,7 @@
 
 Vera's personal memory is an optional local feature in the Mac app. It starts off for existing and new installations. When it is off, Vera performs no memory retrieval, embedding, proposal generation, maintenance, or memory request assembly.
 
-Approved memory stays in the same local SQLite database as native conversation history. The app does not synchronize it to Open WebUI, vera-api, an account, or another device. Model-generated changes are proposals. They do not create, update, merge, suppress, expire, prune, or delete approved memory until the user reviews and accepts them.
+Approved memory stays in the same local SQLite database as native conversation history. The app does not synchronize it to vera-api, an account, or another device. Model-generated changes are proposals. They do not create, update, merge, suppress, expire, prune, or delete approved memory until the user reviews and accepts them.
 
 ## Library
 
@@ -38,11 +38,11 @@ After an eligible completed turn, the optional extraction model receives only bo
 
 The past-chat search control reads at most 48 recent messages from each of 12 local conversations, stops after 12 eligible completed turns or 48,000 text bytes, and creates reviewable proposals with direct source-conversation links. Text that matches credential, token, password, private-key, action-token, hidden-reasoning, function-code, or similar secret patterns is not sent to memory services and cannot be stored as a record or proposal.
 
-## Legacy behavior and native differences
+## Behavior and boundaries
 
-The repository contains `services/owui-functions/adaptive_memory_v3.valves.md`, which records the deployed Adaptive Memory v3 behavior and non-default tuning. Native memory retains these useful concepts:
+Native memory covers these capabilities:
 
-| Adaptive Memory behavior | Native behavior |
+| Capability | Native behavior |
 |---|---|
 | User-specific facts | Concise records with readable details and safe source references |
 | Categories and banks | Typed categories and internal bank scope |
@@ -53,7 +53,7 @@ The repository contains `services/owui-functions/adaptive_memory_v3.valves.md`, 
 | Consolidation and bounded storage | Merge, consolidation, and capacity actions are reviewable proposals; past-expiry episodic records are groomed automatically |
 | Clear status | Off, setup required, indexing, ready, pending review, unavailable, maintenance needed, and failed states |
 
-The native design intentionally differs in these ways:
+The design deliberately holds these boundaries:
 
 * Personal memory has no server runtime dependencies; it runs entirely against the local store.
 * The only automatic removal is the expiry groom, and every removal writes an inspectable audit entry.

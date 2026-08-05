@@ -4,9 +4,6 @@ This job reads new conversations from the owner's conversational surfaces, runs 
 structured-output extraction call per conversation (the single irreducibly-LLM step), and
 merges the resulting nodes/edges/threads into the Profile Graph through its dedup/decay math.
 
-Sources are Open WebUI (the owner's chats with Vera) and ChatGPT / Claude.ai platform data
-exports.
-
 Adapters normalize every source to `{conv_id, text, ts, source}`. A per-source cursor
 (extract_store) makes ingestion incremental and re-runs a no-op. All I/O is injected so the
 pipeline tests offline.
@@ -18,20 +15,11 @@ import os
 import time
 from datetime import datetime, timezone
 
-import aiohttp
-
 from . import extract_store as es
 from . import profile_graph_store as pg
 from .pulse import _vera
 
 log = logging.getLogger(__name__)
-
-OWUI_BASE = os.environ.get("OWUI_BASE", "").rstrip("/")
-
-
-def _headers():
-    return {"Authorization": f"Bearer {os.environ.get('OWUI_KEY', '')}",
-            "Content-Type": "application/json"}
 
 DUMP_ROOT = os.environ.get("CONVERSATION_DUMP_DIR", "")          # watched dir for ChatGPT/Claude.ai exports
 
@@ -46,15 +34,6 @@ def _iso_epoch(s):
                    .astimezone(timezone.utc).timestamp())
     except (ValueError, TypeError):
         return 0
-
-
-def _epoch_secs(v):
-    """Coerce an OWUI timestamp (seconds or milliseconds, int/float/str) to epoch seconds."""
-    try:
-        n = float(v)
-    except (ValueError, TypeError):
-        return 0
-    return int(n / 1000) if n > 1e12 else int(n)
 
 
 def _content_text(content):
@@ -123,54 +102,6 @@ def dump_conversations(cursor, root=None):
                 _from_claude(conv) if "chat_messages" in conv else None
             if norm and norm["conv_id"] and norm["text"].strip() and norm["ts"] > last:
                 out.append(norm)
-    return out
-
-
-async def _get_json(url):
-    async with aiohttp.ClientSession() as s:
-        async with s.get(url, headers=_headers(), timeout=aiohttp.ClientTimeout(total=30)) as r:
-            r.raise_for_status()
-            return await r.json()
-
-
-async def _owui_list_chats():
-    return await _get_json(f"{OWUI_BASE}/api/v1/chats/list")
-
-
-async def _owui_get_chat(cid):
-    return await _get_json(f"{OWUI_BASE}/api/v1/chats/{cid}")
-
-
-def _owui_messages_text(chat):
-    """Flatten an OWUI chat record's messages to text. Handles the `messages` list shape and
-    the `history.messages` dict shape."""
-    body = chat.get("chat", chat) if isinstance(chat, dict) else {}
-    msgs = body.get("messages")
-    if not msgs and isinstance(body.get("history"), dict):
-        msgs = list(body["history"].get("messages", {}).values())
-    parts = []
-    for m in msgs or []:
-        role = m.get("role") or "?"
-        text = _content_text(m.get("content"))
-        if text and text.strip():
-            parts.append(f"{role}: {text}")
-    return "\n".join(parts)
-
-
-async def owui_conversations(cursor, list_fn=None, chat_fn=None):
-    """Open WebUI chats, incremental by `updated_at`. The list/fetch calls are injected so the
-    adapter tests offline; in production they hit the OWUI chat API."""
-    list_fn = list_fn or _owui_list_chats
-    chat_fn = chat_fn or _owui_get_chat
-    last = (cursor or {}).get("last_ts", 0)
-    out = []
-    for meta in (await list_fn()) or []:
-        ts = _epoch_secs(meta.get("updated_at") or meta.get("timestamp"))
-        if ts <= last:
-            continue
-        text = _owui_messages_text(await chat_fn(meta["id"]))
-        if text.strip():
-            out.append({"conv_id": meta["id"], "text": text, "ts": ts, "source": "owui"})
     return out
 
 
@@ -276,15 +207,13 @@ async def merge_conversation(conv, extracted, now=None):
 
 async def _gather():
     """All new conversations across every configured source, each filtered against its own
-    per-source cursor. The OWUI adapter filters internally; the dump adapter carries two
-    sources (ChatGPT, Claude.ai), so it is fetched wide and re-filtered per source here."""
+    per-source cursor. The dump adapter carries two sources (ChatGPT, Claude.ai), so it is
+    fetched wide and re-filtered per source here."""
     convs = []
     dump_floor = min(es.get_cursor("chatgpt")["last_ts"], es.get_cursor("claude")["last_ts"])
     for c in dump_conversations({"last_ts": dump_floor, "last_id": None}):
         if c["ts"] > es.get_cursor(c["source"])["last_ts"]:
             convs.append(c)
-    if OWUI_BASE:
-        convs += await owui_conversations(es.get_cursor("owui"))
     return convs
 
 

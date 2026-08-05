@@ -27,18 +27,18 @@ def test_status_blocks_registered_as_monitors():
 
 def test_service_health_emits_per_down_service(monkeypatch):
     async def fake_run():
-        return [{"name": "open-webui", "ok": False, "detail": "HTTP 503"},
+        return [{"name": "llm-server", "ok": False, "detail": "HTTP 503"},
                 {"name": "searxng", "ok": True, "detail": "HTTP 200"},
                 {"name": "playwright", "ok": False, "detail": "tcp closed"}]
     monkeypatch.setattr(health, "_run", fake_run)
     items = _run(health._block_service_health([], {}, CTX))
-    assert [i["key"] for i in items] == ["health:open-webui", "health:playwright"]
+    assert [i["key"] for i in items] == ["health:llm-server", "health:playwright"]
     assert all(i["category"] == "health" and i["severity"] == "alert" for i in items)
 
 
 def test_service_health_all_green_emits_nothing(monkeypatch):
     async def fake_run():
-        return [{"name": "open-webui", "ok": True, "detail": "HTTP 200"}]
+        return [{"name": "searxng", "ok": True, "detail": "HTTP 200"}]
     monkeypatch.setattr(health, "_run", fake_run)
     assert _run(health._block_service_health([], {}, CTX)) == []
 

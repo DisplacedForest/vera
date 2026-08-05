@@ -146,9 +146,16 @@ final class ConfigStore: ObservableObject {
             ?? profile.flatMap { nativeAPIKeys[$0.id]?.nilIfBlank }
         let kwargs = env["VERA_CHAT_TEMPLATE_KWARGS"]?.nilIfBlank
             ?? self["chat_template_kwargs"].nilIfBlank
+        let capability = nativeSettings.resolveCapabilities(model: model).profile
+        let options = NativeChatRequestOptions.resolve(
+            overrides: nativeSettings.parameterOverrides(profileID: profile?.id, model: model),
+            profile: capability,
+            savedTemplateKwargs: self["chat_template_kwargs"].nilIfBlank,
+            environmentTemplateKwargs: env["VERA_CHAT_TEMPLATE_KWARGS"]?.nilIfBlank)
         return NativeChatConfig(
             baseURL: base, apiKey: apiKey, model: model, chatTemplateKwargs: kwargs,
-            streaming: nativeSettings.resolveCapabilities(model: model).profile.supportsStreaming)
+            streaming: capability.supportsStreaming && (options.streamingOverride ?? true),
+            options: options)
     }
 
     var activeNativeProfile: NativeEndpointProfile? { nativeSettings.activeProfile }
@@ -273,6 +280,47 @@ final class ConfigStore: ObservableObject {
         var updated = nativeSettings
         updated.clearCapabilityOverride(model: model)
         nativeSettings = updated
+    }
+
+    func activeParameterOverrides(model: String) -> ModelParameterOverrides {
+        nativeSettings.parameterOverrides(
+            profileID: nativeSettings.activeProfileID, model: model)
+    }
+
+    func updateParameterOverrides(
+        model: String, _ update: (inout ModelParameterOverrides) -> Void
+    ) {
+        guard let profileID = nativeSettings.activeProfileID else { return }
+        var updated = nativeSettings
+        updated.updateParameterOverrides(profileID: profileID, model: model, update)
+        nativeSettings = updated
+    }
+
+    func setParameter(model: String, id: ModelParameterID, value: ModelParameterValue) {
+        updateParameterOverrides(model: model) { $0.values[id] = value }
+    }
+
+    func clearParameter(model: String, id: ModelParameterID) {
+        updateParameterOverrides(model: model) { $0.values.removeValue(forKey: id) }
+    }
+
+    func clearParameterGroup(model: String, group: ModelParameterGroup) {
+        let ids = ModelParameterCatalog.all.filter { $0.group == group }.map(\.id)
+        updateParameterOverrides(model: model) { overrides in
+            for id in ids { overrides.values.removeValue(forKey: id) }
+            if group == .provider { overrides.custom = [] }
+        }
+    }
+
+    func clearRejectedParameter(model: String, rejection: ModelParameterRejection) {
+        updateParameterOverrides(model: model) { overrides in
+            if let id = rejection.parameterID {
+                overrides.values.removeValue(forKey: id)
+            }
+            if rejection.isCustom {
+                overrides.custom.removeAll { $0.trimmedKey == rejection.key }
+            }
+        }
     }
 
     func updateMemory(_ update: (inout NativeMemorySettings) -> Void) {

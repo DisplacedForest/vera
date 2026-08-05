@@ -11,7 +11,14 @@ enum Shot {
         let scheme: ColorScheme = appearance == "light" ? .light : .dark
         NSApplication.shared.appearance = NSAppearance(named: scheme == .light ? .aqua : .darkAqua)
         let store = ChatStore()
-        let size = view == "agentic-editor" || view == "agentic-run" ? CGSize(width: 2048, height: 1100) : CGSize(width: 1180, height: 760)
+        let size: CGSize
+        if view == "agentic-editor" || view == "agentic-run" {
+            size = CGSize(width: 2048, height: 1100)
+        } else if view.hasPrefix("settings-advanced") {
+            size = CGSize(width: 1180, height: 1500)
+        } else {
+            size = CGSize(width: 1180, height: 760)
+        }
 
         let content: AnyView
         if view == "voice" {
@@ -213,6 +220,12 @@ enum Shot {
         } else if view.hasPrefix("settings-native-") {
             content = AnyView(
                 NativeSettingsShotView(variant: view)
+                    .frame(width: size.width, height: size.height)
+                    .background(Theme.bg)
+            )
+        } else if view.hasPrefix("settings-advanced") {
+            content = AnyView(
+                AdvancedControlsShotView(variant: view)
                     .frame(width: size.width, height: size.height)
                     .background(Theme.bg)
             )
@@ -692,6 +705,159 @@ struct SettingsShotView: View {
                 .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.hairline, lineWidth: 1))
         }
+    }
+}
+
+struct AdvancedControlsShotView: View {
+    let variant: String
+
+    private var restricted: Bool { variant.hasSuffix("restricted") }
+    private var model: String { "qwen3-30b-a3b" }
+    private var profile: ModelCapabilityProfile {
+        ModelCapabilityProfile(
+            acceptsImages: false, supportsTools: true, supportsStreaming: !restricted,
+            maxImagesPerRequest: 0, supportsReasoning: !restricted)
+    }
+    private var overrides: ModelParameterOverrides {
+        var values: [ModelParameterID: ModelParameterValue] = [
+            .temperature: .number(0.6),
+            .maxOutputTokens: .integer(2048),
+        ]
+        if !restricted {
+            values[.reasoningEffort] = .choice("high")
+            values[.streaming] = .flag(false)
+        }
+        return ModelParameterOverrides(
+            values: values,
+            custom: [CustomModelParameter(
+                id: "shot", key: "repetition_penalty", kind: .number, raw: "1.05")])
+    }
+    private var trace: NativeRequestTrace {
+        let options = NativeChatRequestOptions.resolve(
+            overrides: overrides, profile: profile,
+            savedTemplateKwargs: nil, environmentTemplateKwargs: nil)
+        return NativeRequestTrace.make(
+            model: model,
+            streaming: profile.supportsStreaming && (options.streamingOverride ?? true),
+            options: options, timestamp: Date())
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("Advanced controls").font(.system(size: 13, weight: .medium))
+                    Text("\(overrides.values.count + overrides.custom.count) overridden")
+                        .font(.system(size: 11)).foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 8).padding(.vertical, 2)
+                        .background(Theme.accent.opacity(0.15)).clipShape(Capsule())
+                    Spacer()
+                }
+                Text("These settings apply to \(model) on this endpoint only. A control left at its endpoint default is never sent, so the endpoint keeps its own behavior.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                ForEach(
+                    [ModelParameterGroup.sampling, .tokens, .reasoning, .streamingContext],
+                    id: \.self
+                ) { group in
+                    groupBox(group)
+                }
+                providerBox
+                traceBox
+            }
+            .padding(22).frame(width: 660)
+            .background(Theme.surface).clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.hairline, lineWidth: 1))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(Theme.textPrimary)
+    }
+
+    @ViewBuilder private func groupBox(_ group: ModelParameterGroup) -> some View {
+        let declarations = ModelParameterCatalog.all.filter { $0.group == group }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(group.label).font(.system(size: 12, weight: .semibold))
+                Spacer()
+                if declarations.contains(where: { overrides.values[$0.id] != nil }) {
+                    Text("Reset group").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            ForEach(declarations) { declaration in
+                row(declaration)
+            }
+        }
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder private func row(_ declaration: ModelParameterDeclaration) -> some View {
+        let value = overrides.values[declaration.id]
+        let supported = declaration.capability.supported(by: profile)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text(declaration.name).font(.system(size: 12, weight: .medium))
+                Text(declaration.scope.label)
+                    .font(.system(size: 9, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Theme.textSecondary.opacity(0.12)).clipShape(Capsule())
+                Spacer()
+                if !supported {
+                    Text("Unavailable").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                } else if let value {
+                    Text(value.display).font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Theme.accent)
+                    Text("Reset").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                } else {
+                    Text("Endpoint default").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    Text("Override").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                }
+            }
+            if !supported {
+                Text(declaration.capability.requirement)
+                    .font(.system(size: 11)).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    @ViewBuilder private var providerBox: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(ModelParameterGroup.provider.label).font(.system(size: 12, weight: .semibold))
+            Text("Custom parameters travel in the request's chat template kwargs object, the escape hatch for provider-specific knobs the controls above do not model.")
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            HStack(spacing: 8) {
+                Text("repetition_penalty").font(.system(size: 11, design: .monospaced))
+                Text("Number").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                Text("1.05").font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.accent)
+                Spacer()
+                Text("Sent as chat_template_kwargs.repetition_penalty")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder private var traceBox: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Last request").font(.system(size: 12, weight: .semibold))
+            ForEach(trace.items) { item in
+                HStack(spacing: 8) {
+                    Text(item.key).font(.system(size: 11, design: .monospaced))
+                    Text(item.value).font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Text(item.source).font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                    Text(item.destination)
+                        .font(.system(size: 10)).foregroundStyle(Theme.textSecondary.opacity(0.7))
+                }
+            }
+        }
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.bg).clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 

@@ -354,6 +354,7 @@ enum SelfTest {
     static func run() async {
         runPure()
         runNativeSettings()
+        runModelParameters()
         runNativeContext()
         await runNativeTools()
         await runNativeWebTools()
@@ -370,6 +371,264 @@ enum SelfTest {
             exit(0)
         }
         await runLive(cfg)
+    }
+
+    private static func runModelParameters() {
+        let ids = ModelParameterCatalog.all.map(\.id)
+        guard Set(ids).count == ids.count,
+              Set(ModelParameterCatalog.all.map(\.wireKey)).count == ModelParameterCatalog.all.count,
+              Set(ids) == Set(ModelParameterID.allCases) else {
+            print("SELFTEST ERROR: parameter catalog integrity"); exit(1)
+        }
+        guard let temperature = ModelParameterCatalog.declaration(.temperature),
+              let topK = ModelParameterCatalog.declaration(.topK),
+              let stop = ModelParameterCatalog.declaration(.stopSequences),
+              let effort = ModelParameterCatalog.declaration(.reasoningEffort),
+              let thinking = ModelParameterCatalog.declaration(.reasoningMode) else {
+            print("SELFTEST ERROR: parameter catalog lookup"); exit(1)
+        }
+        guard temperature.validate(.number(0.7)) == nil,
+              temperature.validate(.number(2.5)) != nil,
+              temperature.validate(.integer(1)) != nil,
+              topK.validate(.integer(0)) != nil,
+              stop.validate(.list(["a", "b", "c", "d", "e"])) != nil,
+              stop.validate(.list([""])) != nil,
+              stop.validate(.list([])) == nil,
+              effort.validate(.choice("medium")) == nil,
+              effort.validate(.choice("extreme")) != nil else {
+            print("SELFTEST ERROR: parameter validation"); exit(1)
+        }
+        guard temperature.parse("0.4") == .number(0.4),
+              temperature.parse("warm") == nil,
+              stop.parse("###, DONE") == .list(["###", "DONE"]),
+              ModelParameterCatalog.declaration(.streaming)?.parse("false") == .flag(false) else {
+            print("SELFTEST ERROR: parameter parsing"); exit(1)
+        }
+
+        let reserved = CustomModelParameter(id: "1", key: "model", kind: .text, raw: "x")
+        let declared = CustomModelParameter(id: "2", key: "temperature", kind: .number, raw: "1")
+        let badNumber = CustomModelParameter(id: "3", key: "min_p", kind: .number, raw: "abc")
+        let badJSON = CustomModelParameter(id: "4", key: "grammar", kind: .json, raw: "{oops")
+        let goodJSON = CustomModelParameter(id: "5", key: "logit_bias", kind: .json, raw: "{\"50256\": -100}")
+        let goodBool = CustomModelParameter(id: "6", key: "add_generation_prompt", kind: .boolean, raw: "true")
+        guard reserved.validationError(siblingKeys: []) != nil,
+              declared.validationError(siblingKeys: []) != nil,
+              badNumber.validationError(siblingKeys: []) != nil,
+              badJSON.validationError(siblingKeys: []) != nil,
+              goodJSON.validationError(siblingKeys: []) == nil,
+              goodBool.validationError(siblingKeys: []) == nil,
+              goodBool.validationError(siblingKeys: ["add_generation_prompt"]) != nil else {
+            print("SELFTEST ERROR: custom parameter validation"); exit(1)
+        }
+
+        let reasoningProfile = ModelCapabilityProfile(
+            acceptsImages: false, supportsTools: true, supportsStreaming: true,
+            maxImagesPerRequest: 0, supportsReasoning: true)
+        var overrides = ModelParameterOverrides()
+        overrides.values[.temperature] = .number(0.6)
+        overrides.values[.maxOutputTokens] = .integer(512)
+        overrides.values[.reasoningEffort] = .choice("high")
+        overrides.values[.reasoningMode] = .flag(false)
+        overrides.values[.streaming] = .flag(false)
+        overrides.values[.contextCeiling] = .integer(4096)
+        overrides.custom = [CustomModelParameter(id: "c1", key: "min_p", kind: .number, raw: "0.05")]
+
+        let empty = NativeChatRequestOptions.resolve(
+            overrides: .empty, profile: .textOnly,
+            savedTemplateKwargs: nil, environmentTemplateKwargs: nil)
+        guard empty.isEmpty, empty == .none else {
+            print("SELFTEST ERROR: empty options resolution"); exit(1)
+        }
+
+        let resolved = NativeChatRequestOptions.resolve(
+            overrides: overrides, profile: reasoningProfile,
+            savedTemplateKwargs: nil, environmentTemplateKwargs: nil)
+        guard resolved.topLevel.map(\.key) == ["max_tokens", "reasoning_effort", "temperature"],
+              resolved.kwargs.map(\.key) == ["enable_thinking", "min_p"],
+              resolved.kwargs.first?.source == .override,
+              resolved.kwargs.last?.source == .custom,
+              resolved.streamingOverride == false,
+              resolved.contextCeiling == 4096 else {
+            print("SELFTEST ERROR: options resolution \(resolved)"); exit(1)
+        }
+        let repeated = NativeChatRequestOptions.resolve(
+            overrides: overrides, profile: reasoningProfile,
+            savedTemplateKwargs: nil, environmentTemplateKwargs: nil)
+        guard repeated == resolved else {
+            print("SELFTEST ERROR: options resolution determinism"); exit(1)
+        }
+
+        let gated = NativeChatRequestOptions.resolve(
+            overrides: overrides, profile: .textOnly,
+            savedTemplateKwargs: nil, environmentTemplateKwargs: nil)
+        guard gated.topLevel.map(\.key) == ["max_tokens", "temperature"],
+              gated.kwargs.map(\.key) == ["min_p"],
+              gated.streamingOverride == false else {
+            print("SELFTEST ERROR: capability gating in resolution"); exit(1)
+        }
+
+        let mergedKwargs = NativeChatRequestOptions.resolve(
+            overrides: overrides, profile: reasoningProfile,
+            savedTemplateKwargs: "{\"min_p\": 0.2, \"legacy\": true}",
+            environmentTemplateKwargs: nil)
+        guard mergedKwargs.kwargs.map(\.key) == ["enable_thinking", "legacy", "min_p"],
+              mergedKwargs.kwargs.first(where: { $0.key == "min_p" })?.source == .custom,
+              mergedKwargs.kwargs.first(where: { $0.key == "min_p" })?.value == .number(0.05),
+              mergedKwargs.kwargs.first(where: { $0.key == "legacy" })?.source == .saved else {
+            print("SELFTEST ERROR: kwargs merge precedence"); exit(1)
+        }
+
+        let envWins = NativeChatRequestOptions.resolve(
+            overrides: overrides, profile: reasoningProfile,
+            savedTemplateKwargs: "{\"legacy\": true}",
+            environmentTemplateKwargs: "{\"forced\": 1}")
+        guard envWins.kwargs.map(\.key) == ["forced"],
+              envWins.kwargs.first?.source == .environment else {
+            print("SELFTEST ERROR: environment kwargs precedence"); exit(1)
+        }
+
+        let base = URL(string: "http://localhost:9/v1")!
+        let plainClient = NativeChatClient(config: NativeChatConfig(
+            baseURL: base, apiKey: nil, model: "m", chatTemplateKwargs: nil))
+        let message = [NativeChatMessage(role: "user", content: "hi")]
+        guard let plainBody = try? plainClient.request(messages: message, model: "m").httpBody,
+              let plain = try? JSONSerialization.jsonObject(with: plainBody) as? [String: Any],
+              plain.keys.sorted() == ["messages", "model", "stream"] else {
+            print("SELFTEST ERROR: untouched payload byte compatibility"); exit(1)
+        }
+        let toolSchema = NativeToolSchema(
+            name: "t", description: "d", parameters: .object(["type": .string("object")]))
+        guard let toolBody = try? plainClient.request(
+                messages: message, model: "m", tools: [toolSchema]).httpBody,
+              let toolPayload = try? JSONSerialization.jsonObject(with: toolBody) as? [String: Any],
+              toolPayload.keys.sorted() == ["messages", "model", "stream", "tool_choice", "tools"] else {
+            print("SELFTEST ERROR: five-key payload with tools"); exit(1)
+        }
+
+        let optioned = NativeChatClient(config: NativeChatConfig(
+            baseURL: base, apiKey: nil, model: "m", chatTemplateKwargs: nil,
+            streaming: false, options: resolved))
+        guard let body = try? optioned.request(messages: message, model: "m").httpBody,
+              let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              payload.keys.sorted() == [
+                  "chat_template_kwargs", "max_tokens", "messages", "model",
+                  "reasoning_effort", "stream", "temperature",
+              ],
+              payload["max_tokens"] as? Int == 512,
+              payload["temperature"] as? Double == 0.6,
+              payload["reasoning_effort"] as? String == "high",
+              payload["stream"] as? Bool == false,
+              (payload["chat_template_kwargs"] as? [String: Any])?.keys.sorted()
+                  == ["enable_thinking", "min_p"],
+              (payload["chat_template_kwargs"] as? [String: Any])?["enable_thinking"] as? Bool == false else {
+            print("SELFTEST ERROR: options payload assembly"); exit(1)
+        }
+        let hostile = NativeChatRequestOptions(
+            topLevel: [NativeChatRequestOptions.Entry(
+                key: "model", value: .string("evil"), source: .custom)],
+            kwargs: [], streamingOverride: nil, contextCeiling: nil)
+        let hostileClient = NativeChatClient(config: NativeChatConfig(
+            baseURL: base, apiKey: nil, model: "m", chatTemplateKwargs: nil, options: hostile))
+        guard let hostileBody = try? hostileClient.request(messages: message, model: "m").httpBody,
+              let hostilePayload = try? JSONSerialization.jsonObject(with: hostileBody) as? [String: Any],
+              hostilePayload["model"] as? String == "m" else {
+            print("SELFTEST ERROR: reserved key defense"); exit(1)
+        }
+
+        let rawV2: [String: Any] = ["native_chat": [
+            "version": 2,
+            "profiles": [[
+                "id": "p1", "name": "Test", "baseURL": "http://localhost:1234/v1",
+                "discoveredModels": [], "selectedModel": "m1",
+            ]],
+            "activeProfileID": "p1",
+            "systemPrompt": "prompt",
+            "capabilityOverrides": ["m1": ["acceptsImages": true]],
+        ]]
+        let migrated = NativeChatSettings.load(from: rawV2)
+        guard migrated.version == 3,
+              migrated.parameterOverrides.isEmpty,
+              migrated.activeProfileID == "p1",
+              migrated.capabilityOverrides["m1"]?.acceptsImages == true,
+              migrated.capabilityOverrides["m1"]?.supportsReasoning == false else {
+            print("SELFTEST ERROR: settings migration from version 2"); exit(1)
+        }
+        var stored = migrated
+        stored.updateParameterOverrides(profileID: "p1", model: "m1") { $0 = overrides }
+        let reloaded = NativeChatSettings.load(from: stored.merging(into: [:]))
+        guard reloaded.version == 3,
+              reloaded.parameterOverrides(profileID: "p1", model: "m1") == overrides,
+              reloaded.parameterOverrides(profileID: "p1", model: "other").isEmpty,
+              reloaded.parameterOverrides(profileID: "p2", model: "m1").isEmpty else {
+            print("SELFTEST ERROR: parameter overrides persistence roundtrip"); exit(1)
+        }
+        stored.updateParameterOverrides(profileID: "p1", model: "m1") {
+            $0 = .empty
+        }
+        guard stored.parameterOverrides.isEmpty else {
+            print("SELFTEST ERROR: cleared overrides pruning"); exit(1)
+        }
+
+        let filler = String(repeating: "x", count: 400)
+        var longHistory = [NativeChatMessage(role: "system", content: "sys")]
+        for index in 0..<10 {
+            longHistory.append(NativeChatMessage(role: "user", content: "q\(index) \(filler)"))
+            longHistory.append(NativeChatMessage(role: "assistant", content: "a\(index) \(filler)"))
+        }
+        let trimmedHistory = NativeChatHistoryBuilder.trimmed(longHistory, ceiling: 300)
+        guard trimmedHistory.first?.role == "system",
+              trimmedHistory.count < longHistory.count,
+              trimmedHistory.last?.content == longHistory.last?.content,
+              NativeChatHistoryBuilder.trimmed(longHistory, ceiling: 1_000_000) == longHistory,
+              NativeChatHistoryBuilder.trimmed(trimmedHistory, ceiling: 300) == trimmedHistory else {
+            print("SELFTEST ERROR: context ceiling trim"); exit(1)
+        }
+        let call = NativeChatToolCall(id: "1", name: "tool", arguments: filler)
+        let toolHistory = [
+            NativeChatMessage(role: "system", content: "sys"),
+            NativeChatMessage(role: "assistant", content: "", toolCalls: [call]),
+            NativeChatMessage(role: "tool", content: filler, toolCallID: "1"),
+            NativeChatMessage(role: "user", content: "latest"),
+        ]
+        let trimmedTools = NativeChatHistoryBuilder.trimmed(toolHistory, ceiling: 1)
+        guard trimmedTools.map(\.role) == ["system", "user"] else {
+            print("SELFTEST ERROR: tool round trims atomically \(trimmedTools.map(\.role))"); exit(1)
+        }
+
+        guard ModelParameterRejectionClassifier.classify(
+                detail: "Unknown parameter: 'top_k'",
+                options: NativeChatRequestOptions(
+                    topLevel: [NativeChatRequestOptions.Entry(
+                        key: "top_k", value: .number(40), source: .override)],
+                    kwargs: [], streamingOverride: nil, contextCeiling: nil))?.displayName == "Top K",
+              ModelParameterRejectionClassifier.classify(
+                detail: "temperature must be between 0 and 2",
+                options: resolved)?.parameterID == .temperature,
+              ModelParameterRejectionClassifier.classify(
+                detail: "min_p is not supported by this endpoint",
+                options: resolved)?.isCustom == true,
+              ModelParameterRejectionClassifier.classify(
+                detail: "The server was unstoppable",
+                options: NativeChatRequestOptions(
+                    topLevel: [NativeChatRequestOptions.Entry(
+                        key: "stop", value: .array([]), source: .override)],
+                    kwargs: [], streamingOverride: nil, contextCeiling: nil)) == nil,
+              ModelParameterRejectionClassifier.classify(
+                detail: "connection refused", options: resolved) == nil else {
+            print("SELFTEST ERROR: rejection classification"); exit(1)
+        }
+
+        let trace = NativeRequestTrace.make(
+            model: "m", streaming: false, options: resolved,
+            timestamp: Date(timeIntervalSince1970: 1_786_000_000))
+        guard trace.items.first?.key == "stream",
+              trace.items.first?.value == "false",
+              trace.items.contains(where: { $0.key == "temperature" && $0.value == "0.6" }),
+              trace.items.contains(where: { $0.key == "enable_thinking" && $0.destination == "chat_template_kwargs" }),
+              trace.items.contains(where: { $0.key == "context_ceiling" && $0.value == "4096" }) else {
+            print("SELFTEST ERROR: request trace \(trace.items)"); exit(1)
+        }
+        print("SELFTEST native model parameters OK")
     }
 
     private static func runNativeContext() {
@@ -1039,7 +1298,7 @@ enum SelfTest {
             "model_api_key": "secret",
         ]
         var settings = NativeChatSettings.load(from: legacy)
-        guard settings.version == 2,
+        guard settings.version == 3,
               settings.profiles.count == 1,
               settings.activeProfile?.name == "My model endpoint",
               settings.activeProfile?.selectedModel == "model-b",

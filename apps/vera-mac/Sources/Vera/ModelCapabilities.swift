@@ -5,6 +5,7 @@ struct ModelCapabilityProfile: Codable, Equatable, Sendable {
     var supportsTools: Bool
     var supportsStreaming: Bool
     var maxImagesPerRequest: Int
+    var supportsReasoning: Bool
 
     static let textOnly = ModelCapabilityProfile(
         acceptsImages: false, supportsTools: true, supportsStreaming: true, maxImagesPerRequest: 0)
@@ -12,14 +13,18 @@ struct ModelCapabilityProfile: Codable, Equatable, Sendable {
         acceptsImages: true, supportsTools: true, supportsStreaming: true, maxImagesPerRequest: 8)
 
     enum CodingKeys: String, CodingKey {
-        case acceptsImages, supportsTools, supportsStreaming, maxImagesPerRequest
+        case acceptsImages, supportsTools, supportsStreaming, maxImagesPerRequest, supportsReasoning
     }
 
-    init(acceptsImages: Bool, supportsTools: Bool, supportsStreaming: Bool, maxImagesPerRequest: Int) {
+    init(
+        acceptsImages: Bool, supportsTools: Bool, supportsStreaming: Bool,
+        maxImagesPerRequest: Int, supportsReasoning: Bool = false
+    ) {
         self.acceptsImages = acceptsImages
         self.supportsTools = supportsTools
         self.supportsStreaming = supportsStreaming
         self.maxImagesPerRequest = maxImagesPerRequest
+        self.supportsReasoning = supportsReasoning
     }
 
     init(from decoder: Decoder) throws {
@@ -29,6 +34,7 @@ struct ModelCapabilityProfile: Codable, Equatable, Sendable {
         supportsStreaming = try values.decodeIfPresent(Bool.self, forKey: .supportsStreaming) ?? true
         maxImagesPerRequest = try values.decodeIfPresent(Int.self, forKey: .maxImagesPerRequest)
             ?? (acceptsImages ? ModelCapabilityProfile.vision.maxImagesPerRequest : 0)
+        supportsReasoning = try values.decodeIfPresent(Bool.self, forKey: .supportsReasoning) ?? false
     }
 }
 

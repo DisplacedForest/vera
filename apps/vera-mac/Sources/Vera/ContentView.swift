@@ -604,6 +604,7 @@ struct ArtifactChip: View {
 struct ComposerField: View {
     @EnvironmentObject var store: ChatStore
     @EnvironmentObject var voice: VoiceSession
+    @EnvironmentObject var config: ConfigStore
     @FocusState private var focused: Bool
     @State private var dropTargeted = false
     @State private var pasteMonitor: Any?
@@ -722,12 +723,37 @@ struct ComposerField: View {
                 }
             }
         }
+        .confirmationDialog(
+            "The endpoint rejected a parameter",
+            isPresented: Binding(
+                get: { store.parameterRejection != nil },
+                set: { if !$0 { store.parameterRejection = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Reset \(store.parameterRejection?.rejection.displayName ?? "the parameter") and try again") {
+                resetRejectedParameter()
+            }
+            Button("Keep the value", role: .cancel) { store.parameterRejection = nil }
+        } message: {
+            if let prompt = store.parameterRejection {
+                Text("\(prompt.model) rejected \(prompt.rejection.displayName): \(prompt.detail) Your message is saved in the conversation. Resetting sends the same message again without this setting.")
+            }
+        }
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
             guard !files.isEmpty else { return false }
             store.addFiles(files)
             return true
         } isTargeted: { dropTargeted = $0 }
+    }
+
+    private func resetRejectedParameter() {
+        guard let prompt = store.parameterRejection else { return }
+        store.parameterRejection = nil
+        config.clearRejectedParameter(model: prompt.model, rejection: prompt.rejection)
+        try? config.save()
+        if let resolved = config.nativeResolved { store.applyNativeOptions(resolved) }
+        store.retryLastTurn()
     }
 
     private func pickFiles() {

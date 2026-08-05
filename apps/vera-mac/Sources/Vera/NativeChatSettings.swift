@@ -81,10 +81,11 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
     var memory: NativeMemorySettings
     var capabilityOverrides: [String: ModelCapabilityProfile]
     var visionBridge: VisionBridgeSettings
+    var parameterOverrides: [String: [String: ModelParameterOverrides]]
 
     static var fresh: NativeChatSettings {
         NativeChatSettings(
-            version: 2,
+            version: 3,
             profiles: [],
             activeProfileID: nil,
             systemPrompt: defaultSystemPrompt,
@@ -94,7 +95,8 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
             onboardingStep: 0,
             memory: .fresh,
             capabilityOverrides: [:],
-            visionBridge: .fresh)
+            visionBridge: .fresh,
+            parameterOverrides: [:])
     }
 
     var activeProfile: NativeEndpointProfile? {
@@ -116,8 +118,8 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         if let object = raw["native_chat"] as? [String: Any],
            let data = try? JSONSerialization.data(withJSONObject: object),
            var decoded = try? JSONDecoder().decode(NativeChatSettings.self, from: data),
-           decoded.version == 1 || decoded.version == 2 {
-            decoded.version = 2
+           (1...3).contains(decoded.version) {
+            decoded.version = 3
             if decoded.activeProfile == nil { decoded.activeProfileID = decoded.profiles.first?.id }
             if decoded.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 decoded.systemPrompt = defaultSystemPrompt
@@ -145,6 +147,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case version, profiles, activeProfileID, systemPrompt, activePersonaID, enabledToolIDs
         case onboardingState, onboardingStep, memory, capabilityOverrides, visionBridge
+        case parameterOverrides
     }
 
     init(
@@ -153,7 +156,8 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         enabledToolIDs: Set<String>, onboardingState: NativeOnboardingState,
         onboardingStep: Int, memory: NativeMemorySettings,
         capabilityOverrides: [String: ModelCapabilityProfile] = [:],
-        visionBridge: VisionBridgeSettings = .fresh
+        visionBridge: VisionBridgeSettings = .fresh,
+        parameterOverrides: [String: [String: ModelParameterOverrides]] = [:]
     ) {
         self.version = version
         self.profiles = profiles
@@ -166,6 +170,7 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
         self.memory = memory
         self.capabilityOverrides = capabilityOverrides
         self.visionBridge = visionBridge
+        self.parameterOverrides = parameterOverrides
     }
 
     init(from decoder: Decoder) throws {
@@ -183,6 +188,8 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
             [String: ModelCapabilityProfile].self, forKey: .capabilityOverrides) ?? [:]
         visionBridge = try values.decodeIfPresent(
             VisionBridgeSettings.self, forKey: .visionBridge) ?? .fresh
+        parameterOverrides = try values.decodeIfPresent(
+            [String: [String: ModelParameterOverrides]].self, forKey: .parameterOverrides) ?? [:]
     }
 
     func merging(into raw: [String: Any]) -> [String: Any] {
@@ -247,6 +254,27 @@ struct NativeChatSettings: Codable, Equatable, Sendable {
 
     mutating func clearCapabilityOverride(model: String) {
         capabilityOverrides.removeValue(forKey: model)
+    }
+
+    func parameterOverrides(profileID: String?, model: String) -> ModelParameterOverrides {
+        guard let profileID, !model.isEmpty else { return .empty }
+        return parameterOverrides[profileID]?[model] ?? .empty
+    }
+
+    mutating func updateParameterOverrides(
+        profileID: String, model: String, _ update: (inout ModelParameterOverrides) -> Void
+    ) {
+        guard !model.isEmpty else { return }
+        var overrides = parameterOverrides[profileID]?[model] ?? .empty
+        update(&overrides)
+        if overrides.isEmpty {
+            parameterOverrides[profileID]?.removeValue(forKey: model)
+            if parameterOverrides[profileID]?.isEmpty == true {
+                parameterOverrides.removeValue(forKey: profileID)
+            }
+        } else {
+            parameterOverrides[profileID, default: [:]][model] = overrides
+        }
     }
 }
 

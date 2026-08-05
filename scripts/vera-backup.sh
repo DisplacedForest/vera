@@ -3,8 +3,7 @@
 # Unraid-flavored REFERENCE IMPLEMENTATION: written for an Unraid host (run as root, deployed
 # to /boot/config/scripts/, scheduled nightly via /etc/cron.d/ persisted by /boot/config/go).
 # Adapt paths and scheduling for other hosts; set VERA_APPDATA_ROOT if container appdata lives
-# elsewhere. Irreplaceable-first; never aborts the whole run if one component fails — the OWUI
-# DB (Vera's learned self) is priority.
+# elsewhere. Irreplaceable-first; never aborts the whole run if one component fails.
 set -uo pipefail
 
 DEST_ROOT="${VERA_BACKUP_DEST:-/mnt/user/backups/vera}"
@@ -19,10 +18,38 @@ log() { echo "[$(date +%T)] $*"; }
 fail=0
 
 if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]; then
-  if docker exec "$CONTAINER" tar czf - -C / data > "$DEST/vera-data.tgz" 2>/dev/null; then
-    log "OK   vera-data.tgz ($(du -h "$DEST/vera-data.tgz" | cut -f1))"
+  if docker exec "$CONTAINER" python3 -c '
+import os, sqlite3, shutil, sys
+src, dst = "/data", "/tmp/vera-db-snap"
+shutil.rmtree(dst, ignore_errors=True)
+for root, dirs, files in os.walk(src):
+    for f in files:
+        if not f.endswith(".db"):
+            continue
+        p = os.path.join(root, f)
+        out = os.path.join(dst, os.path.relpath(p, src))
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        s = sqlite3.connect(p)
+        d = sqlite3.connect(out)
+        try:
+            with d:
+                s.backup(d)
+        except Exception as e:
+            print(f"{p}: {e}", file=sys.stderr)
+            sys.exit(1)
+        finally:
+            d.close()
+            s.close()
+'; then
+    docker exec "$CONTAINER" tar czf - --exclude="*.db" --exclude="*.db-wal" --exclude="*.db-shm" -C / data -C /tmp vera-db-snap > "$DEST/vera-data.tgz"
+    rc=$?
+    if [ "$rc" -le 1 ] && [ -s "$DEST/vera-data.tgz" ]; then
+      log "OK   vera-data.tgz ($(du -h "$DEST/vera-data.tgz" | cut -f1))"
+    else
+      log "FAIL vera-data.tgz stream from $CONTAINER (tar rc=$rc)"; fail=1
+    fi
   else
-    log "FAIL vera-data.tgz stream from $CONTAINER"; fail=1
+    log "FAIL vera-data.tgz db snapshot in $CONTAINER"; fail=1
   fi
 else
   log "FAIL $CONTAINER is not running; its native stores were not backed up"; fail=1

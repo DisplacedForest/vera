@@ -55,11 +55,13 @@ def decide(name: str, size: int, sha256: str | None,
     if ext not in supported_formats:
         return Decision("unsupported", f"format '{ext or 'none'}' not in "
                                        f"{', '.join(supported_formats)}")
-    if size > file_cap:
+    if file_cap and size > file_cap:
         return Decision("unsupported", f"{size} bytes passes the {file_cap} byte per-file cap")
-    if name in existing and sha256 is not None and existing[name] == sha256:
-        return Decision("skip", "already present with identical content")
     if name in existing:
+        if sha256 is None:
+            return Decision("skip", "name already present; content compared at run time")
+        if existing[name] == sha256:
+            return Decision("skip", "already present with identical content")
         return Decision("skip", "a file with this name exists with different content; "
                                 "delete it in the Knowledge area to re-migrate")
     return Decision("upload")
@@ -76,19 +78,30 @@ class OwuiApi:
         with urllib.request.urlopen(req, timeout=120) as r:
             return r.read()
 
+    def _paged(self, path: str) -> list[dict]:
+        sep = "&" if "?" in path else "?"
+        out: list[dict] = []
+        seen: set[str] = set()
+        page = 1
+        while True:
+            data = json.loads(self._get(f"{path}{sep}page={page}"))
+            items = data.get("items") if isinstance(data, dict) else data
+            if not isinstance(items, list):
+                raise ValueError("unexpected list shape from Open WebUI")
+            fresh = [i for i in items
+                     if isinstance(i, dict) and str(i.get("id")) not in seen]
+            if not fresh:
+                return out
+            for i in fresh:
+                seen.add(str(i.get("id")))
+            out.extend(fresh)
+            page += 1
+
     def knowledge_bases(self) -> list[dict]:
-        data = json.loads(self._get("/api/v1/knowledge/"))
-        items = data.get("items") if isinstance(data, dict) else data
-        if not isinstance(items, list):
-            raise ValueError("unexpected knowledge list shape from Open WebUI")
-        return items
+        return self._paged("/api/v1/knowledge/")
 
     def knowledge_files(self, kb_id: str) -> list[dict]:
-        data = json.loads(self._get(f"/api/v1/knowledge/{kb_id}/files"))
-        items = data.get("items") if isinstance(data, dict) else data
-        if not isinstance(items, list):
-            raise ValueError("unexpected knowledge files shape from Open WebUI")
-        return items
+        return self._paged(f"/api/v1/knowledge/{kb_id}/files")
 
     def file_content(self, file_id: str) -> bytes:
         return self._get(f"/api/v1/files/{file_id}/content")
@@ -131,6 +144,22 @@ class VeraApi:
         return self._request("POST", f"/documents/collections/{cid}/files", body,
                              f"multipart/form-data; boundary={boundary}")
 
+    def reindex_file(self, fid: str) -> dict:
+        return self._request("POST", f"/documents/files/{fid}/reindex",
+                             b"{}", "application/json")
+
+
+def index_verdict(response: dict) -> tuple[bool, str]:
+    index: dict = {}
+    if isinstance(response, dict):
+        nested = response.get("index")
+        index = nested if isinstance(nested, dict) else response
+    status = str(index.get("status") or "unknown")
+    if status == "ready":
+        return True, ""
+    detail = str(index.get("error") or index.get("detail") or status)
+    return False, f"indexing {status}: {detail}" if detail != status else f"indexing {status}"
+
 
 def migrate(owui: OwuiApi, vera: VeraApi, dry_run: bool) -> Report:
     report = Report()
@@ -153,11 +182,11 @@ def migrate(owui: OwuiApi, vera: VeraApi, dry_run: bool) -> Report:
             report.failed.append((kb_name, f"listing files: {e}"))
             continue
 
+        existing: dict[str, dict] = {}
         target = targets.get(kb_name)
         if target is None:
             if dry_run:
                 report.collections_created.append(kb_name)
-                existing: dict[str, str] = {}
             else:
                 try:
                     target = vera.create_collection(kb_name,
@@ -167,57 +196,80 @@ def migrate(owui: OwuiApi, vera: VeraApi, dry_run: bool) -> Report:
                     continue
                 targets[kb_name] = target
                 report.collections_created.append(kb_name)
-                existing = {}
         else:
             try:
-                existing = {f["name"]: str(f.get("sha256") or "")
-                            for f in vera.collection_files(target["id"])}
+                existing = {str(f["name"]): f for f in vera.collection_files(target["id"])}
             except Exception as e:
                 report.failed.append((kb_name, f"listing target files: {e}"))
                 continue
+        existing_shas = {name: str(f.get("sha256") or "") for name, f in existing.items()}
 
         for f in files:
-            meta = f.get("meta") or {}
-            name = str(f.get("filename") or meta.get("name") or f.get("id"))
-            label = f"{kb_name}/{name}"
-            size = int(meta.get("size") or 0)
-            verdict = decide(name, size, None, existing, supported, file_cap)
-            if verdict.action == "unsupported":
-                report.skipped.append((label, verdict.reason))
-                continue
-            if verdict.action == "skip" and "different content" in verdict.reason:
-                report.skipped.append((label, verdict.reason))
-                continue
-            if dry_run:
-                if verdict.action == "skip":
-                    report.skipped.append((label, "name already present; content compared "
-                                                  "at run time"))
-                else:
-                    report.uploaded.append(label)
-                continue
             try:
-                data = owui.file_content(str(f["id"]))
+                meta = f.get("meta") if isinstance(f.get("meta"), dict) else {}
+                name = str(f.get("filename") or meta.get("name") or f.get("id"))
+                label = f"{kb_name}/{name}"
             except Exception as e:
-                report.failed.append((label, f"downloading: {e}"))
-                continue
-            sha = hashlib.sha256(data).hexdigest()
-            verdict = decide(name, len(data), sha, existing, supported, file_cap)
-            if verdict.action != "upload":
-                report.skipped.append((label, verdict.reason))
+                report.failed.append((f"{kb_name}/(unreadable file)", f"metadata: {e}"))
                 continue
             try:
-                vera.upload(target["id"], name, data)
-            except urllib.error.HTTPError as e:
-                detail = ""
+                verdict = decide(name, 0, None, existing_shas, supported, file_cap)
+                if verdict.action == "unsupported":
+                    report.skipped.append((label, verdict.reason))
+                    continue
+                if dry_run:
+                    if verdict.action == "skip":
+                        report.skipped.append((label, verdict.reason))
+                    else:
+                        report.uploaded.append(label)
+                    continue
                 try:
-                    detail = json.loads(e.read()).get("detail", "")
-                except Exception:
-                    pass
-                report.failed.append((label, f"upload: HTTP {e.code} {detail}".strip()))
+                    data = owui.file_content(str(f["id"]))
+                except Exception as e:
+                    report.failed.append((label, f"downloading: {e}"))
+                    continue
+                sha = hashlib.sha256(data).hexdigest()
+                verdict = decide(name, len(data), sha, existing_shas, supported, file_cap)
+                if verdict.action == "skip":
+                    prior = existing.get(name) or {}
+                    if (existing_shas.get(name) == sha
+                            and str(prior.get("state")) == "failed" and prior.get("id")):
+                        try:
+                            response = vera.reindex_file(str(prior["id"]))
+                        except Exception as e:
+                            report.failed.append((label, f"reindex: {e}"))
+                            continue
+                        ok, detail = index_verdict(response)
+                        if ok:
+                            report.uploaded.append(f"{label} (reindexed)")
+                        else:
+                            report.failed.append((label, detail))
+                    else:
+                        report.skipped.append((label, verdict.reason))
+                    continue
+                if verdict.action != "upload":
+                    report.skipped.append((label, verdict.reason))
+                    continue
+                try:
+                    response = vera.upload(target["id"], name, data)
+                except urllib.error.HTTPError as e:
+                    detail = ""
+                    try:
+                        detail = json.loads(e.read()).get("detail", "")
+                    except Exception:
+                        pass
+                    report.failed.append((label, f"upload: HTTP {e.code} {detail}".strip()))
+                    continue
+                except Exception as e:
+                    report.failed.append((label, f"upload: {e}"))
+                    continue
+                ok, detail = index_verdict(response)
+                if ok:
+                    report.uploaded.append(label)
+                else:
+                    report.failed.append((label, detail))
             except Exception as e:
-                report.failed.append((label, f"upload: {e}"))
-            else:
-                report.uploaded.append(label)
+                report.failed.append((label, f"unexpected: {e}"))
     return report
 
 

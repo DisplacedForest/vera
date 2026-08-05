@@ -215,8 +215,10 @@ struct KnowledgeCollectionDetail: View {
     @ObservedObject var knowledge: KnowledgeStore
     let collectionID: String
     @Environment(\.dismiss) private var dismiss
+    enum FileLoadPhase { case loading, failed(String), loaded }
+
     @State private var files: [KnowledgeFile] = []
-    @State private var loaded = false
+    @State private var filePhase = FileLoadPhase.loading
     @State private var search = ""
     @State private var sort: KnowledgeFileSort = .name
     @State private var name = ""
@@ -345,31 +347,35 @@ struct KnowledgeCollectionDetail: View {
     private var fileList: some View {
         ScrollView {
             LazyVStack(spacing: 8) {
-                if !loaded {
-                    if error == nil {
-                        Text("Loading files…")
-                            .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
-                    } else {
-                        HStack(spacing: 8) {
-                            Text("The file list couldn't load.")
-                                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                            Button("Try again") { Task { await reload() } }
-                                .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(Theme.accent)
-                        }
+                switch filePhase {
+                case .loading:
+                    Text("Loading files…")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
+                case .failed(let detail):
+                    HStack(spacing: 8) {
+                        Text("The file list couldn't load: \(detail)")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        Button("Try again") {
+                            filePhase = .loading
+                            Task { await reload() }
+                        }
+                        .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.accent)
                     }
-                } else if visible.isEmpty {
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
+                case .loaded:
+                    if visible.isEmpty {
                     Text(files.isEmpty ? "No files yet. Add txt, md, pdf, docx, or html files."
                                        : "No files match the search.")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
-                } else {
-                    ForEach(visible) { file in
-                        KnowledgeFileRow(file: file,
-                                         reindex: { runFile(file.id) { await knowledge.client?.reindexFile(id: file.id) } },
-                                         remove: { runFile(file.id) { await knowledge.client?.deleteFile(id: file.id) } })
+                    } else {
+                        ForEach(visible) { file in
+                            KnowledgeFileRow(file: file,
+                                             reindex: { runFile(file.id) { await knowledge.client?.reindexFile(id: file.id) } },
+                                             remove: { runFile(file.id) { await knowledge.client?.deleteFile(id: file.id) } })
+                        }
                     }
                 }
             }
@@ -394,10 +400,13 @@ struct KnowledgeCollectionDetail: View {
         switch await client.files(collection: collectionID) {
         case .ok(let fetched):
             files = fetched
-            loaded = true
+            filePhase = .loaded
         case .failed(let detail):
-            error = loaded ? "Couldn't refresh the file list: \(detail)"
-                           : "Couldn't load the file list: \(detail)"
+            if case .loaded = filePhase {
+                error = "Couldn't refresh the file list: \(detail)"
+            } else {
+                filePhase = .failed(detail)
+            }
         }
         await knowledge.refresh()
     }

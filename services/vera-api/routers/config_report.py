@@ -20,6 +20,8 @@ GROUPS: list[tuple[str, list[str]]] = [
     ("research",      ["RESEARCH_MAX_ITERATIONS"]),
     ("image gen",     ["VERA_IMAGE_BASE", "IMAGE_PROTOCOL"]),
     ("embeddings",    ["VERA_EMBED_URL", "VERA_EMBED_MODEL"]),
+    ("documents",     ["DOCUMENTS_MAX_BYTES", "DOCUMENTS_MAX_FILE_BYTES", "DOCUMENTS_CHUNK_CHARS",
+                       "DOCUMENTS_CHUNK_OVERLAP", "DOCUMENTS_INDEX_STALE_SECS"]),
     ("scout sources", ["GITHUB_API_BASE", "ARXIV_BASE"]),
     ("scout knobs",   ["SCOUT_ENGAGEMENT_FLOOR", "SCOUT_MAX_NODES", "SCOUT_EXCLUDED_TYPES",
                        "SCOUT_NEWS_MAX", "SCOUT_REDDIT_MAX", "SCOUT_GITHUB_MAX", "SCOUT_PAPERS_MAX"]),

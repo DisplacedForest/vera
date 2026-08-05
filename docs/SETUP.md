@@ -54,6 +54,7 @@ docker compose logs vera-api | head -60
 | Identity | `VERA_OWNER_ID`, `VERA_OWNER_NAME`, `HOME_LOCATION_NAME`, `HOME_TZ`, `WEATHER_LAT`/`LON`, `TEMPERATURE_UNIT` | Personalization, the owner id that cards/read marks/profiles are keyed by (defaults to `owner`), schedules in your timezone, weather anchoring |
 | Dream/coder | `DREAM_BASE`, `DREAM_MODEL`, `DREAM_TOOL_PROTOCOL` | Nightly knowledge consolidation + fact verification |
 | Audit hooks | `AUDIT_WAKE_URL`, `AUDIT_RELEASE_URL` | Cross-model claim audits on every Pulse run when the audit model is served on demand (POSTed before/after the batched end-of-run audit; unset = no hook calls) |
+| Embeddings | `VERA_EMBED_URL`, `VERA_EMBED_MODEL` | Document knowledge collections (upload, indexing, retrieval that grounds research and chat) plus Profile Graph dedup and Pulse novelty math; unset, collection management still works while indexing and retrieval report unconfigured |
 | Image gen | `VERA_IMAGE_BASE`, `IMAGE_PROTOCOL` | Generated cover art on Pulse cards |
 | Vision review | `VERA_VISION_BASE`, `VERA_VISION_MODEL` | Optional Pulse cover-art review and one retry |
 | Scout sources | `GITHUB_API_BASE`, `ARXIV_BASE` (default to public endpoints); Reddit is a plugin (`REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET`, register a script app at reddit.com/prefs/apps) | Pulse candidate search across github/papers/reddit; news and local ride `SEARXNG_BASE`, weather rides `WEATHER_LAT`/`LON` |

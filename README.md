@@ -28,7 +28,7 @@ Three components, connected by URLs:
 
 - **An OpenAI-compatible model endpoint**: native text chat connects directly to its `/v1` API and keeps conversation history on the Mac.
 - **[Open WebUI](https://github.com/open-webui/open-webui)** (optional, transitional): the existing tool and skill surfaces remain available while those capabilities move into the native engine.
-- **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, memory grooming, a scheduler, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
+- **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, document knowledge collections with retrieval, memory grooming, a scheduler, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
 - **Vera.app**: a native SwiftUI macOS client: chat, the Pulse feed, veins, memory curation, integrations, and voice.
 
 ```mermaid
@@ -130,6 +130,7 @@ Every external dependency is a configuration slot with defined behavior when emp
 | Vision | OpenAI chat + `image_url` | Image understanding in chat | Vision tools report unconfigured |
 | Voice | Wyoming + small HTTP API | Hands-free voice mode | Voice UI disabled |
 | Playwright | run-server websocket | Full-page renders for research | Falls back to snippets |
+| Embeddings | OpenAI `/v1/embeddings` | Document knowledge indexing and retrieval, Pulse novelty ranking | Collections stay manageable; indexing and retrieval report unconfigured |
 
 | Integration | Powers | When absent |
 |---|---|---|

@@ -4,18 +4,15 @@ POST /research {query} runs a bounded loop:
   plan sub-questions (Vera) -> gather (web_search + Playwright pages + local RAG)
   -> synthesize a cited report (Vera, grounded only in gathered sources).
 
-Parity with ChatGPT Deep Research / Claude Research, fully local. Reuses the web_search
-router (SearXNG + Playwright) and the OWUI knowledge collections (local RAG).
+Parity with ChatGPT Deep Research / Claude Research, fully local.
 """
 import json
 import time
 
-import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from .pulse import _vera
-from .pulse_llm import OWUI_BASE, OWUI_KEY, _headers
 from .persona import owner, voiced
 from .tool_protocol import LOOP_RULES, loop_budget
 from .websearch import SearchRequest, search as web_search
@@ -61,30 +58,21 @@ def _parse_list(txt: str) -> list[str]:
         return [l.strip("-*0123456789. ").strip() for l in txt.splitlines() if len(l.strip()) > 8][:5]
 
 
-async def _rag_sources(query: str) -> list[dict]:
-    """Query Vera's local knowledge collections for relevant chunks (best-effort, offline)."""
+async def _rag_sources(query: str, errors: list[str]) -> list[dict]:
+    from . import documents_store
     out: list[dict] = []
-    if not OWUI_KEY:
-        return out
     try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"{OWUI_BASE}/api/v1/knowledge/", headers=_headers(),
-                             timeout=aiohttp.ClientTimeout(total=20)) as r:
-                cols = await r.json()
-            items = cols.get("items", cols) if isinstance(cols, dict) else cols
-            for c in (items or []):
-                cid, cname = c.get("id"), c.get("name", "knowledge")
-                async with s.post(f"{OWUI_BASE}/api/v1/retrieval/query/collection", headers=_headers(),
-                                  json={"collection_names": [cid], "query": query, "k": 3},
-                                  timeout=aiohttp.ClientTimeout(total=30)) as r:
-                    q = await r.json()
-                docs = q.get("documents") if isinstance(q, dict) else None
-                flat = docs[0] if (docs and isinstance(docs[0], list)) else (docs or [])
-                for chunk in flat[:3]:
-                    if chunk:
-                        out.append({"title": f"{cname} (local knowledge)", "url": "local", "content": chunk})
-    except Exception:
-        pass
+        res = await documents_store.query(query, None, top_k=6,
+                                          char_budget=6 * PER_SOURCE_CHARS)
+        status = res.get("status")
+        if status != "ok":
+            errors.append(f"local knowledge {status}: {res.get('detail', '')}".strip())
+            return out
+        for p in res.get("passages", []):
+            out.append({"title": f"{p['collection']}: {p['file']} (local knowledge)",
+                        "url": "local", "content": p["text"]})
+    except Exception as e:
+        errors.append(f"local knowledge: {e}")
     return out
 
 
@@ -116,7 +104,7 @@ async def _gather(req: ResearchRequest, subqs: list[str], errors: list[str]) -> 
     for sq in subqs:
         await _search_one(sq, req.pages_per_q, seen, sources, errors)
     if req.use_rag:
-        sources.extend(await _rag_sources(req.query))
+        sources.extend(await _rag_sources(req.query, errors))
     sources = sources[:MAX_SOURCES]
     for i, s in enumerate(sources, 1):
         s["n"] = i

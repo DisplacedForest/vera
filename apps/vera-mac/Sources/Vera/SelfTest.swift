@@ -4039,7 +4039,7 @@ enum SelfTest {
                   editorStore.canSave == false else {
                 print("SELFTEST ERROR: visual workflow removal"); exit(1)
             }
-            editorStore.placeNodeInDraft("pulse.visual_review", at: CGPoint(x: 1335, y: 310))
+            editorStore.placeNodeInDraft("pulse.visual_review", at: CGPoint(x: 1025, y: 310))
             guard editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "visual_review")) == true,
                   editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "visual_review", to: "cover_retry")) == true,
                   editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "cover_retry")) == false,
@@ -4119,13 +4119,32 @@ enum SelfTest {
                   abs(geometryMid.x - 270) < 0.001, abs(geometryMid.y - 300) < 0.001 else {
                 print("SELFTEST ERROR: workflow wire midpoint"); exit(1)
             }
-            guard WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 340, y: 306), in: geometryDefinition, excluding: "a") == "b",
-                  WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 340, y: 306), in: geometryDefinition, excluding: "b") == nil,
+            guard WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 420 - half + 6, y: 306), in: geometryDefinition, excluding: "a") == "b",
+                  WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 420 - half + 6, y: 306), in: geometryDefinition, excluding: "b") == nil,
                   WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 200, y: 306), in: geometryDefinition, excluding: "a") == nil,
                   WorkflowCardGeometry.nearestInputPort(to: CGPoint(x: 120 - half + 4, y: 300), in: geometryDefinition, excluding: "b") == "a" else {
                 print("SELFTEST ERROR: workflow input port hit test"); exit(1)
             }
-            print("  canvas geometry OK (ports + splice targets + midpoint + hit tests)")
+            guard let fitBounds = WorkflowCardGeometry.bounds(of: geometryDefinition) else {
+                print("SELFTEST ERROR: workflow content bounds"); exit(1)
+            }
+            let fitViewport = CGSize(width: 900, height: 600)
+            let fitted = WorkflowCanvasTransform.fitting(fitBounds, in: fitViewport)
+            let fittedCenter = fitted.toScreen(CGPoint(x: fitBounds.midX, y: fitBounds.midY))
+            guard fitted.scale >= WorkflowCanvasTransform.minScale, fitted.scale <= 1,
+                  fitBounds.width * fitted.scale <= fitViewport.width - 100,
+                  fitBounds.height * fitted.scale <= fitViewport.height - 100,
+                  abs(fittedCenter.x - fitViewport.width / 2) < 0.001,
+                  abs(fittedCenter.y - fitViewport.height / 2) < 0.001,
+                  WorkflowCanvasTransform.fitting(.zero, in: fitViewport) == WorkflowCanvasTransform(),
+                  WorkflowCardGeometry.bounds(of: PulseWorkflowDefinition(id: "empty", nodes: [], edges: [], positions: [:])) == nil else {
+                print("SELFTEST ERROR: fit view transform"); exit(1)
+            }
+            let wideBounds = CGRect(x: 0, y: 0, width: 40000, height: 200)
+            guard WorkflowCanvasTransform.fitting(wideBounds, in: fitViewport).scale == WorkflowCanvasTransform.minScale else {
+                print("SELFTEST ERROR: fit view clamp"); exit(1)
+            }
+            print("  canvas geometry OK (ports + splice targets + midpoint + hit tests + fit)")
 
             let spliceStore = PulseWorkflowStore.fixture()
             spliceStore.draft = spliceStore.active

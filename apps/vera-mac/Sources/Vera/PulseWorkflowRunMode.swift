@@ -46,6 +46,11 @@ struct PulseWorkflowNodeRun: Hashable {
         return finishedAt.timeIntervalSince(startedAt)
     }
 
+    var itemCount: Int? {
+        guard case .int(let count) = output["items"] else { return nil }
+        return count
+    }
+
     var countsLine: String? {
         let counts = output.compactMap { key, value -> (String, Int)? in
             guard case .int(let count) = value else { return nil }
@@ -175,43 +180,50 @@ struct WorkflowRunNodeCard: View {
     var selected: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: spec?.icon ?? "puzzlepiece").font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(graphTint(spec?.tint ?? "accent"))
-                .frame(width: 34, height: 34).background(graphTint(spec?.tint ?? "accent").opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(spec?.label ?? workflowDisplayName(node.type)).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-                    if run != nil {
-                        Circle().fill(runStateColor(run?.state ?? "")).frame(width: 6, height: 6)
-                    }
-                }
-                Text(detailLine).font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+        WorkflowCardFace(spec: spec, fallbackType: node.type,
+                         stroke: strokeColor, strokeWidth: selected ? 2 : 1,
+                         fillOpacity: run == nil ? 0.55 : 1)
+            .shadow(color: Theme.bg.opacity(0.35), radius: selected ? 9 : 4, y: 2)
+            .opacity(run == nil ? 0.6 : 1)
+            .overlay {
+                WorkflowCardName(text: spec?.label ?? workflowDisplayName(node.type), muted: run == nil)
             }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 11).frame(width: 164, height: 66)
-        .background(selected ? Theme.surface.opacity(1) : Theme.surface.opacity(0.9))
-        .clipShape(RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(strokeColor, lineWidth: selected ? 1.5 : 1))
-        .shadow(color: Theme.bg.opacity(0.35), radius: selected ? 8 : 3, y: 2)
-        .overlay(alignment: .leading) { PortDot().offset(x: -4) }
-        .overlay(alignment: .trailing) { PortDot().offset(x: 4) }
+            .overlay(alignment: .leading) { WorkflowPortDot().offset(x: -4) }
+            .overlay(alignment: .trailing) { WorkflowPortDot().offset(x: 4) }
+            .overlay(alignment: .topTrailing) { badge }
     }
 
-    private var detailLine: String {
-        guard let run else { return "No record this run" }
-        var parts: [String] = []
-        if let counts = run.countsLine { parts.append(counts) }
-        if let duration = run.duration { parts.append(runDurationText(duration)) }
-        return parts.isEmpty ? runStateLabel(run.state) : parts.joined(separator: " · ")
+    @ViewBuilder private var badge: some View {
+        if let run {
+            ZStack {
+                Circle().fill(Theme.bg).frame(width: 19, height: 19)
+                Image(systemName: badgeIcon(run.state))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(runStateColor(run.state))
+            }
+            .offset(x: 7, y: -7)
+            .help(runStateLabel(run.state))
+        }
+    }
+
+    private func badgeIcon(_ state: String) -> String {
+        switch state {
+        case "ok", "accepted", "retried": return "checkmark.circle.fill"
+        case "warning", "retrying": return "exclamationmark.circle.fill"
+        case "error", "failed", "retry_failed": return "xmark.circle.fill"
+        case "running": return "arrow.triangle.2.circlepath.circle.fill"
+        default: return "circle.fill"
+        }
     }
 
     private var strokeColor: Color {
         if selected { return Theme.accent }
         guard let run else { return Theme.hairline }
-        return runStateColor(run.state).opacity(0.55)
+        switch run.state {
+        case "error", "failed", "retry_failed": return runStateColor(run.state).opacity(0.7)
+        case "warning", "retrying": return runStateColor(run.state).opacity(0.55)
+        default: return Theme.hairline
+        }
     }
 }
 
@@ -371,12 +383,18 @@ struct WorkflowRunEmptyState: View {
 
     var body: some View {
         ZStack {
-            DotGrid()
-            VStack(spacing: 8) {
-                Image(systemName: icon).font(.system(size: 20)).foregroundStyle(Theme.textSecondary)
-                Text(title).font(.system(size: 13, weight: .semibold))
-                Text(note).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                    .multilineTextAlignment(.center).frame(maxWidth: 380)
+            WorkflowCanvasGrid(transform: WorkflowCanvasTransform())
+            VStack(spacing: 14) {
+                Image(systemName: icon).font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 56, height: 56)
+                    .background(workflowCardShape(trigger: false).fill(Theme.surface))
+                    .overlay(workflowCardShape(trigger: false).stroke(Theme.hairline, lineWidth: 1))
+                VStack(spacing: 5) {
+                    Text(title).font(.system(size: 14, weight: .semibold))
+                    Text(note).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center).frame(maxWidth: 380)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -404,10 +422,10 @@ extension PulseWorkflowStore {
                     {"from":"synthesis","to":"claim_audit"},{"from":"claim_audit","to":"cover_art"},
                     {"from":"cover_art","to":"visual_review"},{"from":"visual_review","to":"cover_retry"},
                     {"from":"cover_retry","to":"inject"}],
-           "positions":{"triage":{"x":105,"y":310},"gates":{"x":351,"y":310},"synthesis":{"x":597,"y":310},
-                        "claim_audit":{"x":843,"y":310},"cover_art":{"x":1089,"y":310},
-                        "visual_review":{"x":1335,"y":310},"cover_retry":{"x":1581,"y":310},
-                        "inject":{"x":1827,"y":310}}}},
+           "positions":{"triage":{"x":105,"y":310},"gates":{"x":289,"y":310},"synthesis":{"x":473,"y":310},
+                        "claim_audit":{"x":657,"y":310},"cover_art":{"x":841,"y":310},
+                        "visual_review":{"x":1025,"y":310},"cover_retry":{"x":1209,"y":310},
+                        "inject":{"x":1393,"y":310}}}},
          "nodes":[
            {"id":"triage","state":"ok","input":{"items":0},"output":{"items":9,"rounds":3},"started_at":1754250000,"finished_at":1754250060},
            {"id":"gates","state":"ok","input":{"items":9},"output":{"items":6},"started_at":1754250060,"finished_at":1754250061},

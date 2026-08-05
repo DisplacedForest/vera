@@ -42,7 +42,7 @@ def init():
             # 1 = executed through the free (no-confirm) autonomous lane, 0 = the gated path
             c.execute("ALTER TABLE action_log ADD COLUMN auto INTEGER DEFAULT 0")
         if "source" not in cols:
-            # who initiated (source: chat/heartbeat/...) and as whom (actor) — the
+            # who initiated (source: chat/...) and as whom (actor) — the
             # attribution the activity feed surfaces per lifecycle event
             c.execute("ALTER TABLE action_log ADD COLUMN source TEXT")
             c.execute("ALTER TABLE action_log ADD COLUMN actor TEXT")
@@ -103,7 +103,7 @@ def set_result(token, result: dict, status="applied"):
         )
 
 
-def log_auto(verb, args: dict, result: dict, status="applied", source="heartbeat", actor="vera"):
+def log_auto(verb, args: dict, result: dict, status="applied", source="vera", actor="vera"):
     """Audit a free-lane execution. No token, no pending row — the autonomous path skips
     staging entirely; the log row IS its whole record."""
     init()

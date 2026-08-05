@@ -2,7 +2,7 @@
 
 A scheduler run's recorded detail must read as one or two human sentences with the
 headline numbers, never a serialized run record. These cover the named job kinds
-(pulse, signals, heartbeat, updates) plus the gated and fallback paths, and assert
+(pulse, signals, updates) plus the gated and fallback paths, and assert
 that no output carries dict/repr markers.
 """
 import os
@@ -35,18 +35,6 @@ def test_pulse_single_card_is_singular():
     out = summarize_outcome("pulse", {"state": "done", "injected": [{"id": "a"}], "gates": {}})
     assert "shipped 1 card." in out
     _no_record_markers(out)
-
-
-def test_heartbeat_summary():
-    out = summarize_outcome("heartbeat", {
-        "ok": True, "learned": ["a"], "refined": True, "proposed": {"verb": "x"},
-    })
-    assert "learned 1 thing" in out
-    assert "refined her instructions" in out
-    assert "proposed an action" in out
-    _no_record_markers(out)
-    idle = summarize_outcome("heartbeat", {"ok": True, "learned": [], "refined": False, "proposed": None})
-    assert "nothing to do this cycle" in idle
 
 
 def test_updates_summary_paths():

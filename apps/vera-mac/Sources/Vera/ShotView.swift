@@ -605,8 +605,6 @@ struct ShotView: View {
         let pulses = [
             CanvasPulse(id: "shot-rivergauge", flowID: "vein_rivergauge", surfaceID: "veins",
                         startedAt: Date().addingTimeInterval(-CanvasPulse.duration / 2)),
-            CanvasPulse(id: "shot-heartbeat", flowID: "heartbeat", surfaceID: "memory",
-                        startedAt: Date().addingTimeInterval(-CanvasPulse.duration / 2)),
         ]
         return VStack(spacing: 0) {
             HStack {
@@ -824,8 +822,8 @@ struct ShotView: View {
 
 }
 
-/// Render-safe Agentic detail boards for screenshots: the pulse pipeline, the
-/// heartbeat branch fan, and the organism map with the inspector open.
+/// Render-safe Agentic detail boards for screenshots: the pulse pipeline and the
+/// organism map with the inspector open.
 struct AgenticDetailShot: View {
     let variant: String
 
@@ -842,11 +840,6 @@ struct AgenticDetailShot: View {
                             PulseDrill(flow: flow, graph: graph,
                                        viewport: CGSize(width: 1180, height: 640),
                                        detail: PulseRunClient.mock(), initialExpandedStage: "triage")
-                        }
-                    case "agentic-heartbeat":
-                        if let flow = graph.flow("heartbeat") {
-                            HeartbeatDrill(flow: flow, graph: graph,
-                                           viewport: CGSize(width: 848, height: 640))
                         }
                     default:
                         let viewport = CGSize(width: 848, height: 666)
@@ -916,7 +909,6 @@ struct AgenticDetailShot: View {
             }
             .padding(.horizontal, 28).padding(.top, 36).padding(.bottom, 14)
         } else {
-            let isPulse = variant == "agentic-pulse"
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 10) {
                     HStack(spacing: 5) {
@@ -927,20 +919,18 @@ struct AgenticDetailShot: View {
                     .padding(.horizontal, 11).padding(.vertical, 5)
                     .background(Theme.surface).clipShape(Capsule())
                     .overlay(Capsule().stroke(Theme.hairline, lineWidth: 1))
-                    Text(isPulse ? "Pulse briefing" : "Heartbeat").font(.system(size: 22, weight: .bold))
-                    Text(isPulse ? "Daily 5:00 AM" : "Every 20 min")
+                    Text("Pulse briefing").font(.system(size: 22, weight: .bold))
+                    Text("Daily 5:00 AM")
                         .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                         .padding(.horizontal, 9).padding(.vertical, 3)
                         .background(Theme.surface).clipShape(Capsule())
                     Spacer()
                 }
                 HStack(spacing: 7) {
-                    Image(systemName: isPulse ? "exclamationmark.triangle" : "clock")
+                    Image(systemName: "exclamationmark.triangle")
                         .font(.system(size: 11))
-                        .foregroundStyle(isPulse ? Color(red: 0.90, green: 0.62, blue: 0.30) : Theme.textSecondary)
-                    Text(isPulse
-                         ? "Last run injected 6 cards 7 hr ago. starved run: 6/8 cards after 3 triage round(s)."
-                         : "Each tick reads HEARTBEAT.md and decides which branches to take.")
+                        .foregroundStyle(Color(red: 0.90, green: 0.62, blue: 0.30))
+                    Text("Last run injected 6 cards 7 hr ago. starved run: 6/8 cards after 3 triage round(s).")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
             }

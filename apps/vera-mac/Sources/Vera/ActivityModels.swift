@@ -1,11 +1,11 @@
 import Foundation
 
 /// One autonomous-activity event from vera-api (`GET /agentic/activity`): something
-/// Vera did on her own, normalized across the heartbeat, action, and scheduler sources.
+/// Vera did on her own, normalized across the action and scheduler sources.
 struct ActivityEvent: Identifiable, Sendable, Hashable {
     let id: String
     var ts: Date
-    var source: String      // scheduler | heartbeat | action
+    var source: String      // scheduler | action
     var kind: String
     var title: String
     var detail: String
@@ -16,7 +16,6 @@ struct ActivityEvent: Identifiable, Sendable, Hashable {
     var icon: String {
         switch source {
         case "scheduler": return "clock"
-        case "heartbeat": return "heart"
         case "action": return "bolt"
         default: return "circle.dashed"
         }
@@ -34,11 +33,11 @@ struct ActivityEvent: Identifiable, Sendable, Hashable {
                           tool: tool, ref: nil)
         }
         return [
-            ev("heartbeat", "watch", "Watching a situation", "garage door open after dark", ago: 480),
-            ev("scheduler", "ok", "Heartbeat tick", "nominal", ago: 1200, tool: "heartbeat"),
+            ev("scheduler", "ok", "River gauge run", "3 cards refreshed", ago: 480, tool: "vein_rivergauge"),
+            ev("scheduler", "ok", "Pulse briefing", "6 cards injected", ago: 1200, tool: "pulse"),
             ev("action", "auto", "media.request", "applied: title=Dune Part Two", ago: 4200, tool: "media.request"),
             ev("scheduler", "fail", "Geopolitics run", "feed timeout after 30s", ago: 7600, tool: "geopolitics"),
-            ev("heartbeat", "learn", "Studied the house", "ha.service:climate.office", ago: 9800),
+            ev("action", "auto", "ha.service", "applied: climate.office", ago: 9800, tool: "ha.service"),
         ]
     }
 }

@@ -4,10 +4,6 @@ import SwiftUI
 /// all align to this same centered column so nothing floats off to the page edge.
 let pulseFeedWidth: CGFloat = 620
 
-/// Heartbeat-found cards carry a quiet "Noticed this for you" byline (same depth as the
-/// scheduled feed — just a whisper of origin). One flip to disable.
-let showProvenanceByline = true
-
 /// The Pulse surface — a single-column feed of ChatGPT-style briefing cards: generated cover art
 /// on top, a tinted panel (color from the image's dominant hue) with title/preview/actions.
 /// Tapping a card opens it in the chat view. The grid is reused (render-safe) for screenshots.
@@ -148,11 +144,6 @@ struct PulseCardTile: View {
                     .frame(height: 200).frame(maxWidth: .infinity).clipped()
             }
             VStack(alignment: .leading, spacing: 8) {
-                if showProvenanceByline, card.noticedForYou {
-                    Label("Noticed this for you", systemImage: "sparkle")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.6))
-                }
                 Text(card.title).font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white).lineLimit(2)
                 Text(card.preview).font(.system(size: 13))

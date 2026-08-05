@@ -62,11 +62,6 @@ async def _job_home_digest():
     return await home.run_digest()
 
 
-async def _job_heartbeat():
-    from . import heartbeat
-    return await heartbeat.tick(heartbeat.TickRequest())
-
-
 async def _job_conversation_extract():
     from . import conversation_extract
     return await conversation_extract.run()
@@ -84,7 +79,6 @@ REGISTRY: dict[str, tuple[str, str, object]] = {
     "home_model":     ("Home model refresh",        "30 3 * * *",   _job_home_model),
     "home_reconcile": ("Home map reconcile",        "0 3 * * *",    _job_home_reconcile),
     "home_digest":    ("Home rhythm digest",        "0 2 * * *",    _job_home_digest),
-    "heartbeat":      ("Heartbeat tick",            "*/20 * * * *", _job_heartbeat),
     "conversation_extract": ("Conversation extraction into the Profile Graph", "45 4 * * *", _job_conversation_extract),
     "weight_fit":     ("Ranking weight fit from feedback", "30 4 * * 0",  _job_weight_fit),
 }
@@ -239,17 +233,6 @@ def summarize_outcome(job_id: str, result) -> str:
             line += f" {_plural(len(warnings), 'warning')}."
         return line
 
-
-    if job_id == "heartbeat":
-        bits = []
-        learned = r.get("learned") or []
-        if learned:
-            bits.append(f"learned {_plural(len(learned), 'thing')}")
-        if r.get("refined"):
-            bits.append("refined her instructions")
-        if r.get("proposed"):
-            bits.append("proposed an action")
-        return "Heartbeat tick: " + (", ".join(bits) if bits else "nothing to do this cycle") + "."
 
     if job_id == "updates":
         total = int(r.get("total") or 0)

@@ -86,14 +86,6 @@ def test_zero_repair_is_single_shot():
 
 def test_surface_schemas_default_to_todays_fallbacks():
     call, _ = _seq("{}")
-    obj, errors = asyncio.run(structured.parsed(call, structured.ForYouCandidate))
-    assert obj["surface"] is False
-    assert obj["topic"] == "" and obj["query"] == ""
-    assert errors == []
-
-
-def test_decide_accepts_the_documented_shape():
-    call, _ = _seq('{"learn": [{"topic": "t", "query": "q"}], "refine": null, "action": null}')
-    obj, errors = asyncio.run(structured.parsed(call, structured.Decide))
-    assert obj["learn"] == [{"topic": "t", "query": "q"}]
+    obj, errors = asyncio.run(structured.parsed(call, structured.Topics))
+    assert obj["topics"] == []
     assert errors == []

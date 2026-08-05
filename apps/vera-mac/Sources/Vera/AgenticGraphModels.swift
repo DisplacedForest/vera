@@ -5,14 +5,13 @@ enum AgenticPane: String {
     case canvas, activity
 }
 
-/// One drill-in stage of a flow (a pipeline step or a heartbeat branch), as declared
+/// One drill-in stage of a flow (a pipeline step), as declared
 /// by the server's graph manifest.
 struct GraphStage: Identifiable, Sendable, Hashable {
     let id: String
     var label: String
     var icon: String
     var tint: String
-    var feeds: [String]
 }
 
 /// The distilled last pulse run, for per-stage state on the pulse drill-in.
@@ -28,30 +27,20 @@ struct PulseStageState: Sendable, Hashable {
     var gateKills: Int { gates.values.reduce(0, +) }
 }
 
-/// The latest outcome one heartbeat branch produced.
-struct BranchOutcome: Sendable, Hashable {
-    var kind: String
-    var detail: String
-    var ts: Date
-}
-
-/// One autonomous flow on the canvas: a scheduler job or the heartbeat. Topology and
+/// One autonomous flow on the canvas: a scheduler job. Topology and
 /// presentation come from the manifest; live run state is merged from /scheduler/jobs.
 struct GraphFlow: Identifiable, Sendable, Hashable {
     let id: String
     var label: String           // canvas label ("Pulse briefing")
     var title: String           // formal name ("Pulse briefing run")
-    var kind: String            // job | heartbeat
     var icon: String
     var tint: String
     var group: String
     var feeds: [String]
     var tools: [String]
     var running: Bool
-    var stageLayout: String?    // pipeline | fan
     var stages: [GraphStage]
     var pulseState: PulseStageState?
-    var branchState: [String: BranchOutcome]
 }
 
 /// One surface autonomous work lands on (Pulse feed, Veins, Memory, Actions).
@@ -81,8 +70,7 @@ struct AgenticGraph: Sendable, Hashable {
                 return GraphStage(id: sid,
                                   label: (s["label"] as? String) ?? sid,
                                   icon: (s["icon"] as? String) ?? "circle",
-                                  tint: (s["tint"] as? String) ?? "gray",
-                                  feeds: (s["feeds"] as? [String]) ?? [])
+                                  tint: (s["tint"] as? String) ?? "gray")
             }
             var pulseState: PulseStageState?
             if let st = f["stage_state"] as? [String: Any], let state = st["state"] as? String {
@@ -99,28 +87,18 @@ struct AgenticGraph: Sendable, Hashable {
                     warnings: (st["warnings"] as? [String]) ?? [],
                     finishedAt: schedulerDate(st["finished_at"]))
             }
-            var branchState: [String: BranchOutcome] = [:]
-            for (branch, v) in (f["branch_state"] as? [String: Any]) ?? [:] {
-                guard let o = v as? [String: Any], let ts = schedulerDate(o["ts"]) else { continue }
-                branchState[branch] = BranchOutcome(kind: (o["kind"] as? String) ?? branch,
-                                                    detail: (o["detail"] as? String) ?? "",
-                                                    ts: ts)
-            }
             return GraphFlow(
                 id: id,
                 label: (f["label"] as? String) ?? id,
                 title: (f["title"] as? String) ?? (f["label"] as? String) ?? id,
-                kind: (f["kind"] as? String) ?? "job",
                 icon: (f["icon"] as? String) ?? "clock",
                 tint: (f["tint"] as? String) ?? "gray",
                 group: (f["group"] as? String) ?? "Other",
                 feeds: (f["feeds"] as? [String]) ?? [],
                 tools: (f["tools"] as? [String]) ?? [],
                 running: (f["running"] as? Bool) ?? false,
-                stageLayout: f["stage_layout"] as? String,
                 stages: stages,
-                pulseState: pulseState,
-                branchState: branchState)
+                pulseState: pulseState)
         }
         let surfaces: [GraphSurface] = surfArr.compactMap { s in
             guard let id = s["id"] as? String else { return nil }
@@ -135,21 +113,19 @@ struct AgenticGraph: Sendable, Hashable {
 
     /// Demo topology for screenshots — mirrors the live manifest shape.
     static func mock() -> AgenticGraph {
-        func stage(_ id: String, _ label: String, _ icon: String, _ tint: String,
-                   feeds: [String] = []) -> GraphStage {
-            GraphStage(id: id, label: label, icon: icon, tint: tint, feeds: feeds)
+        func stage(_ id: String, _ label: String, _ icon: String, _ tint: String) -> GraphStage {
+            GraphStage(id: id, label: label, icon: icon, tint: tint)
         }
         func flow(_ id: String, _ label: String, _ icon: String, _ tint: String, _ group: String,
-                  feeds: [String], tools: [String] = [], kind: String = "job",
-                  running: Bool = false, layout: String? = nil,
-                  stages: [GraphStage] = []) -> GraphFlow {
-            GraphFlow(id: id, label: label, title: label, kind: kind, icon: icon, tint: tint,
+                  feeds: [String], tools: [String] = [],
+                  running: Bool = false, stages: [GraphStage] = []) -> GraphFlow {
+            GraphFlow(id: id, label: label, title: label, icon: icon, tint: tint,
                       group: group, feeds: feeds, tools: tools, running: running,
-                      stageLayout: layout, stages: stages, pulseState: nil, branchState: [:])
+                      stages: stages, pulseState: nil)
         }
         var pulse = flow("pulse", "Pulse briefing", "newspaper", "accent", "Ambient",
                          feeds: ["pulse_feed"], tools: ["websearch", "vera-image"],
-                         layout: "pipeline", stages: [
+                         stages: [
                             stage("triage", "Triage", "globe", "accent"),
                             stage("gates", "Gates", "line.3.horizontal.decrease.circle", "orange"),
                             stage("synthesis", "Synthesis", "sparkles", "purple"),
@@ -161,23 +137,6 @@ struct AgenticGraph: Sendable, Hashable {
                                            injected: 6,
                                            warnings: ["starved run: 6/8 cards after 3 triage round(s)"],
                                            finishedAt: Date().addingTimeInterval(-7 * 3600))
-        var heartbeat = flow("heartbeat", "Heartbeat", "heart", "accent", "Heartbeat",
-                             feeds: ["pulse_feed", "veins", "memory", "actions"],
-                             tools: ["websearch"], kind: "heartbeat", running: true,
-                             layout: "fan", stages: [
-                                stage("learn", "Learn", "sparkles", "accent", feeds: ["memory"]),
-                                stage("refine", "Refine", "doc.text", "purple"),
-                                stage("propose", "Propose", "bolt", "orange", feeds: ["actions"]),
-                                stage("watch", "Watches", "waveform.path.ecg", "cyan", feeds: ["veins"]),
-                                stage("foryou", "For you", "heart", "red", feeds: ["pulse_feed"])])
-        heartbeat.branchState = [
-            "learn": BranchOutcome(kind: "learn", detail: "Passive cooling and thermal mass",
-                                   ts: Date().addingTimeInterval(-300)),
-            "propose": BranchOutcome(kind: "confirmed", detail: "ha.service:climate.office",
-                                     ts: Date().addingTimeInterval(-3 * 86400)),
-            "foryou": BranchOutcome(kind: "foryou", detail: "shared a find",
-                                    ts: Date().addingTimeInterval(-10800)),
-        ]
         return AgenticGraph(
             flows: [
                 pulse,
@@ -188,7 +147,6 @@ struct AgenticGraph: Sendable, Hashable {
                 flow("home_model", "Home model", "house", "cyan", "Home", feeds: ["actions"]),
                 flow("home_reconcile", "Map reconcile", "checklist", "cyan", "Home", feeds: ["veins"]),
                 flow("home_digest", "Rhythm digest", "doc.text", "cyan", "Home", feeds: ["veins"]),
-                heartbeat,
                 flow("healthcheck", "Health probe", "waveform.path.ecg", "green", "System", feeds: ["veins"]),
                 flow("updates", "Update check", "arrow.down.circle", "gray", "System", feeds: ["veins"]),
                 flow("media_curate", "Media curate", "film", "red", "Media", feeds: ["veins"],

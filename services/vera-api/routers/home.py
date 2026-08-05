@@ -1,9 +1,8 @@
 """Home rhythm router — learn HA usage baselines, surface deviations.
 
 Nightly `POST /home/digest` folds yesterday's HA history into rhythm_store and posts a "Home rhythm"
-Pulse card. `GET /home/deviations` is a live read the heartbeat folds into each tick. `GET /home/rhythm`
-returns an entity's learned baseline. Reuses the HA pattern from heartbeat.py and the pulse helpers;
-all pure math lives in rhythm_store.py.
+Pulse card. `GET /home/rhythm` returns an entity's learned baseline.
+All pure math lives in rhythm_store.py.
 """
 import json
 import os

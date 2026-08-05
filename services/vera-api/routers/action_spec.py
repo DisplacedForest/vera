@@ -150,16 +150,11 @@ def _p_overseerr(args):
 # POST /actions/auto with NO confirm gate. It is an explicit per-verb enrollment — a
 # deliberate one-line act, never derived from risk/reversible — and every entry carries
 # it so flipping a verb free is always a visible diff.
-HEARTBEAT_SKILL_ID = "heartbeat"   # the sanctioned direct self-authored surface, never gated here
-
-
 def _v_skill(args):
     if not (args.get("name") or "").strip():
         return "skill name required"
     if not (args.get("content") or "").strip():
         return "skill content required"
-    if (args.get("id") or "").strip() == HEARTBEAT_SKILL_ID:
-        return "heartbeat is the sanctioned direct surface; author it through /authoring/heartbeat"
     return None
 
 

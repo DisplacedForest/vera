@@ -2527,10 +2527,10 @@ enum SelfTest {
             }
             let catalog = NativeCapabilityTools.catalog(directory: root, reservedNames: reserved)
             let names = catalog.declarations.map(\.name)
-            guard names.prefix(6) == [
+            guard names.prefix(5) == [
                 "actions_registry", "propose_action", "author_skill",
-                "author_heartbeat", "journal_read", "journal_commit",
-            ], names.dropFirst(6) == ["inventory_lookup", "inventory_record", "archived_tool"] else {
+                "journal_read", "journal_commit",
+            ], names.dropFirst(5) == ["inventory_lookup", "inventory_record", "archived_tool"] else {
                 print("SELFTEST ERROR: capability tool declaration order \(names)"); exit(1)
             }
             let failures = Dictionary(
@@ -2551,7 +2551,7 @@ enum SelfTest {
             let bundled = NativeCapabilityTools.bundled
             let propose = bundled.first { $0.name == "propose_action" }
             let journalRead = bundled.first { $0.name == "journal_read" }
-            guard bundled.count == 6,
+            guard bundled.count == 5,
                   bundled.first(where: { $0.name == "actions_registry" })?.method == .get,
                   bundled.first(where: { $0.name == "actions_registry" })?.properties.isEmpty == true,
                   propose?.method == .post,
@@ -2563,7 +2563,6 @@ enum SelfTest {
                   journalRead?.properties.first?.type == .string,
                   journalRead?.required.isEmpty == true,
                   bundled.first(where: { $0.name == "author_skill" })?.confirmation == .required,
-                  bundled.first(where: { $0.name == "author_heartbeat" })?.confirmation == .required,
                   bundled.first(where: { $0.name == "journal_commit" })?.confirmation == .required,
                   bundled.allSatisfy(\.needsAPIBase) else {
                 print("SELFTEST ERROR: bundled capability tool shapes"); exit(1)
@@ -2671,13 +2670,13 @@ enum SelfTest {
                 print("SELFTEST ERROR: near-cap JSON object result"); exit(1)
             }
 
-            client.respond("/authoring/heartbeat", status: 503, body: "{\"detail\":\"the service is down\"}")
-            guard let heartbeat = byName["author_heartbeat"] else {
-                print("SELFTEST ERROR: bundled heartbeat author missing"); exit(1)
+            client.respond("/authoring/skill", status: 503, body: "{\"detail\":\"the service is down\"}")
+            guard let skillAuthor = byName["author_skill"] else {
+                print("SELFTEST ERROR: bundled skill author missing"); exit(1)
             }
             do {
-                _ = try await heartbeat.execute(
-                    heartbeat.validatedArguments("{\"content\":\"Keep going.\"}"))
+                _ = try await skillAuthor.execute(
+                    skillAuthor.validatedArguments("{\"name\":\"Brew tea\",\"content\":\"Keep going.\"}"))
                 print("SELFTEST ERROR: capability non-2xx treated as success"); exit(1)
             } catch NativeToolError.failed(let detail) {
                 guard detail.contains("503"), detail.contains("the service is down") else {
@@ -3345,7 +3344,7 @@ enum SelfTest {
             status: "new", kind: "research", severity: "notice",
             action: PulseAction(verb: "ha.service", preview: "Do a thing", risk: "low",
                                 reversible: true, token: "ACTION-COMMIT-TOKEN"),
-            provenance: "heartbeat", category: "vera",
+            provenance: "scheduled", category: "vera",
             changeSet: [{
                 var entity = GroomSnapshot(kind: "entity", id: "router")
                 entity.type = "device"
@@ -3419,7 +3418,7 @@ enum SelfTest {
               restored.items.count == 1,
               restored.items.first?.token == nil,
               restored.changeSet.first?.before.first?.attrs == ["room": "closet"],
-              restored.provenance == "heartbeat",
+              restored.provenance == "scheduled",
               restored.category == "vera",
               restored.severity == "notice" else {
             print("SELFTEST ERROR: pulse snapshot restore fidelity"); exit(1)
@@ -3866,14 +3865,14 @@ enum SelfTest {
             {"enabled": true, "jobs": [
               {"id": "pulse", "label": "Pulse briefing", "cron": "0 5 * * *", "enabled": true,
                "last_run": {"ts": 1750000000, "ok": true, "detail": "6 cards"}, "next_run": "2026-06-10T05:00:00"},
-              {"id": "heartbeat", "cron": "*/20 * * * *", "enabled": false, "env_locked": true}
+              {"id": "media_curation", "cron": "*/20 * * * *", "enabled": false, "env_locked": true}
             ]}
             """
             guard let schedObj = try? JSONSerialization.jsonObject(with: Data(schedJSON.utf8)),
                   let state = SchedulerState.parse(schedObj), state.masterEnabled,
                   state.jobs.count == 2, state.jobs[0].lastRunOK == true,
                   state.jobs[0].lastRunDetail == "6 cards", state.jobs[0].nextRun != nil,
-                  state.jobs[1].envLocked, !state.jobs[1].enabled, state.jobs[1].label == "heartbeat" else {
+                  state.jobs[1].envLocked, !state.jobs[1].enabled, state.jobs[1].label == "media_curation" else {
                 print("SELFTEST ERROR: scheduler state parse"); exit(1)
             }
             print("  scheduler OK (\(cronCases.count) cron summaries, jobs decode (incl. env-locked))")
@@ -3881,19 +3880,17 @@ enum SelfTest {
             // Canvas graph manifest decode: flows with stages/state, surfaces with stats.
             let graphJSON = """
             {"flows": [
-              {"id": "pulse", "label": "Pulse briefing", "title": "Pulse briefing run", "kind": "job",
+              {"id": "pulse", "label": "Pulse briefing", "title": "Pulse briefing run",
                "icon": "newspaper", "tint": "accent", "group": "Ambient", "feeds": ["pulse_feed"],
-               "tools": ["websearch"], "running": false, "stage_layout": "pipeline",
+               "tools": ["websearch"], "running": false,
                "stages": [{"id": "triage", "label": "Triage", "icon": "globe", "tint": "accent"}],
                "stage_state": {"state": "ok", "rounds": 2, "proposed": 9,
                                "gates": {"dedup": 3}, "injected": 6,
                                "warnings": ["starved run: 6/8"], "finished_at": 1750000000}},
-              {"id": "heartbeat", "label": "Heartbeat", "kind": "heartbeat", "icon": "heart",
-               "tint": "accent", "group": "Heartbeat", "feeds": ["memory"], "tools": [],
-               "running": true, "stage_layout": "fan",
-               "stages": [{"id": "learn", "label": "Learn", "icon": "sparkles", "tint": "accent",
-                           "feeds": ["memory"]}],
-               "branch_state": {"learn": {"kind": "learn", "detail": "a topic", "ts": 1750000000}}}
+              {"id": "memory_groom", "label": "Memory groom", "icon": "archivebox",
+               "tint": "purple", "group": "Memory", "feeds": ["memory"], "tools": [],
+               "running": true,
+               "stages": [{"id": "learn", "label": "Learn", "icon": "sparkles", "tint": "accent"}]}
             ],
             "surfaces": [{"id": "pulse_feed", "label": "Pulse feed", "icon": "newspaper",
                           "stat": "6 cards today"},
@@ -3905,8 +3902,8 @@ enum SelfTest {
                   let gp = graph.flow("pulse"), gp.stages.count == 1,
                   gp.pulseState?.gates["dedup"] == 3, gp.pulseState?.injected == 6,
                   gp.pulseState?.warnings.count == 1,
-                  let hb = graph.flow("heartbeat"), hb.kind == "heartbeat", hb.running,
-                  hb.branchState["learn"]?.detail == "a topic",
+                  let groom = graph.flow("memory_groom"), groom.running,
+                  groom.stages.first?.id == "learn",
                   graph.surfaces[0].stat == "6 cards today", graph.surfaces[1].stat == nil else {
                 print("SELFTEST ERROR: agentic graph parse"); exit(1)
             }

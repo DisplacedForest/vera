@@ -25,18 +25,18 @@ def test_skill_get_unknown_is_none():
 
 
 def test_skill_seeds_from_latest_revision_once():
-    store.snapshot("skill:heartbeat", "old", note="v1")
-    store.snapshot("skill:heartbeat", "current", note="v2")
-    s = store.skill_get("heartbeat")
+    store.snapshot("skill:notes", "old", note="v1")
+    store.snapshot("skill:notes", "current", note="v2")
+    s = store.skill_get("notes")
     assert s["content"] == "current"
-    store.skill_upsert("heartbeat", "Vera Heartbeat", "d", "edited")
-    assert store.skill_get("heartbeat")["content"] == "edited"
+    store.skill_upsert("notes", "Notes", "d", "edited")
+    assert store.skill_get("notes")["content"] == "edited"
 
 
 def test_seed_never_overwrites_live_row():
-    store.skill_upsert("heartbeat", "Vera Heartbeat", "d", "live")
-    store.snapshot("skill:heartbeat", "stale-history", note="old")
-    assert store.skill_get("heartbeat")["content"] == "live"
+    store.skill_upsert("notes", "Notes", "d", "live")
+    store.snapshot("skill:notes", "stale-history", note="old")
+    assert store.skill_get("notes")["content"] == "live"
 
 
 def test_skill_list_reports_size_not_content():
@@ -45,22 +45,25 @@ def test_skill_list_reports_size_not_content():
     assert rows[0]["size"] == 5 and "content" not in rows[0]
 
 
-def test_heartbeat_write_then_read_natively():
-    res = asyncio.run(authoring.author_heartbeat(authoring.HeartbeatBody(content="standing rules")))
-    assert res["id"] == "heartbeat"
-    assert store.skill_get("heartbeat")["content"] == "standing rules"
-    revs = store.revisions("skill:heartbeat")
-    assert revs and revs[0]["note"] == "heartbeat"
+def test_skill_upsert_write_then_read_natively():
+    store.snapshot("skill:notes", "standing rules", note="notes")
+    sid = asyncio.run(authoring._skill_upsert("notes", "Notes", "d", "standing rules"))
+    assert sid == "notes"
+    assert store.skill_get("notes")["content"] == "standing rules"
+    revs = store.revisions("skill:notes")
+    assert revs and revs[0]["note"] == "notes"
 
 
 def test_revert_restores_content_with_local_name():
-    asyncio.run(authoring.author_heartbeat(authoring.HeartbeatBody(content="v1")))
-    rev1 = store.revisions("skill:heartbeat")[0]["id"]
-    asyncio.run(authoring.author_heartbeat(authoring.HeartbeatBody(content="v2")))
+    store.snapshot("skill:notes", "v1", note="v1")
+    asyncio.run(authoring._skill_upsert("notes", "Notes", "d", "v1"))
+    rev1 = store.revisions("skill:notes")[0]["id"]
+    store.snapshot("skill:notes", "v2", note="v2")
+    asyncio.run(authoring._skill_upsert("notes", "Notes", "d", "v2"))
     out = asyncio.run(authoring.revert(authoring.RevertBody(rev_id=rev1)))
     assert out["ok"] is True and out["reverted_to"] == rev1
-    s = store.skill_get("heartbeat")
-    assert s["content"] == "v1" and s["name"] == "Vera Heartbeat"
+    s = store.skill_get("notes")
+    assert s["content"] == "v1" and s["name"] == "Notes"
 
 
 def test_revert_rejects_non_skill_targets():
@@ -68,10 +71,3 @@ def test_revert_rejects_non_skill_targets():
     from fastapi import HTTPException
     with pytest.raises(HTTPException):
         asyncio.run(authoring.revert(authoring.RevertBody(rev_id=rid)))
-
-
-def test_heartbeat_doc_prefers_store_and_falls_back(monkeypatch):
-    from routers import heartbeat as hbmod
-    assert asyncio.run(hbmod._heartbeat_doc()) == hbmod._file_checklist()
-    store.skill_upsert("heartbeat", "Vera Heartbeat", "d", "from the store")
-    assert asyncio.run(hbmod._heartbeat_doc()) == "from the store"

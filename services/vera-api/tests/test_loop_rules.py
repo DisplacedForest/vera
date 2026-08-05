@@ -1,4 +1,4 @@
-from routers import heartbeat, research, tool_protocol
+from routers import research, tool_protocol
 
 
 def test_loop_budget_default_when_unset(monkeypatch):
@@ -33,10 +33,6 @@ def test_research_prompts_carry_the_rules():
     assert research.PLAN_SYS.startswith(tool_protocol.LOOP_RULES)
     assert research.SYN_SYS.startswith(tool_protocol.LOOP_RULES)
 
-
-def test_heartbeat_prompts_carry_the_rules():
-    assert heartbeat.DECIDE_SYS.startswith(tool_protocol.LOOP_RULES)
-    assert heartbeat.GROUND_SYS.startswith(tool_protocol.LOOP_RULES)
 
 
 def test_research_iteration_cap_reads_env(monkeypatch):

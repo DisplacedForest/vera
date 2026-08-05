@@ -6,7 +6,7 @@ REGISTRY: dict[str, dict] = {
              "hint": "any /v1 endpoint (llama.cpp, vLLM, llama-swap, mlx_lm.server, or a hosted API)"},
             {"id": "model", "env": "VERA_MODEL", "label": "Model id", "secret": False},
         ],
-        "unlocks": ["Pulse briefings, heartbeat, veins, research, and every other capability "
+        "unlocks": ["Pulse briefings, veins, research, and every other capability "
                     "that thinks in language"],
     },
     "owner": {
@@ -64,7 +64,7 @@ REGISTRY: dict[str, dict] = {
              "hint": "use an IP, not .local. Containers on a bridge network can't resolve mDNS"},
             {"id": "token", "env": "HOME_ASSISTANT_KEY", "label": "Long-lived access token", "secret": True},
         ],
-        "unlocks": ["live home state in chat, heartbeat, and cards",
+        "unlocks": ["live home state in chat and cards",
                     "confirm-gated device actuation",
                     "home map reconciliation against live entities"],
         "features": [

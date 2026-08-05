@@ -1,6 +1,6 @@
 """Agentic activity feed and canvas graph — what Vera does on her own, as data.
 
-The graph is the canvas manifest: every flow (scheduler job + the heartbeat), the
+The graph is the canvas manifest: every flow, the
 surface each one feeds, and per-flow presentation/topology metadata. Declarative in
 the vein-catalog spirit — the app renders whatever this says; a new capability is a
 new entry here, never an app release. This is also the reserved editor lane: a
@@ -12,40 +12,12 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from . import action_store, heartbeat_store, scheduler_store
+from . import action_store, scheduler_store
 from . import workflow_registry
 from . import workflow_store
 
 log = logging.getLogger("agentic")
 router = APIRouter()
-
-# Human titles for heartbeat outcome kinds; unknown kinds fall back to the kind itself.
-_HEARTBEAT_TITLES = {
-    "learn": "Studied the house",
-    "propose": "Proposed an action",
-    "refine": "Refined a proposal",
-    "watch": "Watching a situation",
-    "confirmed": "Proposal confirmed",
-    "dismissed": "Proposal dismissed",
-    "foryou": "Surfaced a For You item",
-    "foryou_skip": "Considered a For You item, skipped it",
-}
-
-
-def _heartbeat_events(hours: int) -> list[dict]:
-    out = []
-    for o in heartbeat_store.recent(hours):
-        out.append({
-            "ts": float(o["ts"]),
-            "source": "heartbeat",
-            "kind": o["kind"],
-            "title": _HEARTBEAT_TITLES.get(o["kind"], o["kind"]),
-            "detail": o.get("detail") or "",
-            "tool": None,
-            "ref": None,
-        })
-    return out
-
 
 def _action_events(hours: int) -> list[dict]:
     out = []
@@ -107,27 +79,10 @@ _PULSE_STAGES = [
     {"id": "inject", "label": "Inject", "icon": "arrow.down.to.line", "tint": "green"},
 ]
 
-# Branch ids double as the heartbeat outcome kinds they report on (see _BRANCH_OF).
-_HEARTBEAT_BRANCHES = [
-    {"id": "learn", "label": "Learn", "icon": "sparkles", "tint": "accent", "feeds": ["memory"]},
-    {"id": "refine", "label": "Refine", "icon": "doc.text", "tint": "purple", "feeds": []},
-    {"id": "propose", "label": "Propose", "icon": "bolt", "tint": "orange", "feeds": ["actions"]},
-    {"id": "watch", "label": "Watches", "icon": "waveform.path.ecg", "tint": "cyan", "feeds": ["veins"]},
-    {"id": "foryou", "label": "For you", "icon": "heart", "tint": "red", "feeds": ["pulse_feed"]},
-]
-
-_BRANCH_OF = {
-    "learn": "learn", "refine": "refine",
-    "propose": "propose", "confirmed": "propose", "dismissed": "propose",
-    "watch": "watch",
-    "foryou": "foryou", "foryou_skip": "foryou",
-}
-
 # Per-flow canvas face: presentation label (the registry label stays the formal name),
 # icon/tint (SF Symbol + the app's chart-palette tint names), thematic group, the
 # surfaces the flow feeds, and the tools it is known to use (static attribution; the
-# activity feed adds per-event attribution on top). Flows with `stages` drill in;
-# `stage_layout` is "pipeline" (linear) or "fan" (branches).
+# activity feed adds per-event attribution on top). Flows with `stages` drill in.
 FLOW_FACE: dict[str, dict] = {
     "pulse":          {"label": "Pulse briefing", "icon": "newspaper", "tint": "accent",
                        "group": "Ambient", "feeds": ["pulse_feed"],
@@ -139,10 +94,6 @@ FLOW_FACE: dict[str, dict] = {
                        "group": "Home", "feeds": ["veins"], "tools": []},
     "home_digest":    {"label": "Rhythm digest", "icon": "doc.text", "tint": "cyan",
                        "group": "Home", "feeds": ["veins"], "tools": []},
-    "heartbeat":      {"label": "Heartbeat", "icon": "heart", "tint": "accent",
-                       "group": "Heartbeat", "feeds": ["pulse_feed", "veins", "memory", "actions"],
-                       "tools": ["websearch"],
-                       "stage_layout": "fan", "stages": _HEARTBEAT_BRANCHES},
     "conversation_extract": {"label": "Conversation extraction", "icon": "text.bubble",
                              "tint": "purple", "group": "Memory", "feeds": ["memory"], "tools": []},
     "weight_fit":     {"label": "Weight fit", "icon": "chart.xyaxis.line", "tint": "purple",
@@ -183,17 +134,6 @@ def _pulse_stage_state() -> dict | None:
     }
 
 
-def _heartbeat_branch_state() -> dict:
-    """Latest outcome per heartbeat branch (a week back; branches fire sparsely)."""
-    latest: dict[str, dict] = {}
-    for o in heartbeat_store.recent(168):
-        branch = _BRANCH_OF.get(o["kind"])
-        if branch and branch not in latest:
-            latest[branch] = {"kind": o["kind"], "detail": (o.get("detail") or "")[:120],
-                              "ts": float(o["ts"])}
-    return latest
-
-
 def _surface_stat(surface_id: str) -> str | None:
     """One live phrase per surface. None when the backing store can't answer."""
     if surface_id == "pulse_feed":
@@ -229,7 +169,6 @@ async def graph():
             "id": job_id,
             "label": face.get("label", label),
             "title": label,
-            "kind": "heartbeat" if job_id == "heartbeat" else "job",
             "icon": face["icon"],
             "tint": face["tint"],
             "group": face["group"],
@@ -243,7 +182,7 @@ async def graph():
         if job_id == "pulse":
             try:
                 active = workflow_store.active("pulse")
-                flow["stage_layout"] = active["definition"].get("layout", "pipeline")
+                flow["stage_layout"] = "pipeline"
                 flow["stages"] = active["definition"].get("nodes") or []
                 flow["workflow"] = {"version": active["version"], "state": active["state"], "editable": True}
                 flow["stage_state"] = _pulse_stage_state()
@@ -252,12 +191,6 @@ async def graph():
             except Exception as e:  # noqa: BLE001 — state is garnish, topology must survive
                 log.warning("graph: pulse stage state failed: %s", e)
                 flow["stage_state"] = None
-        if job_id == "heartbeat":
-            try:
-                flow["branch_state"] = _heartbeat_branch_state()
-            except Exception as e:  # noqa: BLE001
-                log.warning("graph: heartbeat branch state failed: %s", e)
-                flow["branch_state"] = {}
         flows.append(flow)
     surfaces = []
     for s in SURFACES:
@@ -318,8 +251,7 @@ async def promote_workflow_draft(version_id: str):
 @router.get("/agentic/activity", tags=["agentic"])
 async def activity(hours: int = Query(24, ge=1, le=168)):
     events: list[dict] = []
-    for name, collect in (("heartbeat", _heartbeat_events),
-                          ("action", _action_events),
+    for name, collect in (("action", _action_events),
                           ("scheduler", _scheduler_events)):
         try:
             events.extend(collect(hours))

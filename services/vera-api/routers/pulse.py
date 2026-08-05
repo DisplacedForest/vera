@@ -89,11 +89,10 @@ async def _inject(title, body, image_url=None, tint=None, sources=None,
                   summary=None, inline_images=None, action=None, kind="research", severity=None,
                   user_id=None, provenance="scheduled", category=None, change_set=None, items=None,
                   situation_key=None):
-    """Store a Pulse card. Compat shim for the helper routers (health/kitchen/weather/
-    heartbeat) that surface cards.
+    """Store a Pulse card. Compat shim for the helper routers (health/kitchen/weather)
+    that surface cards.
     `kind`/`severity` place the card in an ambient vein; default is the research feed.
     `user_id` is the person the card is FOR; defaults to the household owner.
-    `provenance` records how the card was triggered — "scheduled" vs "heartbeat".
     `items` carries a multi-item digest's per-row actions. Returns the new card id."""
     src = [{"n": s["n"], "title": s["title"], "url": s["url"]} for s in (sources or [])]
     imgs = [{"n": i, "url": im["url"], "caption": im.get("caption", ""), "sourceN": im.get("srcN", 0)}
@@ -139,8 +138,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     """The per-topic deep-research pipeline: broad search -> thread extraction ->
     follow-up searches -> real imagery -> first-person synthesis -> summary -> cover art -> inject.
 
-    Extracted from the /pulse/run loop so the scheduled morning briefing AND the heartbeat's
-    for-you discovery create cards through ONE path (one feed, one bar). Returns the injected
+    Returns the injected
     card dict, or None if synthesis produced nothing. `errors`, if given, collects the same
     non-fatal step-failure strings the run loop logs.
 
@@ -156,7 +154,7 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
     oc = outcome if outcome is not None else {}
 
     # Dedup gate — if she's already produced a card for this, skip before spending any
-    # research/image/synthesis on it. Catches the heartbeat AND scheduled paths (both land here).
+    # research/image/synthesis on it.
     dup = await already_covered(topic, user_id)
     if dup:
         errs.append(f"skipped (already covered): {topic.get('title')} ≈ {dup['title']}")
@@ -223,8 +221,8 @@ async def research_topic(topic, *, who, user_id, idx=0, provenance="scheduled", 
 
 
 def _stamp_interest(interest):
-    """Put a shipped interest on the fixation cooldown so consecutive runs and for-you
-    ticks rotate to something else. Best-effort — never blocks a card."""
+    """Put a shipped interest on the fixation cooldown so consecutive runs rotate to
+    something else. Best-effort — never blocks a card."""
     try:
         vi.observe(interest, source="chat", salience_bump=0.0)
         vi.touch(interest)
@@ -247,7 +245,7 @@ async def _build_run_context(req, out):
             out["errors"].append(f"memories: {e}")
 
     all_interests = list(dict.fromkeys(list(req.interests) + [i["topic"] for i in profile.get("interests", [])]))
-    # Fixation cooldown: an interest that just shipped a card (here or via a for-you tick)
+    # Fixation cooldown: an interest that just shipped a card
     # sits out until its cooldown lapses, so consecutive runs rotate instead of replaying
     # whichever interest happens to search best.
     try:

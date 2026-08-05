@@ -5,7 +5,7 @@ opposite: keyed by OWUI user id, it holds what is personal to each person — he
 them. It starts empty and accrues from patterns (the "goals start non-existent" stance).
 
   - persona:   free-text notes on how Vera relates to this person (tone, what they're like).
-  - interests: weighted topics she pursues on THEIR behalf (heartbeat + Pulse ground in these).
+  - interests: weighted topics she pursues on THEIR behalf (Pulse grounds in these).
   - prefs:     per-user Pulse/behaviour preferences (json).
 
 The digest (persona + top interests) is injected per-user by the vera_memory inlet filter, on top
@@ -115,8 +115,7 @@ def observe(user_id, topic, weight=1.0, source="vera", provenance=None, gloss=No
 
 
 def set_gloss(user_id, topic, gloss):
-    """Attach/replace the one-line meaning for an interest. Used by the heartbeat's lazy
-    gloss backfill so the relevance gate has real meaning to test candidates against."""
+    """Attach/replace the one-line meaning for an interest."""
     init()
     with _conn() as c:
         c.execute("UPDATE interest SET gloss=?, updated_at=? WHERE id=?",

@@ -187,7 +187,7 @@ struct AgenticActivityView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Activity").font(.system(size: 22, weight: .bold))
-                InfoTip(text: "Everything Vera did on her own in the last day: heartbeat ticks, scheduled runs, autonomous actions.", size: 13)
+                InfoTip(text: "Everything Vera did on her own in the last day: scheduled runs and autonomous actions.", size: 13)
                 if case .ready = activity.phase {
                     Text("\(activity.events.count)").font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.textSecondary)
@@ -236,7 +236,7 @@ struct AgenticActivityView: View {
         case .ready:
             if activity.events.isEmpty {
                 statusCard(icon: "moon.zzz", title: "No autonomous activity",
-                           note: "Nothing in the last 24 hours. Heartbeat ticks, scheduled runs, and autonomous actions will appear here.",
+                           note: "Nothing in the last 24 hours. Scheduled runs and autonomous actions will appear here.",
                            retry: true)
             } else {
                 ForEach(activity.events.prefix(100)) { event in

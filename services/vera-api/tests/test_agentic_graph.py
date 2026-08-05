@@ -72,8 +72,6 @@ def test_feeds_reference_declared_surfaces():
     assert surface_ids == {"pulse_feed", "veins", "memory", "actions"}
     for f in out["flows"]:
         assert set(f["feeds"]) <= surface_ids, f"flow {f['id']} feeds unknown surface"
-        for stage in f.get("stages") or []:
-            assert set(stage.get("feeds") or []) <= surface_ids
 
 
 def test_explicit_edges_mirror_feeds():

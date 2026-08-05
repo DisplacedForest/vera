@@ -3880,7 +3880,7 @@ enum SelfTest {
             // Canvas graph manifest decode: flows with stages/state, surfaces with stats.
             let graphJSON = """
             {"flows": [
-              {"id": "pulse", "label": "Pulse briefing", "title": "Pulse briefing run", "kind": "job",
+              {"id": "pulse", "label": "Pulse briefing", "title": "Pulse briefing run",
                "icon": "newspaper", "tint": "accent", "group": "Ambient", "feeds": ["pulse_feed"],
                "tools": ["websearch"], "running": false,
                "stages": [{"id": "triage", "label": "Triage", "icon": "globe", "tint": "accent"}],

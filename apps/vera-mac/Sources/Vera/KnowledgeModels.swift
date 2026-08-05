@@ -148,12 +148,15 @@ enum KnowledgeGroundingStatus: Equatable, Sendable {
 }
 
 enum KnowledgeGrounding {
+    static let sourceURLMarker = "knowledge"
+    static let numberingOffsetWithResearch = 20
+
     struct Assembly: Sendable {
         let block: String
         let sources: [PulseSource]
     }
 
-    static func assemble(_ passages: [KnowledgePassage]) -> Assembly {
+    static func assemble(_ passages: [KnowledgePassage], startAt: Int = 1) -> Assembly {
         var lines: [String] = [
             "Reference passages retrieved from the user's document collections for this turn.",
             "Ground claims that rely on them with [n] citations matching the numbering below.",
@@ -161,9 +164,9 @@ enum KnowledgeGrounding {
         ]
         var sources: [PulseSource] = []
         for (i, p) in passages.enumerated() {
-            let n = i + 1
+            let n = startAt + i
             lines.append("[\(n)] \(p.collection) / \(p.file) (part \(p.chunk + 1))\n\(p.text)")
-            sources.append(PulseSource(n: n, title: "\(p.collection): \(p.file)", url: "knowledge"))
+            sources.append(PulseSource(n: n, title: "\(p.collection): \(p.file)", url: sourceURLMarker))
         }
         return Assembly(block: lines.joined(separator: "\n\n"), sources: sources)
     }
@@ -219,8 +222,10 @@ struct KnowledgeClient: Sendable {
 
     func fetch() async -> Fetch {
         guard let (json, code) = await send("/documents/collections", timeout: 8) else { return .unreachable }
-        guard (200..<300).contains(code),
-              let arr = json?["collections"] as? [[String: Any]] else { return .unsupported(code) }
+        guard (200..<300).contains(code) else {
+            return code == 404 || code == 405 ? .unsupported(code) : .unreachable
+        }
+        guard let arr = json?["collections"] as? [[String: Any]] else { return .unsupported(code) }
         return .ok(arr.compactMap { KnowledgeCollection.parse($0) })
     }
 
@@ -252,11 +257,18 @@ struct KnowledgeClient: Sendable {
         return (200..<300).contains(code) ? nil : Self.detail(json, code)
     }
 
-    func files(collection: String) async -> [KnowledgeFile]? {
-        guard let (json, code) = await send("/documents/collections/\(collection)/files", timeout: 8),
-              (200..<300).contains(code),
-              let arr = json?["files"] as? [[String: Any]] else { return nil }
-        return arr.compactMap { KnowledgeFile.parse($0) }
+    enum FilesFetch: Sendable {
+        case ok([KnowledgeFile])
+        case failed(String)
+    }
+
+    func files(collection: String) async -> FilesFetch {
+        guard let (json, code) = await send("/documents/collections/\(collection)/files", timeout: 8)
+        else { return .failed("vera-api unreachable") }
+        guard (200..<300).contains(code), let arr = json?["files"] as? [[String: Any]] else {
+            return .failed(Self.detail(json, code))
+        }
+        return .ok(arr.compactMap { KnowledgeFile.parse($0) })
     }
 
     func upload(collection: String, name: String, data: Data) async -> String? {

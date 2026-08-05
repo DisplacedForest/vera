@@ -4707,6 +4707,35 @@ extension SelfTest {
             print("SELFTEST ERROR: empty grounding must add no section"); exit(1)
         }
 
+        let offset = KnowledgeGrounding.assemble(passages, startAt: 21)
+        guard offset.sources.map(\.n) == [21, 22],
+              offset.block.contains("[21] Papers / a.pdf (part 1)"),
+              offset.block.contains("[22] Papers / b.md (part 5)") else {
+            print("SELFTEST ERROR: knowledge numbering offset"); exit(1)
+        }
+
+        var groundedReply = Message(role: .assistant, text: "Grounded answer.")
+        groundedReply.sources = assembly.sources
+        guard NativeMemoryExtractionPolicy.disposition(
+            user: "what does the manual say", assistant: groundedReply,
+            conversationExcluded: false) == .grounded else {
+            print("SELFTEST ERROR: grounded replies must be ineligible for memory extraction"); exit(1)
+        }
+        var researchReply = Message(role: .assistant, text: "Web answer.")
+        researchReply.sources = [PulseSource(n: 1, title: "Site", url: "https://example.com")]
+        guard NativeMemoryExtractionPolicy.disposition(
+            user: "what is on the site", assistant: researchReply,
+            conversationExcluded: false) == .eligible else {
+            print("SELFTEST ERROR: research sources alone must stay eligible"); exit(1)
+        }
+        var mixedReply = Message(role: .assistant, text: "Both.")
+        mixedReply.sources = [PulseSource(n: 1, title: "Site", url: "https://example.com")]
+            + offset.sources
+        guard NativeMemoryExtractionPolicy.disposition(
+            user: "mix", assistant: mixedReply, conversationExcluded: false) == .grounded else {
+            print("SELFTEST ERROR: merged research and knowledge sources must stay grounded"); exit(1)
+        }
+
         guard KnowledgeGroundingStatus.retrieving.label == "Searching knowledge",
               KnowledgeGroundingStatus.grounded(1).label == "1 passage",
               KnowledgeGroundingStatus.grounded(3).label == "3 passages",

@@ -345,7 +345,11 @@ struct KnowledgeCollectionDetail: View {
     private var fileList: some View {
         ScrollView {
             LazyVStack(spacing: 8) {
-                if visible.isEmpty {
+                if !loaded {
+                    Text("Loading files…")
+                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
+                } else if visible.isEmpty {
                     Text(files.isEmpty ? "No files yet. Add txt, md, pdf, docx, or html files."
                                        : "No files match the search.")
                         .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -376,12 +380,14 @@ struct KnowledgeCollectionDetail: View {
 
     private func reload() async {
         guard let client = knowledge.client else { return }
-        if let fetched = await client.files(collection: collectionID) {
+        switch await client.files(collection: collectionID) {
+        case .ok(let fetched):
             files = fetched
-        } else if loaded {
-            error = "Couldn't refresh the file list."
+            loaded = true
+        case .failed(let detail):
+            error = loaded ? "Couldn't refresh the file list: \(detail)"
+                           : "Couldn't load the file list: \(detail)"
         }
-        loaded = true
         await knowledge.refresh()
     }
 
@@ -487,7 +493,7 @@ struct KnowledgeGroundingChip: View {
     private var selectedCount: Int { conversation.grounding.count }
 
     private var chipLabel: String {
-        if let status = store.groundingStatus, selectedCount > 0 {
+        if let status = store.groundingStatus[conversation.id], selectedCount > 0 {
             return status.label
         }
         return selectedCount == 0 ? "Knowledge"
@@ -495,7 +501,7 @@ struct KnowledgeGroundingChip: View {
     }
 
     private var chipIcon: String {
-        switch store.groundingStatus {
+        switch store.groundingStatus[conversation.id] {
         case .retrieving: "magnifyingglass"
         case .error, .unconfigured: "exclamationmark.triangle"
         default: selectedCount > 0 ? "books.vertical.fill" : "books.vertical"
@@ -541,7 +547,7 @@ struct KnowledgeGroundingChip: View {
                         }
                     }
                 }
-                if case .error(let detail) = store.groundingStatus, !detail.isEmpty {
+                if case .error(let detail) = store.groundingStatus[conversation.id], !detail.isEmpty {
                     Text(detail).font(.system(size: 11)).foregroundStyle(.red)
                 }
             }
@@ -567,6 +573,11 @@ struct KnowledgeGroundingChip: View {
         case .ok(let cols):
             available = cols
             loadState = .loaded
+            let ids = Set(cols.map(\.id))
+            let pruned = conversation.grounding.filter { ids.contains($0) }
+            if pruned != conversation.grounding {
+                store.setConversationGrounding(conversation.id, pruned)
+            }
         case .unsupported, .unreachable:
             loadState = .failed
         }

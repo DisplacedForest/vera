@@ -28,6 +28,7 @@ enum NativeMemoryTurnDisposition: Equatable, Sendable {
     case eligible
     case empty
     case privateTurn
+    case grounded
     case excluded
     case failed
     case interrupted
@@ -50,6 +51,9 @@ enum NativeMemoryExtractionPolicy {
         if assistant.failure != nil { return .failed }
         if assistant.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            !assistant.toolActivities.isEmpty { return .toolOnly }
+        if assistant.sources.contains(where: { $0.url == KnowledgeGrounding.sourceURLMarker }) {
+            return .grounded
+        }
         return .eligible
     }
 }

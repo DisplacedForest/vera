@@ -21,7 +21,7 @@ final class ChatStore: ObservableObject {
     @Published var journalArchive: [JournalArchiveMonth] = [] // recently resolved ones
     @Published var streamStatus: String?     // live tool/progress line while Vera is thinking
     @Published var generating = false        // true for the whole turn (drives the living flame mark)
-    @Published var groundingStatus: KnowledgeGroundingStatus?
+    @Published var groundingStatus: [String: KnowledgeGroundingStatus] = [:]
     @Published var pulseRatings: [String: String] = [:]   // Pulse cardID → "up"/"down"
     @Published var messageRatings: [UUID: String] = [:]   // chat messageID → "up"/"down"
     @Published var bookmarkedPulseIDs: Set<String> = []   // Pulse cards also surfaced in the sidebar
@@ -1496,7 +1496,7 @@ final class ChatStore: ObservableObject {
         let activeTools = nativeToolRegistry.active(enabledIDs: enabledToolIDs)
         let groundingCollections = conversations.first(where: { $0.id == id })?.grounding ?? []
         let groundingBase = config?.veraAPIBase
-        groundingStatus = nil
+        groundingStatus[id] = nil
         lastRequestTrace = NativeRequestTrace.make(
             model: nativeConfig.model, streaming: nativeConfig.streaming,
             options: nativeConfig.options, timestamp: Date())
@@ -1571,23 +1571,29 @@ final class ChatStore: ObservableObject {
                 if !groundingCollections.isEmpty {
                     if let groundingBase {
                         streamStatus = "Searching knowledge…"
-                        groundingStatus = .retrieving
+                        groundingStatus[id] = .retrieving
                         let result = await KnowledgeClient(base: groundingBase)
                             .query(text, collections: groundingCollections)
+                        let researchActive = activeTools.contains {
+                            NativeWebTools.researchCapableIDs.contains($0.id)
+                        }
                         switch result {
                         case .ok(let passages) where !passages.isEmpty:
-                            groundingAssembly = KnowledgeGrounding.assemble(passages)
-                            groundingStatus = .grounded(passages.count)
+                            groundingAssembly = KnowledgeGrounding.assemble(
+                                passages,
+                                startAt: researchActive
+                                    ? KnowledgeGrounding.numberingOffsetWithResearch + 1 : 1)
+                            groundingStatus[id] = .grounded(passages.count)
                         case .ok:
-                            groundingStatus = .empty
+                            groundingStatus[id] = .empty
                         case .unconfigured:
-                            groundingStatus = .unconfigured
+                            groundingStatus[id] = .unconfigured
                         case .error(let detail):
-                            groundingStatus = .error(detail)
+                            groundingStatus[id] = .error(detail)
                         }
                         streamStatus = "Thinking…"
                     } else {
-                        groundingStatus = .unconfigured
+                        groundingStatus[id] = .unconfigured
                     }
                 }
                 var contracts = NativePresentationContract.chatDefaults
@@ -1624,7 +1630,10 @@ final class ChatStore: ObservableObject {
                     conversations[i].messages[replyIndex].artifacts = arts
                     conversations[i].messages[replyIndex].toolActivities = snapshot.activities
                     let lifted = NativeResearchSources.lift(snapshot.activities)
-                    if !lifted.isEmpty { conversations[i].messages[replyIndex].sources = lifted }
+                    if !lifted.isEmpty {
+                        conversations[i].messages[replyIndex].sources =
+                            lifted + (groundingAssembly?.sources ?? [])
+                    }
                     if let latest = arts.last,
                        latest.id != activeArtifact?.id || latest.content != activeArtifact?.content {
                         openArtifact(latest)

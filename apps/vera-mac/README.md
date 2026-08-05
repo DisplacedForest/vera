@@ -2,29 +2,33 @@
 
 Native SwiftUI client for Vera. Text chat streams directly from a configured OpenAI-compatible
 `/v1` endpoint and stores conversations in `~/.vera/vera.sqlite`. Pulse, Journal, Memory,
-and the Agentic canvas remain optional surfaces. Veins are managed from the Pulse header;
-the Plugins and MCP managers live in Settings.
+and the Agentic canvas remain optional surfaces backed by vera-api. Veins are managed from
+the Pulse header; the Plugins manager lives in Settings.
 
 ## Develop
 ```bash
 swift run                       # dev build + launch
 swift build                     # compile check
-.build/debug/Vera --selftest    # headless: native transport, persistence, and optional live checks
-.build/debug/Vera --shot out.png --view chat|pulse|journal|memory|agentic|veins|settings-plugins|settings-mcp|settings|settings-advanced|onboarding   # render a screenshot
+.build/debug/Vera --selftest    # headless: native transport, persistence, importers, stores
+.build/debug/Vera --shot out.png --view chat|pulse|journal|memory|agentic|veins|settings-plugins|settings|settings-advanced|onboarding   # render a screenshot
 .build/debug/Vera --dump-context   # print the assembled per-request system context, section by section
 ```
 Config lives in `~/.vera/config.json`, editable in-app via Settings (⌘,): `model_base`,
 `model_api_key`, `model`, `voice_base`, `vera_api_base`, and `owner_name`. The model base must
 end in `/v1`; its key is optional. `VERA_MODEL_BASE`, `VERA_MODEL_API_KEY`, and `VERA_MODEL`
-override file values. Existing Open WebUI keys remain readable for transitional surfaces and
-0.3.1 rollback. First launch with no native model config opens onboarding.
+override file values. First launch with no native model config opens onboarding. The app is
+standalone: chat, history, memory, and tools need only the model endpoint, and every other
+surface degrades cleanly when its optional service is unset. The one legacy exception is the
+voice session, which still streams through an Open WebUI socket until voice moves onto the
+native engine; its connection settings live entirely inside that quarantined module.
 
-Native chat is text only in this slice. Attachments, voice, document knowledge, and
-Open WebUI import are deferred. Pulse itself keeps working whenever the optional vera-api
-URL is configured, and Continue in chat lands the card in the local database as a native
-conversation: text, citations, and provenance persist locally and reopen offline, while
-remote card images stay uncached and use the normal failure placeholders if their source
-goes away.
+Chat history starts fresh on a native install by design; prior Open WebUI conversations are
+not imported. Knowledge collections are the one dataset carried over, migrated server-side
+into the vera-api document store (see `docs/SETUP.md`). Pulse keeps working whenever the
+optional vera-api URL is configured, and Continue in chat lands the card in the local
+database as a native conversation: text, citations, and provenance persist locally and
+reopen offline, while remote card images stay uncached and use the normal failure
+placeholders if their source goes away.
 
 Native tools live in Settings, Tools and are disabled by default. Apple Reminders runs
 locally after macOS permission. Web search and deep research call the configured vera-api

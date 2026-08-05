@@ -19,12 +19,6 @@ private final class ReminderFetchResult: @unchecked Sendable {
     }
 }
 
-/// In-app Apple Reminders bridge. Serves the same HTTP contract as the standalone
-/// vera-reminders service (GET /health, /lists, /reminders; POST /reminders; PATCH
-/// /reminders/{id}) so vera-api's proxy and the OWUI tool reach it unchanged. It runs
-/// only while Vera.app is open, which is sufficient: reminders are touched only on an
-/// explicit chat ask. Because the app carries NSRemindersFullAccessUsageDescription,
-/// the first access shows the native macOS prompt.
 final class RemindersBridge: @unchecked Sendable {
     static let shared = RemindersBridge()
 
@@ -86,7 +80,6 @@ final class RemindersBridge: @unchecked Sendable {
 
     private func calendars() -> [EKCalendar] { store.calendars(for: .reminder) }
 
-    /// Best-guess shopping list for the OWUI tool's default-list valve — the first list
     /// whose name contains "shopping", else "" (the model then names the list explicitly).
     /// Empty until access is granted.
     func suggestedDefaultList() -> String {

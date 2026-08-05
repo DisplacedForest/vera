@@ -19,7 +19,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct VeraApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store: ChatStore
-    @StateObject private var tools: ToolsStore
     @StateObject private var voice: VoiceSession
     @StateObject private var config: ConfigStore
     @StateObject private var updates = UpdateChecker()
@@ -28,14 +27,7 @@ struct VeraApp: App {
     init() {
         let configInstance = ConfigStore()
         let native = configInstance.nativeResolved
-        let legacy = OWUIConfig.load()
-        let ambient = legacy ?? OWUIConfig.ambientOnly(native: native)
-        let socket = legacy.map { VeraSocket(config: $0) }
-        let client = ambient.map { OWUIClient(config: $0) }
-        let admin = legacy.map { c in
-            OWUIAdminClient(baseURL: c.baseURL, modelID: c.model,
-                            token: { try await socket!.currentToken() })
-        }
+        let socket = VoiceSocketConfig.load().map { VeraSocket(config: $0) }
         let repository: LocalChatRepository?
         let repositoryError: String?
         do {
@@ -53,14 +45,11 @@ struct VeraApp: App {
             }
         }
         let storeInstance = ChatStore(
-            config: ambient,
-            client: client,
-            socket: socket,
+            veraAPI: VeraAPIClient.resolved(model: native?.model ?? ""),
             nativeConfig: native,
             nativeTransport: native.map { NativeChatClient(config: $0) },
             repository: repository,
             repositoryError: repositoryError,
-            hasLegacyOWUI: legacy != nil,
             nativeSystemPrompt: configInstance.nativeSettings.systemPrompt,
             nativePersonaID: configInstance.nativeSettings.activePersonaID,
             nativeOwnerName: configInstance.ownerName,
@@ -73,8 +62,7 @@ struct VeraApp: App {
             sweepOrphanedAttachments: true)
         _store = StateObject(wrappedValue: storeInstance)
         _config = StateObject(wrappedValue: configInstance)
-        _tools = StateObject(wrappedValue: ToolsStore(admin: admin, socket: socket))
-        _voice = StateObject(wrappedValue: VoiceSession(client: VoiceClient(base: legacy?.voiceBase),
+        _voice = StateObject(wrappedValue: VoiceSession(client: VoiceClient(base: configInstance.voiceBase),
                                                         socket: socket, store: storeInstance))
     }
 
@@ -82,7 +70,6 @@ struct VeraApp: App {
         WindowGroup("Vera") {
             ContentView()
                 .environmentObject(store)
-                .environmentObject(tools)
                 .environmentObject(voice)
                 .environmentObject(config)
                 .environmentObject(updates)
@@ -107,7 +94,6 @@ struct VeraApp: App {
             SettingsView()
                 .environmentObject(config)
                 .environmentObject(store)
-                .environmentObject(tools)   // the Plugins and MCP tabs render from the shared ToolsStore
                 .environmentObject(updates)
                 .environmentObject(engine)
                 .preferredColorScheme(config.colorSchemeOverride)

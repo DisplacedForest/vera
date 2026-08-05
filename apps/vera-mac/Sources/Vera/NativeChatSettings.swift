@@ -314,7 +314,7 @@ struct NativeChatToolDescriptor: Identifiable, Equatable, Sendable {
 
 enum NativeChatToolCatalog {
     static var tools: [NativeChatToolDescriptor] {
-        tools(veraAPIConfigured: OWUIConfig.resolvedVeraAPIBase() != nil)
+        tools(veraAPIConfigured: VeraAPIClient.resolvedBase() != nil)
     }
 
     static func tools(

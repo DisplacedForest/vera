@@ -16,7 +16,6 @@ final class Attachment: ObservableObject, Identifiable {
     @Published var status: Status = .processing
     @Published var thumbnail: NSImage? = nil      // small preview for image chips
     var dataURL: String? = nil                     // images: data:<mime>;base64,...  (downscaled)
-    var owuiFile: [String: Any]? = nil             // documents: OWUI /api/v1/files/ response object
     var nativeRecord: MessageAttachment? = nil
 
     init(url: URL) {

@@ -1,12 +1,11 @@
 import Foundation
 
 /// One autonomous-activity event from vera-api (`GET /agentic/activity`): something
-/// Vera did on her own, normalized across the heartbeat, action, scheduler, and OWUI
-/// automation sources.
+/// Vera did on her own, normalized across the heartbeat, action, and scheduler sources.
 struct ActivityEvent: Identifiable, Sendable, Hashable {
     let id: String
     var ts: Date
-    var source: String      // scheduler | heartbeat | action | owui
+    var source: String      // scheduler | heartbeat | action
     var kind: String
     var title: String
     var detail: String
@@ -19,7 +18,6 @@ struct ActivityEvent: Identifiable, Sendable, Hashable {
         case "scheduler": return "clock"
         case "heartbeat": return "heart"
         case "action": return "bolt"
-        case "owui": return "wand.and.stars"
         default: return "circle.dashed"
         }
     }
@@ -41,7 +39,6 @@ struct ActivityEvent: Identifiable, Sendable, Hashable {
             ev("action", "auto", "media.request", "applied: title=Dune Part Two", ago: 4200, tool: "media.request"),
             ev("scheduler", "fail", "Geopolitics run", "feed timeout after 30s", ago: 7600, tool: "geopolitics"),
             ev("heartbeat", "learn", "Studied the house", "ha.service:climate.office", ago: 9800),
-            ev("owui", "success", "WWDC M5 Mac Studio Monitor", "Check for Apple WWDC 2026 news", ago: 14000, tool: "owui.automation"),
         ]
     }
 }

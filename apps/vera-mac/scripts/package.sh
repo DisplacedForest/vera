@@ -28,10 +28,6 @@ done
 iconutil -c icns "$ICONSET" -o "$BUILD_DIR/Vera.icns"
 
 # 2. Release build
-# Refresh the bundled OWUI reminders tool from its canonical source so the app installs
-# the current version (the in-app Apple Reminders toggle creates it in Open WebUI).
-cp "$APP_ROOT/../../services/owui-tools/reminders.py" "Sources/Vera/Resources/reminders_tool.py"
-
 echo "==> swift build -c release"
 swift build -c release
 

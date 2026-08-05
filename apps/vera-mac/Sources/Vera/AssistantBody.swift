@@ -2,8 +2,6 @@ import SwiftUI
 import AppKit
 import MarkdownUI
 
-/// Renders an assistant message: tool-call chips (parsed out of OWUI's `<details type="tool_calls">`
-/// HTML) + the prose as real markdown + any structured question / artifact chips.
 struct AssistantBody: View {
     @EnvironmentObject var store: ChatStore
     let message: Message
@@ -13,7 +11,7 @@ struct AssistantBody: View {
     var body: some View {
         // A continued Pulse briefing renders as the full rich article (hero, cited paragraphs, photos).
         if let card = message.pulse {
-            PulseArticleView(card: card, token: store.apiToken, apiBase: store.mediaBase)
+            PulseArticleView(card: card, apiBase: store.mediaBase)
         } else {
             prose
         }
@@ -104,7 +102,6 @@ struct ToolCallGroup: Identifiable {
     let calls: [ToolCall]
 }
 
-/// Pulls OWUI's `<details type="tool_calls" … name="X">…</details>` blocks out of a reply.
 enum ToolCallParser {
     static func parse(_ text: String) -> (clean: String, calls: [ToolCall]) {
         let ns = text as NSString

@@ -367,11 +367,8 @@ enum SelfTest {
         await runCapabilityRouting()
         await runPulseContinuation()
         runKnowledge()
-        guard let cfg = OWUIConfig.load() else {
-            print("SELFTEST OK (offline). No OWUI config (~/.vera/config.json), live checks skipped")
-            exit(0)
-        }
-        await runLive(cfg)
+        print("SELFTEST OK")
+        exit(0)
     }
 
     private static func runModelParameters() {
@@ -832,7 +829,7 @@ enum SelfTest {
         let capabilities = settings.resolveCapabilities(model: model).profile
         let registry = NativeToolRegistry(
             definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared)
-                + NativeWebTools.definitions(base: { OWUIConfig.resolvedVeraAPIBase() }))
+                + NativeWebTools.definitions(base: { VeraAPIClient.resolvedBase() }))
         let enabledToolIDs = capabilities.supportsTools ? settings.enabledToolIDs : []
         let activeTools = registry.active(enabledIDs: enabledToolIDs)
         var contracts = NativePresentationContract.chatDefaults
@@ -1646,9 +1643,8 @@ enum SelfTest {
                 baseURL: URL(string: "https://model.example/v1")!, apiKey: nil,
                 model: "local-model", chatTemplateKwargs: nil)
             let store = ChatStore(
-                config: nil, client: nil, socket: nil, nativeConfig: chatConfig,
-                nativeTransport: chatTransport, repository: repository, hasLegacyOWUI: false,
-                nativeMemorySettings: memorySettings, nativeMemoryService: memoryService)
+                nativeConfig: chatConfig,
+                nativeTransport: chatTransport, repository: repository, nativeMemorySettings: memorySettings, nativeMemoryService: memoryService)
             await store.connect()
             store.sendText("What do I like?")
             await waitForGeneration(store)
@@ -1696,10 +1692,9 @@ enum SelfTest {
             let disabledService = SelfTestMemoryService()
             let disabledTransport = SelfTestNativeTransport()
             let disabledStore = ChatStore(
-                config: nil, client: nil, socket: nil, nativeConfig: chatConfig,
+                nativeConfig: chatConfig,
                 nativeTransport: disabledTransport,
-                repository: try LocalChatRepository(inMemory: true), hasLegacyOWUI: false,
-                nativeMemorySettings: .fresh, nativeMemoryService: disabledService)
+                repository: try LocalChatRepository(inMemory: true), nativeMemorySettings: .fresh, nativeMemoryService: disabledService)
             await disabledStore.connect()
             disabledStore.sendText("No memory")
             await waitForGeneration(disabledStore)
@@ -1774,8 +1769,8 @@ enum SelfTest {
             settings.enabled = true
             settings.embeddingsModel = "embed-model"
             let store = ChatStore(
-                config: nil, client: nil, socket: nil, nativeConfig: nil, nativeTransport: nil,
-                repository: repository, hasLegacyOWUI: false, nativeMemorySettings: settings)
+                nativeConfig: nil, nativeTransport: nil,
+                repository: repository, nativeMemorySettings: settings)
             store.reloadNativeMemory()
             let preview = store.runMemoryGroom(dryRun: true, now: now, calendar: utc)
             guard preview?.removedIDs == [expiredYesterday.id], preview?.dryRun == true,
@@ -1833,8 +1828,8 @@ enum SelfTest {
                 record("dormant", durability: .episodic, expiry: yesterday),
                 decision: .accepted, note: "Groom fixture")
             let disabledStore = ChatStore(
-                config: nil, client: nil, socket: nil, nativeConfig: nil, nativeTransport: nil,
-                repository: disabledRepository, hasLegacyOWUI: false, nativeMemorySettings: .fresh)
+                nativeConfig: nil, nativeTransport: nil,
+                repository: disabledRepository, nativeMemorySettings: .fresh)
             guard disabledStore.runMemoryGroom(now: now, calendar: utc) == nil,
                   try disabledRepository.approvedMemories().count == 1 else {
                 print("SELFTEST ERROR: native memory groom ran while memory is off"); exit(1)
@@ -1844,8 +1839,8 @@ enum SelfTest {
                 record("ancient", durability: .episodic, expiry: Date(timeIntervalSince1970: 86_400)),
                 decision: .accepted, note: "Groom fixture")
             let launchStore = ChatStore(
-                config: nil, client: nil, socket: nil, nativeConfig: nil, nativeTransport: nil,
-                repository: launchRepository, hasLegacyOWUI: false, nativeMemorySettings: settings)
+                nativeConfig: nil, nativeTransport: nil,
+                repository: launchRepository, nativeMemorySettings: settings)
             await launchStore.connect()
             guard launchStore.memoryGroomOutcome?.removedCount == 1,
                   try launchRepository.approvedMemories().isEmpty else {
@@ -2216,10 +2211,8 @@ enum SelfTest {
                 apiKey: nil, model: "plain-text-model", chatTemplateKwargs: nil)
             let decisionTransport = SelfTestNativeTransport()
             let decisionStore = ChatStore(
-                config: nil, client: nil, socket: nil,
                 nativeConfig: config, nativeTransport: decisionTransport,
                 repository: try LocalChatRepository(inMemory: true),
-                hasLegacyOWUI: false,
                 attachmentStore: attachmentStore)
             await decisionStore.connect()
             let pending = Attachment(url: attachmentStore.url(for: record.fileName ?? "")!)
@@ -2270,10 +2263,8 @@ enum SelfTest {
             decisionStore.attachmentError = nil
 
             let selfBridgeStore = ChatStore(
-                config: nil, client: nil, socket: nil,
                 nativeConfig: config, nativeTransport: decisionTransport,
                 repository: try LocalChatRepository(inMemory: true),
-                hasLegacyOWUI: false,
                 visionBridgeConfig: VisionBridgeConfig(
                     baseURL: URL(string: config.baseURL.absoluteString + "/")!,
                     apiKey: nil, model: config.model),
@@ -2294,10 +2285,8 @@ enum SelfTest {
             let bridgedModelTransport = SelfTestNativeTransport()
             let bridgedRepository = try LocalChatRepository(inMemory: true)
             let bridgedStore = ChatStore(
-                config: nil, client: nil, socket: nil,
                 nativeConfig: config, nativeTransport: bridgedModelTransport,
                 repository: bridgedRepository,
-                hasLegacyOWUI: false,
                 visionBridgeConfig: VisionBridgeConfig(
                     baseURL: URL(string: "https://vision.example/v1")!, apiKey: nil, model: "vl-model"),
                 visionBridgeTransportFactory: { _ in bridgeTransport },
@@ -2330,10 +2319,8 @@ enum SelfTest {
             let failStoreRepository = try LocalChatRepository(inMemory: true)
             let failModelTransport = SelfTestNativeTransport()
             let failStore = ChatStore(
-                config: nil, client: nil, socket: nil,
                 nativeConfig: config, nativeTransport: failModelTransport,
                 repository: failStoreRepository,
-                hasLegacyOWUI: false,
                 visionBridgeConfig: VisionBridgeConfig(
                     baseURL: URL(string: "https://vision.example/v1")!, apiKey: nil, model: "vl-model"),
                 visionBridgeTransportFactory: { _ in failingBridge },
@@ -2364,10 +2351,8 @@ enum SelfTest {
                 [NativeChatStreamSnapshot(content: "Plain answer.", toolCalls: [], finishReason: "stop")]
             ])
             let gatedStore = ChatStore(
-                config: nil, client: nil, socket: nil,
                 nativeConfig: config, nativeTransport: gatedTransport,
                 repository: try LocalChatRepository(inMemory: true),
-                hasLegacyOWUI: false,
                 nativeEnabledToolIDs: ["apple-reminders"],
                 nativeCapabilityOverrides: ["plain-text-model": ModelCapabilityProfile(
                     acceptsImages: false, supportsTools: false, supportsStreaming: true,
@@ -2861,13 +2846,9 @@ enum SelfTest {
                 [NativeChatStreamSnapshot(content: "Recorded.", toolCalls: [], finishReason: "stop")],
             ])
             let store = ChatStore(
-                config: nil,
-                client: nil,
-                socket: nil,
                 nativeConfig: config,
                 nativeTransport: transport,
                 repository: try LocalChatRepository(inMemory: true),
-                hasLegacyOWUI: false,
                 nativeEnabledToolIDs: [record.id],
                 nativeToolRegistry: NativeToolRegistry(definitions: [record]))
             await store.connect()
@@ -3134,13 +3115,9 @@ enum SelfTest {
                 chatTemplateKwargs: nil)
             let transport = SelfTestNativeTransport()
             let store = ChatStore(
-                config: nil,
-                client: nil,
-                socket: nil,
                 nativeConfig: config,
                 nativeTransport: transport,
                 repository: repository,
-                hasLegacyOWUI: false,
                 nativePersonaID: alternate.id)
             await store.connect()
             store.sendText("First")
@@ -3197,13 +3174,9 @@ enum SelfTest {
                 chatTemplateKwargs: nil)
             let transport = SelfTestNativeTransport()
             let store = ChatStore(
-                config: nil,
-                client: nil,
-                socket: nil,
                 nativeConfig: config,
                 nativeTransport: transport,
                 repository: repository,
-                hasLegacyOWUI: false,
                 nativeOwnerName: "Riley")
             await store.connect()
             store.sendText("First")
@@ -3230,13 +3203,9 @@ enum SelfTest {
             ])
             let toolRepository = try LocalChatRepository(inMemory: true)
             let toolStore = ChatStore(
-                config: nil,
-                client: nil,
-                socket: nil,
                 nativeConfig: config,
                 nativeTransport: toolTransport,
                 repository: toolRepository,
-                hasLegacyOWUI: false,
                 nativeEnabledToolIDs: ["apple-reminders"],
                 nativeToolRegistry: NativeToolRegistry(
                     definitions: NativeRemindersTools.definitions(service: toolService)))
@@ -3265,13 +3234,9 @@ enum SelfTest {
                 .appendingPathComponent("vera-research-\(UUID().uuidString)/vera.sqlite")
             let researchRepository = try LocalChatRepository(url: researchURL)
             let researchStore = ChatStore(
-                config: nil,
-                client: nil,
-                socket: nil,
                 nativeConfig: config,
                 nativeTransport: researchTransport,
                 repository: researchRepository,
-                hasLegacyOWUI: false,
                 nativeEnabledToolIDs: ["deep-research"],
                 nativeToolRegistry: NativeToolRegistry(
                     definitions: NativeWebTools.definitions(
@@ -3343,14 +3308,10 @@ enum SelfTest {
                 print("SELFTEST ERROR: native concurrent send accepted"); exit(1)
             }
             let unavailable = ChatStore(
-                config: nil,
-                client: nil,
-                socket: nil,
                 nativeConfig: config,
                 nativeTransport: transport,
                 repository: nil,
-                repositoryError: "database unavailable",
-                hasLegacyOWUI: false)
+                repositoryError: "database unavailable")
             await unavailable.connect()
             unavailable.draft = "Must not stream"
             unavailable.send()
@@ -3420,9 +3381,8 @@ enum SelfTest {
             baseURL: URL(string: "https://model.example/v1")!,
             apiKey: nil, model: "local-model", chatTemplateKwargs: nil)
         let store = ChatStore(
-            config: nil, client: nil, socket: nil,
-            nativeConfig: config, nativeTransport: transport,
-            repository: repository, hasLegacyOWUI: false, pulseFeed: feed)
+                        nativeConfig: config, nativeTransport: transport,
+            repository: repository, pulseFeed: feed)
         await store.connect()
         store.section = .pulse
         return store
@@ -3487,21 +3447,21 @@ enum SelfTest {
             print("SELFTEST ERROR: pulse seed message shape"); exit(1)
         }
 
-        guard case .malformed = OWUIClient.parsePulseFeed(Data("not json".utf8)) else {
+        guard case .malformed = VeraAPIClient.parsePulseFeed(Data("not json".utf8)) else {
             print("SELFTEST ERROR: pulse feed malformed data accepted"); exit(1)
         }
-        guard case .malformed = OWUIClient.parsePulseFeed(Data("{\"other\":true}".utf8)) else {
+        guard case .malformed = VeraAPIClient.parsePulseFeed(Data("{\"other\":true}".utf8)) else {
             print("SELFTEST ERROR: pulse feed missing cards accepted"); exit(1)
         }
         guard case .success(let emptyCards, let emptyIDs) =
-                OWUIClient.parsePulseFeed(Data("{\"cards\":[]}".utf8)),
+                VeraAPIClient.parsePulseFeed(Data("{\"cards\":[]}".utf8)),
               emptyCards.isEmpty, emptyIDs.isEmpty else {
             print("SELFTEST ERROR: pulse feed valid empty"); exit(1)
         }
         let mixed = Data("""
             {"cards":[{"id":"good","title":"Good","body":"Body"},{"id":"broken"}]}
             """.utf8)
-        guard case .success(let mixedCards, let mixedIDs) = OWUIClient.parsePulseFeed(mixed),
+        guard case .success(let mixedCards, let mixedIDs) = VeraAPIClient.parsePulseFeed(mixed),
               mixedCards.map(\.id) == ["good"],
               mixedIDs == ["good", "broken"] else {
             print("SELFTEST ERROR: pulse feed partial parse"); exit(1)
@@ -3679,145 +3639,7 @@ enum SelfTest {
         }
     }
 
-    /// Live checks against the configured OWUI / vera-api deployment.
-    private static func runLive(_ cfg: OWUIConfig) async {
-        let client = OWUIClient(config: cfg)
-        print("OWUI: \(cfg.baseURL.absoluteString)   model: \(cfg.model)")
-        do {
-            let chats = try await client.listChats()
-            print("listChats OK (\(chats.count) chats)")
-            if let first = chats.first {
-                let msgs = await client.loadMessages(chatID: first.id)
-                print("loadMessages OK ('\(first.title.prefix(40))' → \(msgs.count) messages)")
-            }
-            if let mems = await client.memories() {
-                print("memories OK (\(mems.count) entries)")
-            } else {
-                print("memories FAILED (fetch error)")
-            }
-            // The folder id is deployment config, never baked in: PULSE_FOLDER_ID env or
-            // the pulse_folder_id key in ~/.vera/config.json; absent -> skip the check.
-            let env = ProcessInfo.processInfo.environment["PULSE_FOLDER_ID"]
-            let folderID = (env?.isEmpty == false ? env : nil)
-                ?? (ConfigFile.read()["pulse_folder_id"] as? String)
-            if let folderID, !folderID.isEmpty {
-                let cards = await client.pulseCards(folderID: folderID)
-                print("pulseCards OK (\(cards.count) cards in the Pulse folder)")
-            } else {
-                print("pulseCards skipped. Set PULSE_FOLDER_ID (or pulse_folder_id in ~/.vera/config.json)")
-            }
 
-            // Stream through OWUI's pipeline (Socket.IO) — proves tools + memory fire.
-            print("pipeline stream test (Socket.IO):")
-            let socket = VeraSocket(config: cfg)
-            var out = ""
-            for try await ev in socket.streamReply(chatID: "local:selftest",
-                                                    messageID: UUID().uuidString,
-                                                    messages: [["role": "user", "content": "Reply with exactly: wired"]]) {
-                switch ev {
-                case .status(let s): print("  · status: \(s)")
-                case .content(let c): out = c
-                case .sources: break
-                case .done: break
-                }
-            }
-            print("  reply: \(out)")
-            guard !out.isEmpty else { print("SELFTEST ERROR: empty pipeline reply"); exit(1) }
-
-            // Tools must be available in-app (streamReply sends tool_ids/features explicitly).
-            print("in-app tool test (kitchen via streamReply):")
-            var toolStatuses: [String] = []
-            var kitchenReply = ""
-            for try await ev in socket.streamReply(chatID: "local:ser60",
-                                                    messageID: UUID().uuidString,
-                                                    messages: [["role": "user", "content": "What kitchen staples am I low on right now? Just list them."]]) {
-                switch ev {
-                case .status(let s): toolStatuses.append(s); print("  · status: \(s)")
-                case .content(let c): kitchenReply = c
-                case .sources: break
-                case .done: break
-                }
-            }
-            let firedTool = toolStatuses.contains { $0.lowercased().contains("kitchen") }
-            print("  kitchen tool fired in-app: \(firedTool)")
-            print("  reply: \(kitchenReply.prefix(160))")
-
-            // Admin client — list registry + safe toolIds round-trip (restores state).
-            print("MCP admin test:")
-            let admin = OWUIAdminClient(baseURL: cfg.baseURL, modelID: cfg.model,
-                                        token: { try await socket.currentToken() })
-            let toolList = try await admin.listTools()
-            let funcList = try await admin.listFunctions()
-            let servers = try await admin.toolServers()
-            let role = try await admin.currentRole()
-            let valves = try await admin.toolValves(id: "web_search")
-            print("  tools: \(toolList.count)  functions: \(funcList.count)  servers: \(servers.count)  role: \(role)")
-            print("  web_search valves fields: \(valves.count)")
-            let before = try await admin.veraModel().toolIds
-            try await admin.setVeraToolIds(before)   // no-op write exercises the write path
-            let after = try await admin.veraModel().toolIds
-            guard before == after else { print("SELFTEST ERROR: toolIds round-trip changed state"); exit(1) }
-            print("  toolIds round-trip OK: \(after)")
-
-            // Image search endpoint (vera-api). Best-effort (needs a configured vera-api).
-            if let apiBase = cfg.veraAPIBase {
-                var iReq = URLRequest(url: apiBase.appendingPathComponent("/images/search"))
-                iReq.httpMethod = "POST"; iReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                iReq.httpBody = try JSONSerialization.data(withJSONObject: ["query": "coastal lighthouse", "max_results": 3])
-                if let (iData, _) = try? await URLSession.shared.data(for: iReq),
-                   let iObj = try? JSONSerialization.jsonObject(with: iData) as? [String: Any] {
-                    print("  images/search OK (\((iObj["results"] as? [[String: Any]])?.count ?? 0) hits)")
-                } else {
-                    print("  images/search SKIP (vera-api not reachable / not deployed)")
-                }
-            } else {
-                print("  images/search SKIP (vera-api base not configured)")
-            }
-
-            print("SELFTEST OK")
-            exit(0)
-        } catch {
-            print("SELFTEST ERROR: \(error)")
-            exit(1)
-        }
-    }
-
-    /// Proves 401 session recovery against a live server: streams a reply, blocks on stdin
-    /// while the orchestrating shell restarts open-webui, then streams again through the SAME
-    /// VeraSocket instance. The second send must transparently re-sign-in and succeed.
-    static func recoveryProbe() async {
-        setbuf(stdout, nil)
-        guard let cfg = OWUIConfig.load() else {
-            print("RECOVERY ERROR: no OWUI config (~/.vera/config.json)"); exit(1)
-        }
-        let socket = VeraSocket(config: cfg)
-        func stream(_ n: Int) async -> String {
-            var out = ""
-            do {
-                for try await ev in socket.streamReply(chatID: "local:recovery\(n)",
-                                                       messageID: UUID().uuidString,
-                                                       messages: [["role": "user", "content": "Reply with exactly: alive\(n)"]]) {
-                    if case .content(let c) = ev { out = c }
-                }
-            } catch {
-                print("RECOVERY ERROR chat\(n): \(error.localizedDescription)"); exit(1)
-            }
-            return out
-        }
-        let first = await stream(1)
-        guard !first.isEmpty else { print("RECOVERY ERROR: empty first reply"); exit(1) }
-        print("CHAT1 OK: \(first.prefix(60))")
-        print("WAITING: restart the server, then send a newline on stdin")
-        _ = readLine()
-        let second = await stream(2)
-        guard !second.isEmpty else { print("RECOVERY ERROR: empty second reply"); exit(1) }
-        print("CHAT2 OK: \(second.prefix(60))")
-        print("RECOVERY OK")
-        exit(0)
-    }
-
-    /// Pure, local checks — no network, no config required. CI runs exactly these; live
-    /// checks follow only when an OWUI config exists.
     private static func runPure() {
         do {
             var sse = ChatSSEDecoder()
@@ -4308,10 +4130,10 @@ enum SelfTest {
             // Config file round-trip on a temp path: write → read preserves strings + unknown keys.
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("vera-selftest-\(UUID().uuidString)/config.json")
-            try ConfigFile.write(["base": "http://owui.example:6590", "owner_name": "Jordan",
+            try ConfigFile.write(["vera_api_base": "http://engine.example:8089", "owner_name": "Jordan",
                                   "custom_extra": ["keep": true]], at: tmp)
             let back = ConfigFile.read(at: tmp)
-            guard back["base"] as? String == "http://owui.example:6590",
+            guard back["vera_api_base"] as? String == "http://engine.example:8089",
                   back["owner_name"] as? String == "Jordan",
                   (back["custom_extra"] as? [String: Any])?["keep"] as? Bool == true else {
                 print("SELFTEST ERROR: config file round-trip"); exit(1)
@@ -4319,23 +4141,6 @@ enum SelfTest {
             try? FileManager.default.removeItem(at: tmp.deletingLastPathComponent())
             print("  config round-trip OK (strings + unknown keys preserved)")
 
-            // Tool log round-trip on a temp path: append JSONL lines → load newest-first, capped.
-            let logURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("vera-selftest-\(UUID().uuidString).jsonl")
-            let t0 = Date(timeIntervalSince1970: 1750000000)
-            for i in 0..<4 {
-                ToolLog.append(Invocation(label: "tool_\(i)", at: t0.addingTimeInterval(Double(i) * 60)),
-                               to: logURL)
-            }
-            let logBack = ToolLog.load(from: logURL)
-            let capped = ToolLog.load(limit: 2, from: logURL)
-            guard logBack.count == 4, logBack.first?.label == "tool_3", logBack.last?.label == "tool_0",
-                  abs(logBack.first!.at.timeIntervalSince(t0.addingTimeInterval(180))) < 1,
-                  capped.count == 2, capped.first?.label == "tool_3", capped.last?.label == "tool_2" else {
-                print("SELFTEST ERROR: tool log round-trip"); exit(1)
-            }
-            try? FileManager.default.removeItem(at: logURL)
-            print("  tool log OK (4 appended, newest-first load, tail cap honored)")
 
             // Update semver compare: the decision table behind the update banner.
             let semverCases: [(String, String, Int)] = [
@@ -4364,30 +4169,6 @@ enum SelfTest {
             }
             print("  resources OK (bundle resolved, mark + mermaid present)")
 
-            // Chat history graph: automation-written chats store turns only in
-            // history.messages (id-keyed, parent-linked); the thread follows currentId.
-            let graphChat: [String: Any] = [
-                "messages": [["role": "user", "content": "only the user turn"]],
-                "history": [
-                    "currentId": "c",
-                    "messages": [
-                        "a": ["id": "a", "role": "user", "content": "q1"],
-                        "b": ["id": "b", "role": "assistant", "content": "r1", "parentId": "a"],
-                        "c": ["id": "c", "role": "user", "content": "q2", "parentId": "b"],
-                        "x": ["id": "x", "role": "assistant", "content": "abandoned branch", "parentId": "a"],
-                    ],
-                ],
-            ]
-            let ordered = OWUIClient.ChatHistory.orderedMessages(graphChat)
-            guard ordered.count == 3,
-                  ordered.map({ $0["content"] as? String }) == ["q1", "r1", "q2"] else {
-                print("SELFTEST ERROR: history graph reconstruction"); exit(1)
-            }
-            let flatChat: [String: Any] = ["messages": [["role": "user", "content": "flat"]]]
-            guard OWUIClient.ChatHistory.orderedMessages(flatChat).count == 1 else {
-                print("SELFTEST ERROR: history flat-list fallback"); exit(1)
-            }
-            print("  chat history OK (graph walk follows currentId, flat fallback intact)")
 
             // Reasoning details blocks are stripped at render; tool_calls handling unchanged.
             let reasoned = "<details type=\"reasoning\" done=\"true\"><summary>Thought</summary>thinking…</details>\nThe actual answer."
@@ -4397,7 +4178,6 @@ enum SelfTest {
             }
             print("  reasoning strip OK (details removed, reply intact)")
 
-            // OWUI source payloads map to numbered chips in payload order.
             let mapped = OWUISources.parse([
                 ["source": ["name": "BBC Sport"], "metadata": [["source": "https://bbc.co.uk/a"]]],
                 ["source": ["name": "https://theathletic.com/b"]],
@@ -4405,7 +4185,7 @@ enum SelfTest {
             ])
             guard mapped.count == 2, mapped[0].n == 1, mapped[0].title == "BBC Sport",
                   mapped[0].url == "https://bbc.co.uk/a", mapped[1].url == "https://theathletic.com/b" else {
-                print("SELFTEST ERROR: OWUI source mapping"); exit(1)
+                print("SELFTEST ERROR: source mapping"); exit(1)
             }
             print("  source mapping OK (\(mapped.count) chips, unresolvable dropped)")
 
@@ -4485,7 +4265,7 @@ enum SelfTest {
                 (nil, nil, 8089, nil),
             ]
             for (m, r, p, want) in engineBaseCases {
-                let got = OWUIConfig.effectiveVeraAPIBase(mode: m, remote: r, port: p)?.absoluteString
+                let got = VeraAPIClient.effectiveBase(mode: m, remote: r, port: p)?.absoluteString
                 guard got == want else {
                     print("SELFTEST ERROR: effective base mode=\(m ?? "nil") remote=\(r ?? "nil") = \(got ?? "nil"), want \(want ?? "nil")")
                     exit(1)
@@ -4595,23 +4375,6 @@ enum SelfTest {
         return Data(bytes: ch[0], count: n * 2)
     }
 
-    /// One-shot: append the `vera:ask` + `vera-artifact` conventions to Vera's system prompt (idempotent).
-    static func installConventions() async {
-        guard let cfg = OWUIConfig.load() else { print("no OWUI config"); exit(1) }
-        let socket = VeraSocket(config: cfg)
-        let admin = OWUIAdminClient(baseURL: cfg.baseURL, modelID: cfg.model,
-                                    token: { try await socket.currentToken() })
-        do {
-            let ask = try await admin.ensureAskConvention()
-            let art = try await admin.ensureArtifactConvention()
-            let pres = try await admin.ensurePresentationConventions()
-            print("vera:ask: \(ask ? "ADDED" : "present"); vera-artifact: \(art ? "ADDED" : "present"); presentation tools: \(pres ? "ADDED" : "present").")
-            exit(0)
-        } catch {
-            print("install error: \(error)")
-            exit(1)
-        }
-    }
 }
 
 extension SelfTest {

@@ -221,14 +221,13 @@ struct ShotView: View {
         }
     }
 
-    /// A Settings tab (Plugins or MCP) — the Settings window chrome (tab bar) over the moved board.
     private func settingsShot(_ tab: SettingsTab) -> some View {
         ZStack {
             Color.black.opacity(0.45)
             VStack(spacing: 0) {
                 settingsTabBar(tab)
                 Divider().overlay(Theme.hairline)
-                Group { tab == .mcp ? AnyView(mcpBoard) : AnyView(pluginsBoard) }
+                pluginsBoard
             }
             .frame(width: 860, height: 640, alignment: .top)
             .background(Theme.bg)
@@ -243,8 +242,7 @@ struct ShotView: View {
         let tabs: [(SettingsTab, String, String)] = [
             (.connection, "Connection", "link"), (.model, "Model", "cpu"),
             (.services, "Services", "server.rack"), (.plugins, "Plugins", "shippingbox"),
-            (.mcp, "MCP", "puzzlepiece.extension"), (.identity, "Identity", "person"),
-            (.about, "About", "info.circle"),
+            (.identity, "Identity", "person"), (.about, "About", "info.circle"),
         ]
         return HStack(spacing: 22) {
             ForEach(tabs, id: \.0) { t in
@@ -824,63 +822,6 @@ struct ShotView: View {
         }
     }
 
-    // Static MCP board for screenshots (mock data; no ToolsStore needed).
-    private var mcpBoard: some View {
-        let demoTools: [ToolEntry] = [
-            .init(id: "web_search", name: "Web Search",
-                  description: "Autonomous web search (SearXNG + Playwright).", availableToVera: true, lastUsed: Date()),
-            .init(id: "home_assistant", name: "Home Assistant",
-                  description: "Control and query Home Assistant devices.", availableToVera: false, lastUsed: nil),
-        ]
-        return VStack(spacing: 0) {
-            HStack {
-                Text("MCP").font(.system(size: 22, weight: .bold))
-                InfoTip(text: "What Vera can use: the tools, functions, and servers available to her.", size: 13)
-                Text("3").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 8).padding(.vertical, 3).background(Theme.surface).clipShape(Capsule())
-                Spacer()
-            }
-            .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 8)
-            VStack(alignment: .leading, spacing: 22) {
-                ActivitySection(invocations: [
-                    .init(label: "knowledge_search", at: Date()), .init(label: "web_search", at: Date())])
-                SectionBox(title: "Tools") {
-                    ForEach(demoTools) { t in
-                        RowCard {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(t.name).font(.system(size: 14, weight: .semibold))
-                                Text(t.description).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                            }
-                            Spacer(minLength: 12)
-                            Image(systemName: "slider.horizontal.3").foregroundStyle(Theme.textSecondary)
-                            StatePill(on: t.availableToVera)
-                        }
-                    }
-                }
-                SectionBox(title: "Functions") {
-                    RowCard {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Adaptive Memory v3").font(.system(size: 14, weight: .semibold))
-                            Text("filter").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                                .padding(.horizontal, 7).padding(.vertical, 2).background(Theme.surfaceHover).clipShape(Capsule())
-                        }
-                        Spacer(minLength: 12)
-                        Image(systemName: "slider.horizontal.3").foregroundStyle(Theme.textSecondary)
-                        StatePill(on: true)
-                    }
-                }
-                SectionBox(title: "Tool Servers") {
-                    Text("No external tool servers connected.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                }
-            }
-            .padding(.horizontal, 28).padding(.vertical, 18)
-            .frame(maxWidth: 860, alignment: .leading)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.bg)
-    }
 }
 
 /// Render-safe Agentic detail boards for screenshots: the pulse pipeline, the

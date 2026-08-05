@@ -21,11 +21,8 @@ final class RemoteImageCache {
     func set(_ k: String, _ v: NSImage) { cache[k] = v }
 }
 
-/// Loads an image URL into an NSImage with an optional Bearer token (OWUI file content needs auth).
-/// `natural` mode sizes to the image's own aspect ratio (no cropping) instead of filling a fixed frame.
 struct AuthedAsyncImage: View {
     let url: String?
-    var token: String? = nil
     var apiBase: String? = nil
     var contentMode: ContentMode = .fill
     var natural: Bool = false              // size to the image's aspect ratio, no crop
@@ -82,8 +79,7 @@ struct AuthedAsyncImage: View {
             }
             return
         }
-        var req = URLRequest(url: u)
-        if let token, !token.isEmpty { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let req = URLRequest(url: u)
         guard let (data, _) = try? await URLSession.shared.data(for: req), let img = NSImage(data: data) else {
             image = nil
             failed = true

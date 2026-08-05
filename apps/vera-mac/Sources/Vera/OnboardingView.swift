@@ -142,10 +142,12 @@ struct NativeMemoryOnboardingEditor: View {
             Text("Memory is optional and starts off after upgrade. Approved facts stay on this Mac. Suggestions, corrections, merges, and deletion all require your review.")
                 .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             if config.nativeSettings.memory.enabled {
-                TextField("Embeddings model identifier", text: config.memoryStringBinding(\.embeddingsModel))
-                    .textFieldStyle(.roundedBorder)
-                TextField("Extraction model identifier", text: config.memoryStringBinding(\.extractionModel))
-                    .textFieldStyle(.roundedBorder)
+                DiscoveredModelPicker(title: "Embeddings model",
+                                      models: config.activeNativeProfile?.discoveredModels ?? [],
+                                      selection: config.memoryStringBinding(\.embeddingsModel))
+                DiscoveredModelPicker(title: "Extraction model",
+                                      models: config.activeNativeProfile?.discoveredModels ?? [],
+                                      selection: config.memoryStringBinding(\.extractionModel))
                 Toggle("Generate reviewable suggestions from completed chats", isOn: config.memoryBoolBinding(\.generateFromChats))
                 Text("Episodic facts need an absolute expiry date and stop being recalled when they expire. A daily groom removes them after that date passes, with every removal recorded in the audit trail.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)

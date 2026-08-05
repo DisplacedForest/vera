@@ -26,10 +26,8 @@ enum AppSection: String, CaseIterable, Identifiable {
     var underChatTab: Bool { self != .agentic }
 }
 
-/// Tabs in the Settings window. Plugins and MCP join the connection/identity tabs here; a deep
-/// link (the Veins "Open Plugins" warning) sets the shared selection before opening Settings.
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case connection, model, persona, memory, nativeTools, services, plugins, mcp, identity, about
+    case connection, model, persona, memory, nativeTools, services, plugins, identity, about
     var id: String { rawValue }
 }
 
@@ -44,7 +42,7 @@ struct PulseSource: Identifiable, Hashable, Codable {
 /// One real (retrieved + re-hosted) photo woven into a Pulse card's body.
 struct PulseInlineImage: Identifiable, Hashable {
     let n: Int            // matches the body's [[img:n]] token
-    let url: String       // OWUI file content URL
+    let url: String
     let caption: String
     let sourceN: Int?     // numbered source it came from (nil/0 = image search)
     var id: Int { n }
@@ -177,13 +175,12 @@ struct PulseVein: Identifiable, Hashable {
     }
 }
 
-/// A Pulse briefing card (derived from a chat in the OWUI Pulse folder).
 struct PulseCard: Identifiable, Hashable {
     let id: String
     var title: String      // "Pulse · " prefix stripped
     var preview: String
     var subtitle: String
-    var imageURL: String? = nil   // OWUI file content URL for the generated cover art
+    var imageURL: String? = nil
     var tint: String? = nil       // "#rrggbb" panel tint from the image's dominant color
     var sources: [String] = []    // source URLs (for favicon row) — derived from sourceList
     var sourceList: [PulseSource] = []        // numbered sources (chips + expandable list)

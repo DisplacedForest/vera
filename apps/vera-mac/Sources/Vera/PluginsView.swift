@@ -2,12 +2,10 @@ import SwiftUI
 import AppKit
 
 /// The Plugins store — one card per integration from vera-api's registry, with the
-/// service's mark, live status, a one-click Add flow (vera-api config + OWUI tool
 /// attach), and experimental features behind a consent sheet. Cards render from the
 /// API response; the app hardcodes no integration list.
 struct PluginsView: View {
     @EnvironmentObject var config: ConfigStore
-    @EnvironmentObject var tools: ToolsStore
     @StateObject private var plugins = PluginsStore()
     @State private var editing: PluginEntry?
     @State private var consent: ConsentContext?
@@ -28,7 +26,7 @@ struct PluginsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
         .task {
-            plugins.configure(base: config.veraAPIBase, tools: tools)
+            plugins.configure(base: config.veraAPIBase)
             await plugins.refresh()
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
@@ -183,8 +181,6 @@ private struct PluginCard: View {
     var onConfigure: () -> Void
     var onFeatureToggle: (PluginFeature, Bool) -> Void
 
-    private var pendingNote: String? { plugins.owuiPending[entry.id] }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 12) {
@@ -194,7 +190,7 @@ private struct PluginCard: View {
                         Text(entry.displayName).font(.system(size: 15, weight: .semibold))
                         InfoTip(text: entry.unlocksLine)
                     }
-                    StatusChip(entry: entry, pendingNote: pendingNote)
+                    StatusChip(entry: entry)
                 }
                 Spacer(minLength: 8)
                 if plugins.busy.contains(entry.id) {
@@ -242,11 +238,6 @@ private struct PluginCard: View {
                         .background(entry.configured ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Theme.accent),
                                     in: Capsule())
                 }
-                if pendingNote != nil {
-                    Button("Retry OWUI step") { plugins.retryOWUI(entry) }
-                        .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.accent)
-                }
                 Spacer()
             }
         }
@@ -259,15 +250,10 @@ private struct PluginCard: View {
     }
 }
 
-/// Status chip: Not connected / Connected / Off / Error (detail on hover) / OWUI step pending.
 private struct StatusChip: View {
     let entry: PluginEntry
-    let pendingNote: String?
 
     private var label: (text: String, color: Color, help: String) {
-        if let pendingNote, entry.enabled {
-            return ("OWUI step pending", .orange, pendingNote)
-        }
         switch entry.status {
         case "enabled":
             return ("Connected", .green,

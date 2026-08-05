@@ -160,19 +160,6 @@ struct PluginEntry: Identifiable, Hashable, Sendable {
     }
 }
 
-/// The OWUI side each plugin declares: which OWUI tools get attached to the Vera model
-/// when the plugin is enabled. Plugins absent here have no OWUI step. The kitchen tool
-/// is shared by grocy and mealie — it detaches only when BOTH are off (the store checks).
-enum PluginOWUI {
-    static let tools: [String: [String]] = [
-        "home_assistant": ["home_assistant"],
-        "grocy": ["kitchen"],
-        "mealie": ["kitchen"],
-        "overseerr": ["media_request"],
-        "apple_reminders": ["reminders"],
-    ]
-}
-
 /// Thin client for vera-api's integrations endpoints.
 struct IntegrationsClient: Sendable {
     let base: URL

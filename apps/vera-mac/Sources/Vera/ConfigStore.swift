@@ -42,19 +42,13 @@ final class ConfigStore: ObservableObject {
 
     static let visionBridgeCredentialID = "vision-bridge"
 
-    /// THE `~/.vera/config.json` key ↔ environment-variable mapping (env wins at resolve
-    /// time). Canonical names match the backend's convention (`OWUI_KEY`); deprecated
-    /// aliases keep working for one release.
     static let envNames: [String: String] = [
         "model_base": "VERA_MODEL_BASE", "model_api_key": "VERA_MODEL_API_KEY",
-        "base": "OWUI_BASE", "api_key": "OWUI_KEY", "model": "VERA_MODEL",
-        "completions_url": "VERA_COMPLETIONS_URL", "voice_base": "VERA_VOICE_BASE",
-        "vera_api_base": "VERA_API_BASE", "owui_email": "OWUI_EMAIL",
-        "owui_password": "OWUI_PASSWORD", "owner_name": "VERA_OWNER_NAME",
+        "model": "VERA_MODEL", "completions_url": "VERA_COMPLETIONS_URL",
+        "voice_base": "VERA_VOICE_BASE", "vera_api_base": "VERA_API_BASE",
+        "owner_name": "VERA_OWNER_NAME",
         "chat_template_kwargs": "VERA_CHAT_TEMPLATE_KWARGS",
     ]
-    /// canonical env name → deprecated alias still honored this release.
-    static let envAliases: [String: String] = ["OWUI_KEY": "OWUI_API_KEY"]
 
     init(credentialStore: any NativeCredentialStore = KeychainNativeCredentialStore()) {
         let loaded = ConfigFile.read()
@@ -110,7 +104,6 @@ final class ConfigStore: ObservableObject {
         guard let name = Self.envNames[key] else { return nil }
         let env = ProcessInfo.processInfo.environment
         if let v = env[name], !v.isEmpty { return name }
-        if let old = Self.envAliases[name], let v = env[old], !v.isEmpty { return old }
         return nil
     }
 
@@ -128,9 +121,6 @@ final class ConfigStore: ObservableObject {
     func reloadCapabilityTools() {
         capabilityTools = NativeCapabilityTools.catalog(reservedNames: ChatStore.builtInToolNames)
     }
-
-    /// The fully resolved connection config (env over file). Nil until OWUI base + key exist.
-    var resolved: OWUIConfig? { OWUIConfig.load() }
 
     var nativeResolved: NativeChatConfig? {
         let env = ProcessInfo.processInfo.environment
@@ -377,7 +367,14 @@ final class ConfigStore: ObservableObject {
     }
 
     var veraAPIBase: URL? {
-        OWUIConfig.resolvedVeraAPIBase()
+        VeraAPIClient.resolvedBase()
+    }
+
+    var voiceBase: URL? {
+        let env = ProcessInfo.processInfo.environment["VERA_VOICE_BASE"]
+        let v = (env?.isEmpty == false ? env : nil) ?? (raw["voice_base"] as? String)
+        let trimmed = v?.trimmingCharacters(in: .whitespaces)
+        return (trimmed?.isEmpty == false) ? URL(string: trimmed!) : nil
     }
 
     /// The person's name — drives the greeting and the sidebar chip. Nil when unset.
@@ -395,30 +392,6 @@ enum ConnectionTest {
     enum TestError: Error, LocalizedError {
         case message(String)
         var errorDescription: String? { switch self { case .message(let m): return m } }
-    }
-
-    /// Exercise an OWUI sign-in (the credential path the live socket uses).
-    static func owui(base: String, email: String, password: String) async throws -> String {
-        guard let url = URL(string: base), url.scheme != nil else {
-            throw TestError.message("Enter a valid OWUI URL first")
-        }
-        guard !email.isEmpty, !password.isEmpty else {
-            throw TestError.message("Enter the OWUI email and password")
-        }
-        var req = URLRequest(url: url.appendingPathComponent("api/v1/auths/signin"))
-        req.httpMethod = "POST"
-        req.timeoutInterval = 8
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["email": email, "password": password])
-        let (data, resp) = try await URLSession.shared.data(for: req)
-        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        guard code == 200,
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              obj["token"] is String else {
-            throw TestError.message("Sign-in failed (HTTP \(code))")
-        }
-        let name = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["name"] as? String
-        return "Signed in" + (name.map { " as \($0)" } ?? "")
     }
 
     static func models(base: String, apiKey: String) async throws -> [String] {

@@ -67,7 +67,7 @@ def report(version: str, data_root: str | None = None) -> None:
     # is diagnosable from the boot log alone.
     raw_proto = os.environ.get("DREAM_TOOL_PROTOCOL", "").strip().lower()
     proto = "hermes" if raw_proto == "hermes" else "openai"
-    log.info("  dream/coder tool protocol: %s", proto)
+    log.info("  coder tool protocol: %s", proto)
     if raw_proto == "mlx":
         log.warning("  deprecated DREAM_TOOL_PROTOCOL value in use: mlx — set openai, "
                     "or hermes for text pass-through servers")

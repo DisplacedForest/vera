@@ -10,7 +10,6 @@ Each tick reads the ACTIVE (non-cooled-down) interests to decide what to explore
 the chosen topic onto a fixation cooldown — the anti-fixation mechanism that makes her range widely
 instead of returning to one favourite topic tick after tick. Salience accrues. Writes are free.
 """
-import difflib
 import hashlib
 import json
 import os
@@ -183,36 +182,3 @@ def delete(interest_id):
         c.execute("DELETE FROM interest WHERE id=?", (interest_id,))
 
 
-def _norm(f):
-    return f"{f.get('topic') or ''} {f.get('content') or ''}".strip().lower()
-
-
-def derive_from_facts(facts, threshold=0.5, min_cluster=2):
-    """Emergent fact-cluster interests: greedily cluster grounded facts by similarity; each cluster of
-    >= min_cluster facts contributes an interest (its shortest topic), with salience proportional to
-    the cluster size. Mechanical/idempotent — re-running keeps interests in step with her world-model.
-    Returns the topics observed."""
-    clusters = []
-    for f in facts:
-        nf = _norm(f)
-        placed = False
-        for cl in clusters:
-            if difflib.SequenceMatcher(None, nf, cl["_n"]).ratio() >= threshold:
-                cl["items"].append(f)
-                placed = True
-                break
-        if not placed:
-            clusters.append({"_n": nf, "items": [f]})
-    observed = []
-    for cl in clusters:
-        items = cl["items"]
-        if len(items) < min_cluster:
-            continue
-        topics = [i.get("topic") for i in items if i.get("topic")]
-        if not topics:
-            continue
-        label = min(topics, key=len)  # the tightest label for the cluster
-        observe(label, salience_bump=float(len(items)), source="fact-cluster",
-                provenance={"cluster_size": len(items)})
-        observed.append(label)
-    return observed

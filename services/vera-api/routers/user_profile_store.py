@@ -150,7 +150,7 @@ def get(user_id):
 
 
 def digest(user_id, top=12):
-    """Compact per-user vibe injected by the inlet filter (on top of the shared world-model core)."""
+    """Compact per-user vibe injected per conversation."""
     p = get(user_id)
     lines = []
     if p["name"]:

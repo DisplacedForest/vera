@@ -1,8 +1,5 @@
-"""Knowledge-store Restore / Reject — the counterpart to /memory/restore for the OTHER store.
-/memory/restore only knows beliefs (vm.write/delete/set_tier) — sending a knowledge op there
-would 400 on a GC restore and write a merge/promote into the wrong store. This router reverses
-knowledge ops through the gated knowledge API, so every undo is itself audited in the
-revision log.
+"""Knowledge-store Restore / Reject. This router reverses knowledge ops through the gated
+knowledge API, so every undo is itself audited in the revision log.
 
 - POST /knowledge/restore  {card_id, op_index}  — undo one op (re-create a GC'd entity, un-merge,
   un-codify a promoted type). Idempotent. Stale-guarded (won't clobber state a later run changed).
@@ -35,7 +32,7 @@ def _load_op(b: RestoreBody):
         raise HTTPException(404, "no such op")
     op = ops[b.op_index]
     if op.get("store") != "knowledge":
-        raise HTTPException(400, "not a knowledge-store op. Use /memory/restore")
+        raise HTTPException(400, "not a knowledge-store op")
     return op
 
 

@@ -1,5 +1,4 @@
-"""Vera's emergent interest store — salience accrual, fixation cooldown, fact-cluster
-derivation. Run under pytest."""
+"""Vera's emergent interest store — salience accrual and fixation cooldown. Run under pytest."""
 import os
 import time
 
@@ -59,15 +58,3 @@ def test_active_tempers_salience_by_novelty():
     assert order.index("fresh") < order.index("worked")  # novelty lifts the fresh one above
 
 
-def test_derive_from_facts_clusters_related_only():
-    facts = [
-        {"topic": "UniFi 8.5", "content": "unifi rf optimization for iot"},
-        {"topic": "UniFi 8.6", "content": "unifi rf optimization for iot, improved"},
-        {"topic": "Ashvale", "content": "ashvale rovers finished 16th"},
-    ]
-    observed = vi.derive_from_facts(facts)
-    topics = {r["topic"]: r for r in vi.all_interests()}
-    assert len(observed) == 1                       # only the UniFi pair clusters
-    rep = topics[observed[0]]
-    assert rep["source"] == "fact-cluster" and rep["salience"] >= 2.0
-    assert "Ashvale" not in topics                  # a lone fact is not yet an interest

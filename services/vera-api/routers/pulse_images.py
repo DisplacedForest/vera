@@ -8,7 +8,8 @@ from urllib.parse import urljoin
 import aiohttp
 
 from .images import ImageSearchRequest, search as image_search
-from .pulse_llm import OWUI_BASE, OWUI_KEY, _request_json
+from .pulse_llm import _request_json
+from .pulse_media import save_image
 
 log = logging.getLogger("vera.pulse")
 
@@ -99,8 +100,7 @@ async def _gen_image(prompt, style, idx):
         if not b64:
             return None, None
         png = base64.b64decode(b64)
-        url = await _upload_image(png, f"pulse-{idx}.png")
-        return url, d.get("dominant")
+        return save_image(png), d.get("dominant")
     except Exception:
         return None, None
 
@@ -148,16 +148,6 @@ async def review_cover(image_url: str, headline: str, summary: str, body: str) -
                 "reason": str(verdict.get("reason") or "")[:300]}
     except Exception:
         return None
-
-
-async def _upload_image(img_bytes, filename, content_type="image/png"):
-    """Upload an image to OWUI files → its content URL (or None)."""
-    form = aiohttp.FormData()
-    form.add_field("file", img_bytes, filename=filename, content_type=content_type)
-    obj = await _request_json("POST", f"{OWUI_BASE}/api/v1/files/", timeout=60,
-                              headers={"Authorization": f"Bearer {OWUI_KEY}"}, data=form)
-    fid = obj.get("id")
-    return f"{OWUI_BASE}/api/v1/files/{fid}/content" if fid else None
 
 
 # ---- deep-research helpers ----
@@ -229,7 +219,7 @@ async def _fetch_og_image(page_url):
 
 
 async def _gather_images(idx, entity_query, top_sources):
-    """Retrieve 2-4 real photos (image search + og:images), re-hosted in OWUI.
+    """Retrieve 2-4 real photos (image search + og:images).
 
     Returns [{url, caption, srcN}] — srcN links an og:image to its numbered source (0 if none).
     """
@@ -247,8 +237,7 @@ async def _gather_images(idx, entity_query, top_sources):
         data, mime = await _download(h.img_src)
         if not data:
             continue
-        ext, _ = _img_kind(data)
-        url = await _upload_image(data, f"pulse-{idx}-img{len(images)}.{ext}", mime)
+        url = save_image(data, mime)
         if url:
             images.append({"url": url, "caption": _clean_caption(h.title), "srcN": 0})
             seen.add(h.img_src)
@@ -262,8 +251,7 @@ async def _gather_images(idx, entity_query, top_sources):
         data, mime = await _download(og)
         if not data:
             continue
-        ext, _ = _img_kind(data)
-        url = await _upload_image(data, f"pulse-{idx}-src{n}.{ext}", mime)
+        url = save_image(data, mime)
         if url:
             images.append({"url": url, "caption": _clean_caption(title), "srcN": n})
             seen.add(og)

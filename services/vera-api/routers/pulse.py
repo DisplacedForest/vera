@@ -37,7 +37,7 @@ from .pulse_llm import (
 from .pulse_images import (
     VERA_IMAGE_BASE, STYLE_PALETTE, IMAGE_SYS,
     image_protocol, _image_base, _image_registry, _image_request, _image_b64,
-    _gen_image, _gather_images, _upload_image, _clean_caption, _vision, make_cover,
+    _gen_image, _gather_images, _clean_caption, _vision, make_cover,
 )
 from .pulse_gates import (
     already_covered, is_stale_news, is_off_topic, _recent_for_user,
@@ -104,7 +104,7 @@ async def _inject(title, body, image_url=None, tint=None, sources=None,
         "day": datetime.now(TZ).date().isoformat(), "status": "new",
         "title": title, "summary": summary or "", "body": body,
         "image_url": image_url, "tint": tint, "sources": src, "inline_images": imgs,
-        "promoted_chat_id": None, "action": action, "kind": kind, "severity": severity,
+        "action": action, "kind": kind, "severity": severity,
         "user_id": user_id or store.DEFAULT_USER, "provenance": provenance,
         "category": category, "change_set": change_set, "items": items,
         "situation_key": situation_key,
@@ -127,7 +127,6 @@ def _assemble_card(headline, topic, summary, body, image_url, tint, sources, inl
         "sources": [{"n": s["n"], "title": s["title"], "url": s["url"]} for s in sources],
         "inline_images": [{"n": i, "url": im["url"], "caption": im["caption"], "sourceN": im.get("srcN", 0)}
                           for i, im in enumerate(inline_images, start=1)],
-        "promoted_chat_id": None,
         "kind": "research",
         "provenance": provenance,
         "user_id": user_id,
@@ -517,7 +516,7 @@ async def promote(card_id: str):
         return {"ok": False, "error": "not found"}
     if c["status"] != "promoted":
         store.set_status(card_id, "promoted")
-    return {"ok": True, "chat_id": c.get("promoted_chat_id")}
+    return {"ok": True}
 
 
 @router.post("/pulse/{card_id}/bookmark", tags=["pulse"])
@@ -529,7 +528,7 @@ async def bookmark(card_id: str, body: BookmarkBody):
         store.set_status(card_id, "bookmarked")
     elif c["status"] == "bookmarked":
         store.set_status(card_id, "seen")
-    return {"ok": True, "chat_id": c.get("promoted_chat_id")}
+    return {"ok": True}
 
 
 @router.delete("/pulse/{card_id}", tags=["pulse"])

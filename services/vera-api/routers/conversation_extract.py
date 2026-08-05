@@ -23,9 +23,15 @@ import aiohttp
 from . import extract_store as es
 from . import profile_graph_store as pg
 from .pulse import _vera
-from .pulse_llm import OWUI_BASE, _headers
 
 log = logging.getLogger(__name__)
+
+OWUI_BASE = os.environ.get("OWUI_BASE", "").rstrip("/")
+
+
+def _headers():
+    return {"Authorization": f"Bearer {os.environ.get('OWUI_KEY', '')}",
+            "Content-Type": "application/json"}
 
 DUMP_ROOT = os.environ.get("CONVERSATION_DUMP_DIR", "")          # watched dir for ChatGPT/Claude.ai exports
 

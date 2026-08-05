@@ -20,9 +20,15 @@ fail=0
 if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]; then
   if docker exec "$CONTAINER" python3 -c '
 import os, sqlite3, shutil, sys
+
+def die(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
 src, dst = "/data", "/tmp/vera-db-snap"
 shutil.rmtree(dst, ignore_errors=True)
-for root, dirs, files in os.walk(src):
+count = 0
+for root, dirs, files in os.walk(src, onerror=lambda e: die(str(e))):
     for f in files:
         if not f.endswith(".db"):
             continue
@@ -34,22 +40,33 @@ for root, dirs, files in os.walk(src):
         try:
             with d:
                 s.backup(d)
-        except Exception as e:
-            print(f"{p}: {e}", file=sys.stderr)
-            sys.exit(1)
+            if d.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                die(f"{p}: snapshot failed quick_check")
+        except sqlite3.Error as e:
+            die(f"{p}: {e}")
         finally:
             d.close()
             s.close()
+        count += 1
+if count == 0:
+    die("no databases found under /data")
 '; then
-    docker exec "$CONTAINER" tar czf - --exclude="*.db" --exclude="*.db-wal" --exclude="*.db-shm" -C / data -C /tmp vera-db-snap > "$DEST/vera-data.tgz"
+    docker exec "$CONTAINER" tar czf - --exclude="*.db" --exclude="*.db-wal" --exclude="*.db-shm" -C / data > "$DEST/vera-data.tgz"
     rc=$?
     if [ "$rc" -le 1 ] && [ -s "$DEST/vera-data.tgz" ]; then
       log "OK   vera-data.tgz ($(du -h "$DEST/vera-data.tgz" | cut -f1))"
     else
       log "FAIL vera-data.tgz stream from $CONTAINER (tar rc=$rc)"; fail=1
     fi
+    docker exec "$CONTAINER" tar czf - -C /tmp/vera-db-snap . > "$DEST/vera-data-dbs.tgz"
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ "$(tar tzf "$DEST/vera-data-dbs.tgz" 2>/dev/null | grep -c '\.db$')" -gt 0 ]; then
+      log "OK   vera-data-dbs.tgz ($(du -h "$DEST/vera-data-dbs.tgz" | cut -f1))"
+    else
+      log "FAIL vera-data-dbs.tgz from $CONTAINER (tar rc=$rc)"; fail=1
+    fi
   else
-    log "FAIL vera-data.tgz db snapshot in $CONTAINER"; fail=1
+    log "FAIL vera-data db snapshot in $CONTAINER"; fail=1
   fi
 else
   log "FAIL $CONTAINER is not running; its native stores were not backed up"; fail=1
@@ -80,6 +97,7 @@ tar czf "$DEST/n8n.tgz" -C "$APP" n8n 2>/dev/null && log "OK   n8n.tgz ($(du -h 
 ( cd "$DEST" && sha256sum -- * > SHA256SUMS 2>/dev/null )
 echo "vera-backup $STAMP  host=$(hostname)  status=$([ $fail -eq 0 ] && echo OK || echo PARTIAL)" > "$DEST/MANIFEST"
 echo "vera-data.tgz  source=$CONTAINER:/data  $([ -s "$DEST/vera-data.tgz" ] && echo present || echo missing)" >> "$DEST/MANIFEST"
+echo "vera-data-dbs.tgz  source=$CONTAINER:/data sqlite snapshots, extract into /data after vera-data.tgz  $([ -s "$DEST/vera-data-dbs.tgz" ] && echo present || echo missing)" >> "$DEST/MANIFEST"
 log "manifest + checksums written"
 
 # Retention: keep the newest $KEEP, prune older.

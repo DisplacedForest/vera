@@ -68,7 +68,7 @@ Integrations (Home Assistant and the rest) can be set in `.env` for headless ins
 Two host scripts cover the standing ops work, and each documents its own environment in its header:
 
 - `scripts/rag-sync.py` reconciles a folder tree of reference documents into vera-api document collections: it walks `REFERENCE_ROOT/<domain>/`, uploads new and changed files, removes deleted ones, and is safe to re-run. It needs the vera-api base URL, passed as `--vera-api-base` or read from `VERA_API_BASE`, and has no default. `scripts/vera-rag-sync.sh` is the cron wrapper: it exports `REFERENCE_ROOT`, and when `VERA_API_BASE` is not already in the environment it reads it from the deployed vera-api env file (`VERA_API_ENV_FILE`).
-- `scripts/vera-backup.sh` is a reference nightly backup. It streams vera-api's `/data` stores out of the running container, so everything the engine owns (documents, veins, Pulse, memory, scheduler, and workflow state) is captured from the named volume rather than from host paths, then archives the container's config alongside it and writes checksums and a manifest.
+- `scripts/vera-backup.sh` is a reference nightly backup. It captures vera-api's `/data` stores out of the running container as two artifacts: `vera-data.tgz` with the volume's non-database tree, and `vera-data-dbs.tgz` with consistent SQLite snapshots taken through the backup API and integrity-checked before archiving. Restore by extracting the first into `/data`, then the second over it. The script archives the container's config alongside them and writes checksums and a manifest.
 
 ## 3. The Mac app
 

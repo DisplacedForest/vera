@@ -4721,6 +4721,13 @@ extension SelfTest {
             conversationExcluded: false) == .grounded else {
             print("SELFTEST ERROR: grounded replies must be ineligible for memory extraction"); exit(1)
         }
+        var localRAGReply = Message(role: .assistant, text: "Research answer.")
+        localRAGReply.sources = [PulseSource(n: 1, title: "Papers (local knowledge)", url: "local")]
+        guard NativeMemoryExtractionPolicy.disposition(
+            user: "researched question", assistant: localRAGReply,
+            conversationExcluded: false) == .grounded else {
+            print("SELFTEST ERROR: research replies with local knowledge sources must be grounded"); exit(1)
+        }
         var researchReply = Message(role: .assistant, text: "Web answer.")
         researchReply.sources = [PulseSource(n: 1, title: "Site", url: "https://example.com")]
         guard NativeMemoryExtractionPolicy.disposition(

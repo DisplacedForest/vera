@@ -346,9 +346,20 @@ struct KnowledgeCollectionDetail: View {
         ScrollView {
             LazyVStack(spacing: 8) {
                 if !loaded {
-                    Text("Loading files…")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    if error == nil {
+                        Text("Loading files…")
+                            .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
+                    } else {
+                        HStack(spacing: 8) {
+                            Text("The file list couldn't load.")
+                                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                            Button("Try again") { Task { await reload() } }
+                                .buttonStyle(.plain).font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Theme.accent)
+                        }
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 12)
+                    }
                 } else if visible.isEmpty {
                     Text(files.isEmpty ? "No files yet. Add txt, md, pdf, docx, or html files."
                                        : "No files match the search.")

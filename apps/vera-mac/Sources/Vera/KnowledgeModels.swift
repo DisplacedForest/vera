@@ -149,6 +149,7 @@ enum KnowledgeGroundingStatus: Equatable, Sendable {
 
 enum KnowledgeGrounding {
     static let sourceURLMarker = "knowledge"
+    static let groundedSourceURLs: Set<String> = ["knowledge", "local"]
     static let numberingOffsetWithResearch = 20
 
     struct Assembly: Sendable {
@@ -225,7 +226,7 @@ struct KnowledgeClient: Sendable {
         guard (200..<300).contains(code) else {
             return code == 404 || code == 405 ? .unsupported(code) : .unreachable
         }
-        guard let arr = json?["collections"] as? [[String: Any]] else { return .unsupported(code) }
+        guard let arr = json?["collections"] as? [[String: Any]] else { return .unreachable }
         return .ok(arr.compactMap { KnowledgeCollection.parse($0) })
     }
 

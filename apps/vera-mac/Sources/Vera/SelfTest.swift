@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import AVFoundation
 
@@ -4135,6 +4136,47 @@ enum SelfTest {
                 print("SELFTEST ERROR: splice connected node guard"); exit(1)
             }
             print("  workflow splice OK (guards + edge replacement)")
+
+            let dragStore = PulseWorkflowStore.fixture()
+            dragStore.draft = dragStore.active
+            dragStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 60, y: 60))
+            guard let dragID = dragStore.selectedNodeID,
+                  dragStore.draft?.definition.edges.contains(where: { $0.from == dragID || $0.to == dragID }) == false else {
+                print("SELFTEST ERROR: drag fixture placement"); exit(1)
+            }
+            var dragPublishes = 0
+            let dragSink = dragStore.$draft.dropFirst().sink { _ in dragPublishes += 1 }
+            dragStore.completeNodeDrag(dragID, by: CGSize(width: 40, height: 20),
+                                       splicing: PulseWorkflowEdge(from: "triage", to: "gates"))
+            guard dragPublishes == 1,
+                  dragStore.draft?.definition.positions[dragID] == PulseWorkflowPoint(x: 130, y: 90),
+                  dragStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: dragID)) == true,
+                  dragStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: dragID, to: "gates")) == true,
+                  dragStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "gates")) == false else {
+                print("SELFTEST ERROR: single-publish splice drag"); exit(1)
+            }
+            dragSink.cancel()
+            let edgeStore = PulseWorkflowStore.fixture()
+            edgeStore.draft = edgeStore.active
+            let chosenEdge = PulseWorkflowEdge(from: "synthesis", to: "claim_audit")
+            edgeStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 197, y: 310), into: chosenEdge)
+            guard let pickedID = edgeStore.selectedNodeID,
+                  edgeStore.draft?.definition.edges.contains(chosenEdge) == false,
+                  edgeStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "synthesis", to: pickedID)) == true,
+                  edgeStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: pickedID, to: "claim_audit")) == true,
+                  edgeStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "gates")) == true else {
+                print("SELFTEST ERROR: authoritative insert edge"); exit(1)
+            }
+            let fallbackStore = PulseWorkflowStore.fixture()
+            fallbackStore.draft = fallbackStore.active
+            fallbackStore.placeNodeInDraft("flow.filter", at: CGPoint(x: 197, y: 310),
+                                           into: PulseWorkflowEdge(from: "ghost", to: "gates"))
+            guard let fallbackID = fallbackStore.selectedNodeID,
+                  fallbackStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: fallbackID)) == true,
+                  fallbackStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: fallbackID, to: "gates")) == true else {
+                print("SELFTEST ERROR: insert edge fallback"); exit(1)
+            }
+            print("  canvas insert OK (single publish + authoritative edge + fallback)")
 
             let runFixtureStore = PulseWorkflowStore.runFixture()
             guard runFixtureStore.mode == .run,

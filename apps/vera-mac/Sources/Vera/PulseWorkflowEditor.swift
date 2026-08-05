@@ -1,6 +1,10 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+extension UTType {
+    static let workflowPaletteNode = UTType(exportedAs: "app.vera.workflow-node")
+}
+
 struct PulseWorkflowNode: Identifiable, Hashable {
     var id: String
     var type: String
@@ -367,7 +371,7 @@ final class PulseWorkflowStore: ObservableObject {
         placeNodeInDraft(type, at: point)
     }
 
-    func placeNodeInDraft(_ type: String, at point: CGPoint) {
+    func placeNodeInDraft(_ type: String, at point: CGPoint, into requestedEdge: PulseWorkflowEdge? = nil) {
         guard var draft, let catalog, let spec = catalog.node(for: type) else { return }
         let position = PulseWorkflowPoint(x: max(90, point.x), y: max(70, point.y))
         let singleInstance = catalog.canonicalIndex(of: type) != nil
@@ -386,7 +390,9 @@ final class PulseWorkflowStore: ObservableObject {
         } ?? draft.definition.nodes.endIndex
         draft.definition.nodes.insert(node, at: index)
         draft.definition.positions[node.id] = position
-        if let edge = nearestWorkflowEdge(to: point, in: draft.definition) {
+        let edge = requestedEdge.flatMap { draft.definition.edges.contains($0) ? $0 : nil }
+            ?? nearestWorkflowEdge(to: point, in: draft.definition)
+        if let edge {
             draft.definition.edges.removeAll { $0 == edge }
             draft.definition.edges.append(PulseWorkflowEdge(from: edge.from, to: node.id))
             draft.definition.edges.append(PulseWorkflowEdge(from: node.id, to: edge.to))
@@ -426,11 +432,15 @@ final class PulseWorkflowStore: ObservableObject {
         mutateSelected { node in node.config[key] = value }
     }
 
-    func moveNode(_ id: String, by translation: CGSize) {
+    func completeNodeDrag(_ id: String, by translation: CGSize, splicing edge: PulseWorkflowEdge?) {
         guard var draft, var point = draft.definition.positions[id] else { return }
         point.x = max(75, point.x + translation.width)
         point.y = max(75, point.y + translation.height)
         draft.definition.positions[id] = point
+        if let edge, applySplice(of: id, into: edge, in: &draft.definition) {
+            let type = draft.definition.node(withID: id)?.type
+            note = "\(type.map { catalog?.label(for: $0) ?? $0 } ?? id) inserted into the path."
+        }
         self.draft = draft
     }
 
@@ -472,17 +482,23 @@ final class PulseWorkflowStore: ObservableObject {
     }
 
     func spliceNode(_ id: String, into edge: PulseWorkflowEdge) {
-        guard var draft,
-              let node = draft.definition.node(withID: id),
-              edge.from != id, edge.to != id,
-              draft.definition.edges.contains(edge),
-              !draft.definition.edges.contains(where: { $0.from == id || $0.to == id }) else { return }
-        draft.definition.edges.removeAll { $0 == edge }
-        draft.definition.edges.append(PulseWorkflowEdge(from: edge.from, to: id))
-        draft.definition.edges.append(PulseWorkflowEdge(from: id, to: edge.to))
-        draft.definition.normalizeEdgeOrder()
+        guard var draft, let node = draft.definition.node(withID: id),
+              applySplice(of: id, into: edge, in: &draft.definition) else { return }
         self.draft = draft
         note = "\(catalog?.label(for: node.type) ?? node.type) inserted into the path."
+    }
+
+    private func applySplice(of id: String, into edge: PulseWorkflowEdge,
+                             in definition: inout PulseWorkflowDefinition) -> Bool {
+        guard definition.node(withID: id) != nil,
+              edge.from != id, edge.to != id,
+              definition.edges.contains(edge),
+              !definition.edges.contains(where: { $0.from == id || $0.to == id }) else { return false }
+        definition.edges.removeAll { $0 == edge }
+        definition.edges.append(PulseWorkflowEdge(from: edge.from, to: id))
+        definition.edges.append(PulseWorkflowEdge(from: id, to: edge.to))
+        definition.normalizeEdgeOrder()
+        return true
     }
 
     func save() async {
@@ -710,7 +726,13 @@ struct PulseWorkflowPalette: View {
                 }
                 .onDrag {
                     store.paletteDragType = entry.type
-                    return NSItemProvider(object: entry.type as NSString)
+                    let provider = NSItemProvider(object: entry.type as NSString)
+                    provider.registerDataRepresentation(forTypeIdentifier: UTType.workflowPaletteNode.identifier,
+                                                        visibility: .ownProcess) { completion in
+                        completion(Data(entry.type.utf8), nil)
+                        return nil
+                    }
+                    return provider
                 } preview: {
                     WorkflowNodeCardPreview(spec: entry)
                 }
@@ -761,6 +783,7 @@ struct WorkflowInsertRequest: Equatable {
 final class WorkflowCanvasNav: ObservableObject {
     @Published var transform = WorkflowCanvasTransform()
     var viewportGlobal: CGRect = .zero
+    weak var window: NSWindow?
     private var monitor: Any?
 
     func startMonitoring() {
@@ -779,7 +802,8 @@ final class WorkflowCanvasNav: ObservableObject {
     }
 
     private func handle(_ event: NSEvent) -> Bool {
-        guard let window = event.window, let content = window.contentView else { return false }
+        guard let window = event.window, window === self.window,
+              let content = window.contentView else { return false }
         var point = content.convert(event.locationInWindow, from: nil)
         if !content.isFlipped { point.y = content.bounds.height - point.y }
         guard viewportGlobal.contains(point) else { return false }
@@ -957,13 +981,10 @@ struct PulseWorkflowEditor: View {
             .gesture(panGesture)
             .simultaneousGesture(magnifyGesture)
             .onContinuousHover { phase in handleHover(phase) }
-            .onDrop(of: [UTType.plainText], delegate: WorkflowCanvasDropDelegate(
+            .onDrop(of: [.workflowPaletteNode, .plainText], delegate: WorkflowCanvasDropDelegate(
                 update: { location in updateDropHighlight(location) },
-                exit: {
-                    spliceEdge = nil
-                    store.paletteDragType = nil
-                },
-                perform: { location, providers in performCanvasDrop(location, providers: providers) }))
+                exit: { spliceEdge = nil },
+                perform: { location, info in performCanvasDrop(location, info: info) }))
             .overlay(alignment: .topLeading) {
                 Label(store.isEditing ? "Drag nodes to arrange. Drag a port to connect. Drag empty space to pan."
                       : "Create a draft to move or connect nodes.", systemImage: "cursorarrow.motionlines")
@@ -983,6 +1004,7 @@ struct PulseWorkflowEditor: View {
                     .onAppear { nav.viewportGlobal = probe.frame(in: .global) }
                     .onChange(of: probe.frame(in: .global)) { _, frame in nav.viewportGlobal = frame }
             })
+            .background(WorkflowCanvasWindowReader { window in nav.window = window })
         }
         .background(Theme.bg)
     }
@@ -999,6 +1021,7 @@ struct PulseWorkflowEditor: View {
                                      selected: store.selectedNodeID == node.id,
                                      connecting: store.connectionSourceID == node.id,
                                      inputHighlighted: wireDrag?.targetID == node.id,
+                                     portHitDiameter: 2 * WorkflowCardGeometry.portHitRadius / nav.transform.scale,
                                      onInput: store.isEditing ? { store.completeConnection(to: node.id) } : nil,
                                      onOutput: store.isEditing ? { store.startConnection(from: node.id) } : nil,
                                      onOutputDragChanged: store.isEditing ? { location in updateWireDrag(from: node.id, viewportPoint: location) } : nil,
@@ -1102,11 +1125,7 @@ struct PulseWorkflowEditor: View {
             .onEnded { value in
                 let translation = CGSize(width: value.translation.width / nav.transform.scale,
                                          height: value.translation.height / nav.transform.scale)
-                store.moveNode(node.id, by: translation)
-                if let edge = spliceEdge, let definition = store.draft?.definition,
-                   isUnconnected(node.id, in: definition) {
-                    store.spliceNode(node.id, into: edge)
-                }
+                store.completeNodeDrag(node.id, by: translation, splicing: spliceEdge)
                 nodeDrag = nil
                 spliceEdge = nil
             }
@@ -1130,7 +1149,8 @@ struct PulseWorkflowEditor: View {
     private func updateWireDrag(from sourceID: String, viewportPoint: CGPoint) {
         guard let definition = store.displayed?.definition else { return }
         let point = nav.transform.toCanvas(viewportPoint)
-        let target = WorkflowCardGeometry.nearestInputPort(to: point, in: definition, excluding: sourceID)
+        let target = WorkflowCardGeometry.nearestInputPort(to: point, in: definition, excluding: sourceID,
+                                                           within: WorkflowCardGeometry.portHitRadius / nav.transform.scale)
         wireDrag = WorkflowWireDrag(sourceID: sourceID, point: point, targetID: target)
         hoverEdge = nil
     }
@@ -1140,7 +1160,8 @@ struct PulseWorkflowEditor: View {
         wireDrag = nil
         guard let definition = store.displayed?.definition else { return }
         let point = nav.transform.toCanvas(viewportPoint)
-        if let target = WorkflowCardGeometry.nearestInputPort(to: point, in: definition, excluding: drag.sourceID) {
+        if let target = WorkflowCardGeometry.nearestInputPort(to: point, in: definition, excluding: drag.sourceID,
+                                                              within: WorkflowCardGeometry.portHitRadius / nav.transform.scale) {
             store.connect(from: drag.sourceID, to: target)
         } else if let card = cardID(at: point, in: definition), card != drag.sourceID {
             store.connect(from: drag.sourceID, to: card)
@@ -1180,16 +1201,27 @@ struct PulseWorkflowEditor: View {
         spliceEdge = nearestWorkflowEdge(to: nav.transform.toCanvas(viewportPoint), in: definition)
     }
 
-    private func performCanvasDrop(_ viewportPoint: CGPoint, providers: [NSItemProvider]) -> Bool {
+    private func performCanvasDrop(_ viewportPoint: CGPoint, info: DropInfo) -> Bool {
         let point = nav.transform.toCanvas(viewportPoint)
         spliceEdge = nil
-        if let type = store.paletteDragType {
-            store.paletteDragType = nil
-            guard store.catalog?.node(for: type) != nil else { return false }
-            Task { await store.placeNode(type, at: point) }
+        if info.hasItemsConforming(to: [.workflowPaletteNode]) {
+            if let type = store.paletteDragType {
+                store.paletteDragType = nil
+                guard store.catalog?.node(for: type) != nil else { return false }
+                Task { await store.placeNode(type, at: point) }
+                return true
+            }
+            guard let provider = info.itemProviders(for: [.workflowPaletteNode]).first else { return false }
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.workflowPaletteNode.identifier) { data, _ in
+                guard let data, let type = String(data: data, encoding: .utf8) else { return }
+                Task { @MainActor in
+                    guard store.catalog?.node(for: type) != nil else { return }
+                    await store.placeNode(type, at: point)
+                }
+            }
             return true
         }
-        guard let provider = providers.first else { return false }
+        guard let provider = info.itemProviders(for: [.plainText]).first else { return false }
         provider.loadObject(ofClass: NSString.self) { object, _ in
             guard let type = object as? String else { return }
             Task { @MainActor in
@@ -1283,7 +1315,7 @@ struct PulseWorkflowEditor: View {
         insertRequest = nil
         hoverEdge = nil
         guard store.isEditing else { return }
-        store.placeNodeInDraft(type, at: request.point)
+        store.placeNodeInDraft(type, at: request.point, into: request.edge)
         if let source = request.connectFrom, let placed = store.selectedNodeID, placed != source {
             store.connect(from: source, to: placed)
         }
@@ -1586,6 +1618,7 @@ struct WorkflowNodeCard: View {
     var selected: Bool
     var connecting: Bool = false
     var inputHighlighted: Bool = false
+    var portHitDiameter: CGFloat = 2 * WorkflowCardGeometry.portHitRadius
     var onInput: (() -> Void)? = nil
     var onOutput: (() -> Void)? = nil
     var onOutputDragChanged: ((CGPoint) -> Void)? = nil
@@ -1609,13 +1642,13 @@ struct WorkflowNodeCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(connecting || selected ? Theme.accent : Theme.hairline, lineWidth: connecting || selected ? 1.5 : 1))
         .shadow(color: Theme.bg.opacity(0.35), radius: selected ? 8 : 3, y: 2)
-        .overlay(alignment: .leading) { inputPort.offset(x: -4) }
-        .overlay(alignment: .trailing) { outputPort.offset(x: 4) }
+        .overlay(alignment: .leading) { inputPort.offset(x: onInput != nil ? -portHitDiameter / 2 : -4) }
+        .overlay(alignment: .trailing) { outputPort.offset(x: onOutput != nil ? portHitDiameter / 2 : 4) }
     }
 
     @ViewBuilder private var inputPort: some View {
         if let onInput {
-            WorkflowEditorPort(highlighted: inputHighlighted, onTap: onInput)
+            WorkflowEditorPort(highlighted: inputHighlighted, hitDiameter: portHitDiameter, onTap: onInput)
         } else {
             PortDot()
         }
@@ -1623,7 +1656,7 @@ struct WorkflowNodeCard: View {
 
     @ViewBuilder private var outputPort: some View {
         if let onOutput {
-            WorkflowEditorPort(highlighted: connecting, onTap: onOutput,
+            WorkflowEditorPort(highlighted: connecting, hitDiameter: portHitDiameter, onTap: onOutput,
                                dragChanged: onOutputDragChanged, dragEnded: onOutputDragEnded)
         } else {
             PortDot()
@@ -1633,6 +1666,7 @@ struct WorkflowNodeCard: View {
 
 struct WorkflowEditorPort: View {
     var highlighted: Bool
+    var hitDiameter: CGFloat
     var onTap: () -> Void
     var dragChanged: ((CGPoint) -> Void)? = nil
     var dragEnded: ((CGPoint) -> Void)? = nil
@@ -1645,8 +1679,7 @@ struct WorkflowEditorPort: View {
             .overlay(Circle().stroke(emphasized ? Theme.accent : .white.opacity(0.22),
                                      lineWidth: emphasized ? 1.5 : 1))
             .frame(width: emphasized ? 11 : 7, height: emphasized ? 11 : 7)
-            .frame(width: 2 * WorkflowCardGeometry.portHitRadius,
-                   height: 2 * WorkflowCardGeometry.portHitRadius)
+            .frame(width: hitDiameter, height: hitDiameter)
             .contentShape(Circle())
             .onHover { hovering = $0 }
             .gesture(dragChanged != nil && dragEnded != nil
@@ -1686,10 +1719,10 @@ struct WorkflowCanvasGrid: View {
 struct WorkflowCanvasDropDelegate: DropDelegate {
     let update: (CGPoint) -> Void
     let exit: () -> Void
-    let perform: (CGPoint, [NSItemProvider]) -> Bool
+    let perform: (CGPoint, DropInfo) -> Bool
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.plainText])
+        info.hasItemsConforming(to: [.workflowPaletteNode, .plainText])
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -1702,8 +1735,29 @@ struct WorkflowCanvasDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        perform(info.location, info.itemProviders(for: [.plainText]))
+        perform(info.location, info)
     }
+}
+
+private final class WorkflowCanvasWindowProbe: NSView {
+    var onWindow: ((NSWindow?) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindow?(window)
+    }
+}
+
+struct WorkflowCanvasWindowReader: NSViewRepresentable {
+    var onWindow: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = WorkflowCanvasWindowProbe()
+        view.onWindow = onWindow
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 struct WorkflowNodeCardPreview: View {

@@ -250,12 +250,11 @@ def mirror_markdown():
         with open(MEMORY_MD, "w") as f:
             f.write("\n".join(out) + "\n")
         # git snapshot (init once; identity inline so no global config needed)
-        if not os.path.isdir(os.path.join(DIR, ".git")):
-            subprocess.run(["git", "-C", DIR, "init", "-q"], capture_output=True, timeout=20)
-        subprocess.run(["git", "-C", DIR, "add", "MEMORY.md"], capture_output=True, timeout=20)
-        subprocess.run(["git", "-C", DIR, "-c", "user.email=vera@local", "-c", "user.name=Vera",
-                        "commit", "-q", "-m", f"memory snapshot {int(time.time())}"],
-                       capture_output=True, timeout=20)
+        if os.path.isdir(os.path.join(DIR, ".git")):
+            subprocess.run(["git", "-C", DIR, "add", "MEMORY.md"], capture_output=True, timeout=20)
+            subprocess.run(["git", "-C", DIR, "-c", "user.email=vera@local", "-c", "user.name=Vera",
+                            "commit", "-q", "-m", f"memory snapshot {int(time.time())}"],
+                           capture_output=True, timeout=20)
         return True
     except Exception:
         return False

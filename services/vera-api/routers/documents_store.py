@@ -155,6 +155,9 @@ def _extract_html(data: bytes) -> str:
 def _extract_docx(data: bytes) -> str:
     ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     with zipfile.ZipFile(io.BytesIO(data)) as z:
+        if z.getinfo("word/document.xml").file_size > file_cap():
+            raise ValueError("docx document body expands beyond the per-file cap "
+                             "(DOCUMENTS_MAX_FILE_BYTES)")
         root = ElementTree.fromstring(z.read("word/document.xml"))
     paras = []
     for p in root.iter(f"{ns}p"):
@@ -444,17 +447,23 @@ async def index_file(fid: str) -> dict:
         return {"status": "unconfigured",
                 "detail": "no embeddings endpoint: enable the Embeddings integration or set "
                           "VERA_EMBED_URL"}
-    gen = row["generation"]
     sha = row["sha256"]
     fingerprint = embed_fingerprint()
     stale_claim = int(os.environ.get("DOCUMENTS_INDEX_STALE_SECS", "").strip() or 900)
+    gen = row["generation"] + 1
     with _conn() as c:
-        cur = c.execute("UPDATE file SET state='indexing', error=NULL, updated_at=? "
+        cur = c.execute("UPDATE file SET state='indexing', error=NULL, generation=?, updated_at=? "
                         "WHERE id=? AND generation=? AND (state != 'indexing' OR updated_at < ?)",
-                        (_now(), fid, gen, _now() - stale_claim))
+                        (gen, _now(), fid, row["generation"], _now() - stale_claim))
         if cur.rowcount == 0:
             return {"status": "superseded"}
     try:
+        size = os.path.getsize(_source_path(fid))
+        if size != row["size"]:
+            raise ValueError("source on disk does not match its recorded size; upload it again")
+        if size > file_cap():
+            raise ValueError(f"source exceeds the {file_cap()} byte per-file cap "
+                             f"(DOCUMENTS_MAX_FILE_BYTES)")
         data = read_source(fid)
         if hashlib.sha256(data).hexdigest() != sha:
             raise ValueError("source on disk does not match its recorded hash; upload it again")

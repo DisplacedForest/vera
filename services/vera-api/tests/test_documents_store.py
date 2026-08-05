@@ -284,7 +284,36 @@ def test_source_tamper_is_detected(docs_store, fake_embeddings):
     with open(docs_store._source_path(f["id"]), "wb") as fh:
         fh.write(b"alpha tampered")
     res = asyncio.run(docs_store.index_file(f["id"]))
-    assert res["status"] == "failed" and "hash" in res["error"]
+    assert res["status"] == "failed" and "does not match" in res["error"]
+
+
+def test_takeover_gives_the_new_attempt_its_own_generation(docs_store, fake_embeddings):
+    col = docs_store.create_collection("Takeover")
+    f = docs_store.add_file(col["id"], "a.txt", b"alpha")
+    with docs_store._conn() as c:
+        c.execute("UPDATE file SET state='indexing', generation=1, updated_at=? WHERE id=?",
+                  (docs_store._now() - 3600, f["id"]))
+    res = asyncio.run(docs_store.index_file(f["id"]))
+    assert res["status"] == "ready"
+    with docs_store._conn() as c:
+        cur = c.execute("UPDATE file SET state='failed', error='late loser' "
+                        "WHERE id=? AND generation=1 AND state='indexing'", (f["id"],))
+        assert cur.rowcount == 0
+    assert docs_store.get_file(f["id"])["state"] == "ready"
+
+
+def test_index_refuses_oversized_source_before_reading(docs_store, fake_embeddings, monkeypatch):
+    col = docs_store.create_collection("Oversize")
+    f = docs_store.add_file(col["id"], "a.txt", b"12345")
+    monkeypatch.setenv("DOCUMENTS_MAX_FILE_BYTES", "4")
+    res = asyncio.run(docs_store.index_file(f["id"]))
+    assert res["status"] == "failed" and "DOCUMENTS_MAX_FILE_BYTES" in res["error"]
+
+
+def test_docx_expansion_is_capped(docs_store, monkeypatch):
+    monkeypatch.setenv("DOCUMENTS_MAX_FILE_BYTES", "120")
+    with pytest.raises(ValueError, match="expands"):
+        docs_store.extract_text("a.docx", _docx("x" * 500))
 
 
 def test_query_scopes_to_requested_collections(docs_store, fake_embeddings):

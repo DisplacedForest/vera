@@ -51,7 +51,7 @@ for root, dirs, files in os.walk(src, onerror=lambda e: die(str(e))):
 if count == 0:
     die("no databases found under /data")
 '; then
-    docker exec "$CONTAINER" tar czf - --exclude="*.db" --exclude="*.db-wal" --exclude="*.db-shm" -C / data > "$DEST/vera-data.tgz"
+    docker exec "$CONTAINER" tar czf - --exclude="*.db" --exclude="*.db-wal" --exclude="*.db-shm" --exclude="*.db-journal" -C /data . > "$DEST/vera-data.tgz"
     rc=$?
     if [ "$rc" -le 1 ] && [ -s "$DEST/vera-data.tgz" ]; then
       log "OK   vera-data.tgz ($(du -h "$DEST/vera-data.tgz" | cut -f1))"
@@ -96,8 +96,8 @@ tar czf "$DEST/n8n.tgz" -C "$APP" n8n 2>/dev/null && log "OK   n8n.tgz ($(du -h 
 # Manifest + checksums (a backup you can't verify isn't a backup).
 ( cd "$DEST" && sha256sum -- * > SHA256SUMS 2>/dev/null )
 echo "vera-backup $STAMP  host=$(hostname)  status=$([ $fail -eq 0 ] && echo OK || echo PARTIAL)" > "$DEST/MANIFEST"
-echo "vera-data.tgz  source=$CONTAINER:/data  $([ -s "$DEST/vera-data.tgz" ] && echo present || echo missing)" >> "$DEST/MANIFEST"
-echo "vera-data-dbs.tgz  source=$CONTAINER:/data sqlite snapshots, extract into /data after vera-data.tgz  $([ -s "$DEST/vera-data-dbs.tgz" ] && echo present || echo missing)" >> "$DEST/MANIFEST"
+echo "vera-data.tgz  source=$CONTAINER:/data non-database tree, extract with tar -C /data  $([ -s "$DEST/vera-data.tgz" ] && echo present || echo missing)" >> "$DEST/MANIFEST"
+echo "vera-data-dbs.tgz  source=$CONTAINER:/data sqlite snapshots, extract with tar -C /data after vera-data.tgz  $([ -s "$DEST/vera-data-dbs.tgz" ] && echo present || echo missing)" >> "$DEST/MANIFEST"
 log "manifest + checksums written"
 
 # Retention: keep the newest $KEEP, prune older.

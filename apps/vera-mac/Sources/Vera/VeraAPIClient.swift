@@ -164,17 +164,6 @@ struct VeraAPIClient: Sendable, PulseFeedProviding {
         }.sorted { $0.order < $1.order }
     }
 
-    func fetchJournal() async -> ([JournalEntry], [JournalArchiveMonth]) {
-        guard let (data, _) = try? await URLSession.shared.data(from: url("/journal")),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return ([], []) }
-        let entries = (obj["entries"] as? [[String: Any]] ?? []).compactMap(JournalEntry.parse)
-        let archive = (obj["archive"] as? [[String: Any]] ?? []).compactMap { m -> JournalArchiveMonth? in
-            guard let month = m["month"] as? String, let text = m["text"] as? String else { return nil }
-            return JournalArchiveMonth(id: month, text: text)
-        }
-        return (entries, archive)
-    }
-
     func markPulseRead(id: String) async {
         _ = await post("/pulse/read", ["card_id": id])
     }

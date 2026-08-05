@@ -133,16 +133,6 @@ def test_import_lands_disabled():
     assert pulse_veins.is_enabled("rivergauge") is False
 
 
-def test_journal_field_round_trips():
-    vein_defs.save_custom(_watcher(journal=True))
-    _, payload = _export("rivergauge")
-    assert payload["journal"] is True
-    vein_defs.delete_custom("rivergauge")
-    vein_store.remove("rivergauge")
-    asyncio.run(pulse_veins.import_vein(payload))
-    assert vein_defs.customs()["rivergauge"]["journal"] is True
-
-
 def test_import_shipped_kind_409(monkeypatch, tmp_path):
     _ship(monkeypatch, tmp_path, _watcher(kind="tanks"))
     with pytest.raises(HTTPException) as e:

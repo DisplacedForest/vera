@@ -462,7 +462,6 @@ struct NativeMemoryShotSurface: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack { VeraMark(size: 20); Text("Vera").font(.system(size: 15, weight: .semibold)) }
                 Label("Pulse", systemImage: "newspaper")
-                Label("Journal", systemImage: "book.closed")
                 Label("Memory", systemImage: "tray.full").foregroundStyle(Theme.accent)
                 Divider().overlay(Theme.hairline)
                 Text("CHATS").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.textSecondary)

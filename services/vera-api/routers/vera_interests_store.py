@@ -28,9 +28,7 @@ def _conn():
 
 
 # Extra columns added after the original schema shipped — created on existing DBs via ALTER (below).
-# Legacy watch columns: standing watches now live in Vera's journal (routers/journal.py); these
-# columns remain only so `active()` works on every store vintage and so the journal's one-time
-# migration can read any rows that predate it.
+# Legacy watch columns: these columns remain only so `active()` works on every store vintage.
 _WATCH_COLUMNS = [
     ("is_watch", "INTEGER DEFAULT 0"),   # 1 = legacy watch row (excluded from the curiosity-explore set)
     ("watch_query", "TEXT"),

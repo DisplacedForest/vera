@@ -311,7 +311,6 @@ enum Shot {
             let section: AppSection
             switch view {
             case "pulse": section = .pulse
-            case "journal": section = .journal; store.journalEntries = JournalEntry.mock()
             case "agentic": section = .agentic
             default: section = .chat
             }

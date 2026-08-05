@@ -37,20 +37,14 @@ _DORMANT = {"dormant", "resolved"}
 def _is_live(node, now):
     """Whether a node earns a scout this run, by graph math alone. Types in EXCLUDED_TYPES
     (people are conversation context, not searchable topics) and dormant or resolved nodes
-    are excluded; otherwise a node qualifies on its type's open/due condition (watch/project/
-    thread) or, for any other type, on decayed engagement clearing ENGAGEMENT_FLOOR."""
-    if node.get("type") in EXCLUDED_TYPES:
+    are excluded; otherwise a node qualifies on its type's open condition (project/thread) or,
+    for any other type, on decayed engagement clearing ENGAGEMENT_FLOOR."""
+    if node.get("type") == "watch" or node.get("type") in EXCLUDED_TYPES:
         return False
     state = node.get("state")
     if state in _DORMANT:
         return False
     ntype = node.get("type")
-    if ntype == "watch":
-        nc = node.get("next_check")
-        return state == "active" and (nc is None or nc <= now)
-    # A project/thread must be open AND recently engaged: an abandoned years-old "open project"
-    # has decayed below the floor and is not worth scouting. Watches alone are engagement-
-    # independent (an explicit check schedule). Everything else gates on engagement.
     if ntype == "project" and state not in (None, "active"):
         return False
     if ntype == "thread" and state != "open":

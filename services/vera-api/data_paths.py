@@ -25,5 +25,4 @@ STORE_PATHS = {
     "PROFILE_GRAPH_DB_PATH": "profile_graph/store.db",
     "EXTRACT_DB_PATH": "extract/cursors.db",
     "LEARN_DB_PATH": "learn/store.db",
-    "VERA_JOURNAL_PATH": "journal/JOURNAL.md",
 }

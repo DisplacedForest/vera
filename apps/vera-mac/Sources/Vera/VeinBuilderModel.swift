@@ -29,7 +29,7 @@ struct DraftOptionGroup: Identifiable {
 }
 
 struct VeinDraft {
-    static let carriedKeys = ["standing", "journal", "requires", "order"]
+    static let carriedKeys = ["standing", "requires", "order"]
 
     var kind: String
     var label: String

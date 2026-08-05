@@ -1,14 +1,14 @@
 import Foundation
 
-/// App surfaces the sidebar carries. `chat` and `agentic` are the top modality tabs; `pulse`,
-/// `journal`, and `memory` are nav rows under the Chat tab. Veins lives inside Pulse, and
+/// App surfaces the sidebar carries. `chat` and `agentic` are the top modality tabs; `pulse`
+/// and `memory` are nav rows under the Chat tab. Veins lives inside Pulse, and
 /// Plugins/MCP live inside Settings, so none of those three are sections.
 enum AppSection: String, CaseIterable, Identifiable {
-    case chat, pulse, journal, memory, knowledge, agentic
+    case chat, pulse, memory, knowledge, agentic
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .chat: "Chat"; case .pulse: "Pulse"; case .journal: "Journal"
+        case .chat: "Chat"; case .pulse: "Pulse"
         case .memory: "Memory"; case .knowledge: "Knowledge"; case .agentic: "Agentic"
         }
     }
@@ -16,7 +16,6 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .chat: "message"
         case .pulse: "newspaper"
-        case .journal: "book.closed"
         case .memory: "tray.full"
         case .knowledge: "books.vertical"
         case .agentic: "slider.horizontal.3"

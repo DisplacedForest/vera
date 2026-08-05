@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The sidebar's selectable destinations — nav surfaces, one conversation, or an Agentic pane.
 enum SidebarItem: Hashable {
-    case pulse, journal, memory, knowledge
+    case pulse, memory, knowledge
     case convo(String)
     case canvas, activity
 }
@@ -32,7 +32,6 @@ struct ContentView: View {
                         switch store.section {
                         case .chat: ChatPane()
                         case .pulse: PulseView()
-                        case .journal: JournalView()
                         case .memory: MemoryView()
                         case .knowledge: KnowledgeView()
                         case .agentic: AgenticView(pulseWorkflow: pulseWorkflow)
@@ -95,7 +94,6 @@ private struct Sidebar: View {
             get: {
                 switch store.section {
                 case .pulse: return .pulse
-                case .journal: return .journal
                 case .memory: return .memory
                 case .knowledge: return .knowledge
                 case .agentic: return store.agenticPane == .canvas ? .canvas : .activity
@@ -105,7 +103,6 @@ private struct Sidebar: View {
             set: { item in
                 switch item {
                 case .pulse: store.goToPulse()
-                case .journal: store.section = .journal
                 case .memory: store.section = .memory
                 case .knowledge: store.section = .knowledge
                 case .canvas: store.section = .agentic; store.agenticPane = .canvas; store.agenticFlowID = nil
@@ -159,7 +156,6 @@ private struct Sidebar: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                         .simultaneousGesture(TapGesture().onEnded { store.goToPulse() })
-                    Label("Journal", systemImage: "book.closed").tag(SidebarItem.journal)
                     Label("Memory", systemImage: "tray.full").tag(SidebarItem.memory)
                     Label("Knowledge", systemImage: "books.vertical").tag(SidebarItem.knowledge)
                 }

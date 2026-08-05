@@ -574,39 +574,24 @@ enum NativeCapabilityTools {
         """,
         """
         {
-          "name": "journal_read",
-          "title": "Read the journal",
-          "description": "Read standing journal entries. Pass months as a number of months of history to include, written as a string.",
+          "name": "recurring_watch",
+          "title": "Set up a recurring watch",
+          "description": "Set up a recurring watch when the user explicitly asks in this conversation to keep an eye on something over time. Two steps. First call with mode \\"draft\\" and the user's request in plain language, then present the returned summary in your reply and ask whether to go ahead. Only after the user clearly agrees in this conversation, call again with mode \\"save\\" and draft_json set to the exact draft object the draft call returned. Never call save without that explicit yes, and never invent or edit the draft yourself.",
           "parameters": {
             "type": "object",
             "properties": {
-              "months": {"type": "string", "description": "Months of history to include, for example \\"3\\""}
+              "mode": {"type": "string", "description": "\\"draft\\" to draft a watch from the request, \\"save\\" to save a draft the user agreed to"},
+              "request": {"type": "string", "description": "Plain-language description of what to watch, required for draft"},
+              "draft_json": {"type": "string", "description": "The draft object from the draft step as a JSON string, required for save"}
             },
-            "required": [],
+            "required": ["mode"],
             "additionalProperties": false
           },
-          "endpoint": "/journal",
-          "method": "GET",
-          "confirmation": "none"
-        }
-        """,
-        """
-        {
-          "name": "journal_commit",
-          "title": "Commit a journal entry",
-          "description": "Record a standing commitment in the journal. Use this only for something meant to persist beyond this conversation.",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "text": {"type": "string", "description": "The commitment to record"},
-              "origin": {"type": "string", "description": "Where the commitment came from"}
-            },
-            "required": ["text"],
-            "additionalProperties": false
-          },
-          "endpoint": "/journal/commit",
+          "json_fields": {"draft_json": "draft"},
+          "endpoint": "/pulse/veins/author",
           "method": "POST",
-          "confirmation": "required"
+          "timeout_s": 60,
+          "confirmation": "none"
         }
         """,
     ]

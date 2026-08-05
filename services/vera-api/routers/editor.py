@@ -1,20 +1,15 @@
 """Editor Agent — deep-research synthesis support for the Pulse pipeline's final stage.
 
 Holds the Editor's deterministic, testable logic: a date-aware staleness check that the claim
-auditor consults, cross-domain link gathering from the Profile Graph, the Analyst-survivor to
-research-topic mapping, and the journal-as-view rendering plus its resolve/fold graph ops. The
-heavy LLM work (deep research, first-person synthesis) stays in pulse.py's `research_topic`;
-this module supplies the math and graph reads around it.
+auditor consults, cross-domain link gathering from the Profile Graph, and the Analyst-survivor
+to research-topic mapping. The heavy LLM work (deep research, first-person synthesis) stays in
+pulse.py's `research_topic`; this module supplies the math and graph reads around it.
 """
-import logging
 import os
 import re
-import time
 from datetime import datetime, timezone
 
 from . import profile_graph_store as pg
-
-log = logging.getLogger(__name__)
 
 
 def _envf(name, default):
@@ -27,7 +22,6 @@ def _envf(name, default):
 STALE_CLAIM_DAYS = _envf("PULSE_STALE_CLAIM_DAYS", "120")   # a season; older sourcing fails a current claim
 LINK_ENGAGEMENT_FLOOR = _envf("PULSE_LINK_ENGAGEMENT_FLOOR", "0.5")  # an active neighbour worth surfacing
 LINK_LIMIT = int(_envf("PULSE_LINK_LIMIT", "4"))
-JOURNAL_ENGAGEMENT_FLOOR = _envf("JOURNAL_ENGAGEMENT_FLOOR", "0.5")  # a self-directed project worth a journal slot
 
 
 # --------------------------------------------------------------------------- date-aware staleness
@@ -145,135 +139,3 @@ def survivors_to_topics(chosen):
                        "interest": interest, "seed_node_id": seed, "url": c.get("url"),
                        "scores": c.get("scores")})
     return topics
-
-
-# --------------------------------------------------------------------------- journal-as-view
-
-_VIEW_TYPES = ("watch", "project")
-_DORMANT = {"dormant"}
-
-
-def _slug(heading):
-    return re.sub(r"[^a-z0-9]+", "-", (heading or "").lower()).strip("-") or "entry"
-
-
-def _origin(node):
-    """A node's journal origin ('requested' when the owner asked for the watch, else 'self'),
-    read from the marker fact that `author_watch` stamps."""
-    for f in node.get("facts") or []:
-        if isinstance(f, dict) and f.get("source") == "journal:origin":
-            return "requested" if str(f.get("text", "")).lower().startswith("request") else "self"
-    return "self"
-
-
-def _entry_text(node):
-    """One journal entry rendered from a node: the `## heading` the Swift view strips, then the
-    body it shows (origin, resolve condition, the durable facts, and the next-check date)."""
-    lines = [f"## {node['label']}",
-             f"Origin: {'you asked' if _origin(node) == 'requested' else 'self-directed'}"]
-    if (node.get("resolve_condition") or "").strip():
-        lines.append(f"Resolves when: {node['resolve_condition']}")
-    for f in (node.get("facts") or [])[:8]:
-        t = f.get("text") if isinstance(f, dict) else str(f)
-        if t:
-            lines.append(f"- {t}")
-    nc = node.get("next_check")
-    if nc:
-        lines.append(f"Next check: {datetime.fromtimestamp(nc, timezone.utc).strftime('%Y-%m-%d')}")
-    return "\n".join(lines)
-
-
-def _archive(resolved_nodes):
-    """Resolved watch/project nodes grouped into cold-storage months by when they resolved."""
-    by_month = {}
-    for n in resolved_nodes:
-        month = datetime.fromtimestamp(n.get("updated_at") or 0, timezone.utc).strftime("%Y-%m")
-        by_month.setdefault(month, []).append(_entry_text(n))
-    return [{"month": m, "text": "\n\n".join(by_month[m])} for m in sorted(by_month, reverse=True)]
-
-
-def _in_active_journal(node, now):
-    """Whether a non-resolved, non-dormant node belongs in the active journal: a watch always
-    does (a deliberate standing commitment); a project does only while its decayed engagement
-    clears JOURNAL_ENGAGEMENT_FLOOR."""
-    if node.get("type") == "watch":
-        return True
-    return pg.engagement_now(node, now) >= JOURNAL_ENGAGEMENT_FLOOR
-
-
-def journal_view(now=None):
-    """The journal rendered from the Profile Graph's watch/project nodes — the node is the
-    source of truth, the document is a view. Active nodes become entries (never-checked first,
-    then soonest due); resolved nodes go to the archive. Returns the Swift contract:
-    `{ok, entries:[{heading, slug, text, next_check, origin}], raw, archive}`."""
-    now = int(time.time()) if now is None else now
-    active, resolved = [], []
-    for t in _VIEW_TYPES:
-        for n in pg.all_nodes(type=t):
-            st = n.get("state")
-            if st == "resolved":
-                resolved.append(n)
-            elif st not in _DORMANT and _in_active_journal(n, now):
-                active.append(n)
-    active.sort(key=lambda n: (n.get("next_check") is not None, n.get("next_check") or 0))
-    entries = [{"heading": n["label"], "slug": _slug(n["label"]), "text": _entry_text(n),
-                "next_check": n.get("next_check"), "origin": _origin(n)} for n in active]
-    raw = "# Journal\n\n" + "\n\n".join(e["text"] for e in entries)
-    return {"ok": True, "entries": entries, "raw": raw, "archive": _archive(resolved)}
-
-
-def _condition_satisfied(node):
-    """Whether a watch's resolve condition has been observed met — recorded as a fact whose
-    source begins `resolution` (written by the extraction/feedback path, not authored prose)."""
-    return any(isinstance(f, dict) and str(f.get("source", "")).startswith("resolution")
-               for f in node.get("facts") or [])
-
-
-def resolve_due(now=None):
-    """Resolve watch nodes by a deterministic state transition: a watch flips to `resolved`
-    only when its `resolve_condition` is set, its `next_check` date has passed, AND the
-    condition has been observed met. No LLM recheck — the immortal-watch failure cannot recur.
-    Returns the ids resolved this pass."""
-    import time
-    now = int(time.time()) if now is None else now
-    resolved = []
-    for n in pg.all_nodes(type="watch"):
-        if n.get("state") in ("resolved", "dormant"):
-            continue
-        if not (n.get("resolve_condition") or "").strip():
-            continue
-        nc = n.get("next_check")
-        if nc is None or nc > now:
-            continue
-        if not _condition_satisfied(n):
-            continue
-        pg.upsert_node(id=n["id"], type="watch", label=n["label"], aliases=n["aliases"],
-                       facts=n["facts"], engagement=n["engagement"], last_engaged=n["last_engaged"],
-                       state="resolved", resolve_condition=n["resolve_condition"],
-                       next_check=n["next_check"], confidence=n["confidence"], embedding=n["embedding"])
-        resolved.append(n["id"])
-    return resolved
-
-
-async def author_watch(label, *, facts=None, resolve_condition=None, next_check=None,
-                       origin="self", embedding=None, now=None):
-    """Land a standing commitment as a watch node, the graph write path that replaces authored
-    prose. Folding is the store's cosine dedup-merge — two unrelated situations stay two nodes,
-    so the runaway-accretion failure cannot recur. Returns the node id."""
-    import time
-    now = int(time.time()) if now is None else now
-    today = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d")
-    fl = []
-    for f in facts or []:
-        text = f.get("text") if isinstance(f, dict) else f
-        if not (isinstance(text, str) and text.strip()):
-            continue
-        if future_dated(text, today):
-            log.warning("dropped future-dated journal material for %r: %s", label, text.strip()[:120])
-            continue
-        fl.append(f if isinstance(f, dict) else pg.make_fact(text.strip(), source="journal:material", observed_at=now))
-    fl.append(pg.make_fact(origin, source="journal:origin", observed_at=now))
-    emb = embedding if embedding is not None else await pg.embed(label)
-    return pg.merge_or_create(type="watch", label=label, embedding=emb, facts=fl, now=now,
-                              state="active", resolve_condition=resolve_condition,
-                              next_check=next_check)

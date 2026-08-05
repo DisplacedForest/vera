@@ -2527,10 +2527,9 @@ enum SelfTest {
             }
             let catalog = NativeCapabilityTools.catalog(directory: root, reservedNames: reserved)
             let names = catalog.declarations.map(\.name)
-            guard names.prefix(5) == [
-                "actions_registry", "propose_action", "author_skill",
-                "journal_read", "journal_commit",
-            ], names.dropFirst(5) == ["inventory_lookup", "inventory_record", "archived_tool"] else {
+            guard names.prefix(4) == [
+                "actions_registry", "propose_action", "author_skill", "recurring_watch",
+            ], names.dropFirst(4) == ["inventory_lookup", "inventory_record", "archived_tool"] else {
                 print("SELFTEST ERROR: capability tool declaration order \(names)"); exit(1)
             }
             let failures = Dictionary(
@@ -2550,20 +2549,21 @@ enum SelfTest {
 
             let bundled = NativeCapabilityTools.bundled
             let propose = bundled.first { $0.name == "propose_action" }
-            let journalRead = bundled.first { $0.name == "journal_read" }
-            guard bundled.count == 5,
+            let watch = bundled.first { $0.name == "recurring_watch" }
+            guard bundled.count == 4,
                   bundled.first(where: { $0.name == "actions_registry" })?.method == .get,
                   bundled.first(where: { $0.name == "actions_registry" })?.properties.isEmpty == true,
                   propose?.method == .post,
                   propose?.confirmation == NativeToolConfirmation.none,
                   propose?.jsonFields == ["args_json": "args"],
                   propose?.required == ["body", "title", "verb"],
-                  journalRead?.method == .get,
-                  journalRead?.properties.map(\.name) == ["months"],
-                  journalRead?.properties.first?.type == .string,
-                  journalRead?.required.isEmpty == true,
                   bundled.first(where: { $0.name == "author_skill" })?.confirmation == .required,
-                  bundled.first(where: { $0.name == "journal_commit" })?.confirmation == .required,
+                  watch?.method == .post,
+                  watch?.confirmation == NativeToolConfirmation.none,
+                  watch?.jsonFields == ["draft_json": "draft"],
+                  watch?.required == ["mode"],
+                  watch?.timeoutSeconds == 60,
+                  watch?.endpoint == "/pulse/veins/author",
                   bundled.allSatisfy(\.needsAPIBase) else {
                 print("SELFTEST ERROR: bundled capability tool shapes"); exit(1)
             }
@@ -2624,18 +2624,18 @@ enum SelfTest {
                 }
             }
 
-            let oversized = String(repeating: "a", count: 40_000)
-            client.respond("/journal", status: 200, body: oversized)
-            guard let journal = byName["journal_read"] else {
-                print("SELFTEST ERROR: bundled journal read missing"); exit(1)
+            guard let registryTool = byName["actions_registry"] else {
+                print("SELFTEST ERROR: bundled actions registry missing"); exit(1)
             }
-            let capped = try await journal.execute(journal.validatedArguments("{\"months\":\"3\"}"))
+            let oversized = String(repeating: "a", count: 40_000)
+            client.respond("/actions/registry", status: 200, body: oversized)
+            let capped = try await registryTool.execute(registryTool.validatedArguments("{}"))
             guard case .object(let cappedFields) = capped,
                   cappedFields["text"] != nil,
                   cappedFields["truncated"] == .bool(true),
                   try NativeToolLoop.serializedResult(capped).utf8.count
                       <= NativeCapabilityTools.responseByteCap,
-                  client.calls.last?.url == "https://api.example/journal?months=3" else {
+                  client.calls.last?.url == "https://api.example/actions/registry" else {
                 print("SELFTEST ERROR: capability response size cap"); exit(1)
             }
 
@@ -2643,8 +2643,8 @@ enum SelfTest {
             guard escapable.utf8.count < NativeCapabilityTools.responseByteCap else {
                 print("SELFTEST ERROR: escapable fixture is not under the raw cap"); exit(1)
             }
-            client.respond("/journal", status: 200, body: escapable)
-            let escaped = try await journal.execute(journal.validatedArguments("{\"months\":\"1\"}"))
+            client.respond("/actions/registry", status: 200, body: escapable)
+            let escaped = try await registryTool.execute(registryTool.validatedArguments("{}"))
             let escapedPayload = try NativeToolLoop.serializedResult(escaped)
             guard case .object(let escapedFields) = escaped,
                   case .string(let escapedText)? = escapedFields["text"],
@@ -2659,9 +2659,6 @@ enum SelfTest {
                 print("SELFTEST ERROR: near-cap fixture is not under the raw cap"); exit(1)
             }
             client.respond("/actions/registry", status: 200, body: nearCap)
-            guard let registryTool = byName["actions_registry"] else {
-                print("SELFTEST ERROR: bundled actions registry missing"); exit(1)
-            }
             let nearCapValue = try await registryTool.execute(registryTool.validatedArguments("{}"))
             guard case .object(let nearCapFields) = nearCapValue,
                   nearCapFields["items"] != nil, nearCapFields["text"] == nil,
@@ -2696,11 +2693,11 @@ enum SelfTest {
             let descriptors = NativeChatToolCatalog.tools(
                 veraAPIConfigured: false, declarations: catalog.declarations)
             guard descriptors.first(where: { $0.id == lookup.id })?.available == true,
-                  descriptors.first(where: { $0.id == journal.id })?.available == false,
+                  descriptors.first(where: { $0.id == registryTool.id })?.available == false,
                   descriptors.first(where: { $0.name == "Archived" }) == nil,
                   NativeChatToolCatalog.tools(
                     veraAPIConfigured: true, declarations: catalog.declarations)
-                      .first(where: { $0.id == journal.id })?.available == true else {
+                      .first(where: { $0.id == registryTool.id })?.available == true else {
                 print("SELFTEST ERROR: capability settings descriptors"); exit(1)
             }
 
@@ -2761,7 +2758,7 @@ enum SelfTest {
                     tools: registry.active(enabledIDs: enabled))).prompt
             }
             guard prompt([lookup.id]).contains("inventory_lookup"),
-                  !prompt([lookup.id]).contains("journal_read"),
+                  !prompt([lookup.id]).contains("actions_registry"),
                   !prompt([]).contains("inventory_lookup"),
                   registry.active(enabledIDs: [lookup.id]).map(\.schema.name) == ["inventory_lookup"] else {
                 print("SELFTEST ERROR: capability registry and assembler integration"); exit(1)

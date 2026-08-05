@@ -1,7 +1,7 @@
 # Vera (macOS app)
 
 Native SwiftUI client for Vera. Text chat streams directly from a configured OpenAI-compatible
-`/v1` endpoint and stores conversations in `~/.vera/vera.sqlite`. Pulse, Journal, Memory,
+`/v1` endpoint and stores conversations in `~/.vera/vera.sqlite`. Pulse, Memory,
 and the Agentic canvas remain optional surfaces backed by vera-api. Veins are managed from
 the Pulse header; the Plugins manager lives in Settings.
 
@@ -10,7 +10,7 @@ the Pulse header; the Plugins manager lives in Settings.
 swift run                       # dev build + launch
 swift build                     # compile check
 .build/debug/Vera --selftest    # headless: native transport, persistence, importers, stores
-.build/debug/Vera --shot out.png --view chat|pulse|journal|memory|agentic|veins|settings-plugins|settings|settings-advanced|onboarding   # render a screenshot
+.build/debug/Vera --shot out.png --view chat|pulse|memory|agentic|veins|settings-plugins|settings|settings-advanced|onboarding   # render a screenshot
 .build/debug/Vera --dump-context   # print the assembled per-request system context, section by section
 ```
 Config lives in `~/.vera/config.json`, editable in-app via Settings (⌘,): `model_base`,

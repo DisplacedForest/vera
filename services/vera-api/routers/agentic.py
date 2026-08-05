@@ -215,7 +215,7 @@ def _trigger_job(workflow_id: str) -> dict | None:
     try:
         from . import scheduler
         return scheduler.job_view(job_id)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.warning("workflow: trigger job view failed: %s", e)
         return None
 

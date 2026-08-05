@@ -68,28 +68,30 @@ def cron_for(config: dict) -> str:
     return f"{minute} {hour} * * *"
 
 
-def config_for(cron) -> dict:
+DEFAULT_CONFIG = {"mode": "daily", "time": "05:00"}
+
+
+def config_for(cron) -> dict | None:
     fields = cron.split() if isinstance(cron, str) else []
-    if len(fields) == 5:
-        minute, hour, dom, month, dow = fields
-        if dom == "*" and month == "*":
-            if dow == "*" and hour == "*" and minute.startswith("*/"):
-                every = _int(minute[2:])
-                if every in INTERVAL_MINUTES:
-                    return {"mode": "interval", "every_minutes": every}
-            if dow == "*" and minute == "0" and hour.startswith("*/"):
-                every = _int(hour[2:])
-                if every is not None and every * 60 in INTERVAL_MINUTES:
-                    return {"mode": "interval", "every_minutes": every * 60}
-            clock = _clock(minute, hour)
-            if clock and dow == "*":
-                return {"mode": "daily", "time": clock}
-            if clock and dow in _DOW_NAME:
-                return {"mode": "weekly", "weekday": _DOW_NAME[dow], "time": clock}
-        clock = _clock(minute, hour)
-        if clock:
-            return {"mode": "daily", "time": clock}
-    return {"mode": "daily", "time": "05:00"}
+    if len(fields) != 5:
+        return None
+    minute, hour, dom, month, dow = fields
+    if dom != "*" or month != "*":
+        return None
+    if dow == "*" and hour == "*" and minute.startswith("*/"):
+        every = _int(minute[2:])
+        return {"mode": "interval", "every_minutes": every} if every in INTERVAL_MINUTES else None
+    if dow == "*" and minute == "0" and hour.startswith("*/"):
+        every = _int(hour[2:])
+        if every is not None and every * 60 in INTERVAL_MINUTES:
+            return {"mode": "interval", "every_minutes": every * 60}
+        return None
+    clock = _clock(minute, hour)
+    if clock and dow == "*":
+        return {"mode": "daily", "time": clock}
+    if clock and dow in _DOW_NAME:
+        return {"mode": "weekly", "weekday": _DOW_NAME[dow], "time": clock}
+    return None
 
 
 def _int(text) -> int | None:

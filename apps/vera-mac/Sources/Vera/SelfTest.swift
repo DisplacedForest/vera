@@ -4109,7 +4109,22 @@ enum SelfTest {
                   PulseWorkflowClient.triggerJob(from: nil) == nil else {
                 print("SELFTEST ERROR: trigger job parse"); exit(1)
             }
-            print("  trigger nodes OK (connection + gating + head rule + port exclusion + job parse)")
+            let guardStore = PulseWorkflowStore.fixture()
+            guardStore.draft = guardStore.active
+            guardStore.draft?.definition.edges.removeAll { $0.from == "schedule" }
+            guardStore.spliceNode("schedule", into: PulseWorkflowEdge(from: "triage", to: "gates"))
+            guard guardStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "schedule")) == false,
+                  guardStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "gates")) == true else {
+                print("SELFTEST ERROR: trigger splice guard"); exit(1)
+            }
+            guardStore.completeNodeDrag("schedule", by: CGSize(width: 12, height: 0),
+                                        splicing: PulseWorkflowEdge(from: "triage", to: "gates"))
+            guard guardStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "schedule")) == false,
+                  guardStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "schedule", to: "gates")) == false,
+                  guardStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "triage", to: "gates")) == true else {
+                print("SELFTEST ERROR: trigger drag splice guard"); exit(1)
+            }
+            print("  trigger nodes OK (connection + gating + head rule + port exclusion + splice guards + job parse)")
 
             for scale in [WorkflowCanvasTransform.minScale, 0.75, 1.0, 1.6, WorkflowCanvasTransform.maxScale] {
                 var transform = WorkflowCanvasTransform(scale: scale, offset: CGSize(width: -140, height: 90))

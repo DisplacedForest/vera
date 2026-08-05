@@ -72,9 +72,78 @@ def test_bad_schedule_config_is_rejected(config):
         workflow_triggers.cron_for(config)
 
 
-def test_unrecognized_cron_degrades_to_a_daily_reading():
-    assert workflow_triggers.config_for("30 6 * * 1-5") == {"mode": "daily", "time": "06:30"}
-    assert workflow_triggers.config_for("bad cron") == {"mode": "daily", "time": "05:00"}
+def test_unrepresentable_cron_is_never_approximated():
+    assert workflow_triggers.config_for("30 6 * * 1-5") is None
+    assert workflow_triggers.config_for("15 7 1 * *") is None
+    assert workflow_triggers.config_for("0 5 * JAN *") is None
+    assert workflow_triggers.config_for("*/7 * * * *") is None
+    assert workflow_triggers.config_for("bad cron") is None
+
+
+def test_exotic_pinned_schedule_survives_an_unrelated_promotion(monkeypatch):
+    monkeypatch.setenv("SCHEDULE_PULSE", "30 6 * * 1-5")
+    assert _trigger(_definition())["config"] == {"mode": "daily", "time": "05:00"}
+    draft = workflow_store.create_draft("pulse")
+    definition = draft["definition"]
+    cover = next(node for node in definition["nodes"] if node["type"] == "pulse.cover_art")
+    cover["config"] = {"style": "editorial"}
+    workflow_store.save_draft(draft["id"], definition)
+    promoted = workflow_store.promote(draft["id"])
+    assert promoted["state"] == "active"
+    assert scheduler.job_cron("pulse") == "30 6 * * 1-5"
+
+
+def test_failed_schedule_write_rolls_back_the_promotion(monkeypatch):
+    draft = workflow_store.create_draft("pulse")
+    definition = draft["definition"]
+    _trigger(definition)["config"] = {"mode": "daily", "time": "09:00"}
+    workflow_store.save_draft(draft["id"], definition)
+
+    def boom(job_id, cron):
+        raise RuntimeError("db locked")
+
+    monkeypatch.setattr(scheduler, "set_job_cron", boom)
+    with pytest.raises(ValueError, match="rolled back"):
+        workflow_store.promote(draft["id"])
+    assert workflow_store.active("pulse")["version"] == 1
+    assert workflow_store.get_version(draft["id"])["state"] == "draft"
+    assert scheduler.job_cron("pulse") == "0 5 * * *"
+
+
+def test_migration_waits_for_a_readable_scheduler(tmp_path):
+    legacy = {
+        "id": "pulse",
+        "nodes": [{"id": "triage", "type": "pulse.triage"},
+                  {"id": "gates", "type": "pulse.gates"},
+                  {"id": "synthesis", "type": "pulse.synthesis"},
+                  {"id": "claim_audit", "type": "pulse.claim_audit"},
+                  {"id": "cover_art", "type": "pulse.cover_art"},
+                  {"id": "inject", "type": "pulse.inject"}],
+        "edges": [{"from": "triage", "to": "gates"}, {"from": "gates", "to": "synthesis"},
+                  {"from": "synthesis", "to": "claim_audit"}, {"from": "claim_audit", "to": "cover_art"},
+                  {"from": "cover_art", "to": "inject"}],
+    }
+    path = str(tmp_path / "waiting.db")
+    workflow_store.DB_PATH = path
+    conn = sqlite3.connect(path)
+    conn.execute("""CREATE TABLE workflow_versions (
+        id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, version INTEGER NOT NULL,
+        state TEXT NOT NULL, definition TEXT NOT NULL, created_at INTEGER NOT NULL,
+        promoted_at INTEGER, UNIQUE(workflow_id, version))""")
+    conn.execute("INSERT INTO workflow_versions VALUES('v1','pulse',1,'active',?,0,0)",
+                 (json.dumps(legacy),))
+    conn.commit()
+    conn.close()
+    with pytest.MonkeyPatch.context() as offline:
+        offline.setattr(workflow_store, "_job_cron", lambda workflow_id: None)
+        assert _trigger_node_count(workflow_store.active("pulse")["definition"]) == 0
+    migrated = workflow_store.active("pulse")["definition"]
+    assert _trigger_node_count(migrated) == 1
+    workflow_registry.validate_promotion("pulse", migrated)
+
+
+def _trigger_node_count(definition):
+    return sum(1 for node in definition["nodes"] if node["type"] == "trigger.schedule")
 
 
 def test_seeded_pulse_definition_opens_with_a_trigger_at_the_head():

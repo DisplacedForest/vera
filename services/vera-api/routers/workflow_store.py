@@ -16,17 +16,15 @@ TRIGGER_PLACEMENT_PITCH = 184
 TRIGGER_MIN_X = 60
 
 
-def _job_cron(workflow_id: str) -> str:
+def _job_cron(workflow_id: str) -> str | None:
     job_id = workflow_triggers.JOB_FOR_WORKFLOW.get(workflow_id)
-    if job_id:
-        try:
-            from . import scheduler
-            cron = scheduler.job_cron(job_id)
-            if cron:
-                return cron
-        except Exception:
-            pass
-    return "0 5 * * *"
+    if not job_id:
+        return None
+    try:
+        from . import scheduler
+        return scheduler.job_cron(job_id)
+    except Exception:
+        return None
 
 
 def _trigger_node_id(definition: dict) -> str | None:
@@ -36,7 +34,7 @@ def _trigger_node_id(definition: dict) -> str | None:
     return None
 
 
-def _with_trigger(definition: dict, workflow_id: str) -> tuple[dict, bool]:
+def _with_trigger(definition: dict, workflow_id: str, cron: str | None) -> tuple[dict, bool]:
     if workflow_id not in workflow_triggers.JOB_FOR_WORKFLOW or _trigger_node_id(definition):
         return definition, False
     nodes = list(definition.get("nodes") or [])
@@ -48,8 +46,8 @@ def _with_trigger(definition: dict, workflow_id: str) -> tuple[dict, bool]:
     node_id = "schedule"
     while any(node["id"] == node_id for node in nodes):
         node_id = f"{node_id}-trigger"
-    trigger = {"id": node_id, "type": workflow_triggers.SCHEDULE_TYPE,
-               "config": workflow_triggers.config_for(_job_cron(workflow_id))}
+    config = workflow_triggers.config_for(cron) or dict(workflow_triggers.DEFAULT_CONFIG)
+    trigger = {"id": node_id, "type": workflow_triggers.SCHEDULE_TYPE, "config": config}
     migrated = {**definition, "nodes": [trigger, *nodes],
                 "edges": [{"from": node_id, "to": head}, *edges]}
     positions = definition.get("positions")
@@ -72,6 +70,8 @@ def _sync_trigger_config(definition: dict, workflow_id: str) -> dict:
     if not node_id or workflow_id not in workflow_triggers.JOB_FOR_WORKFLOW:
         return definition
     live = workflow_triggers.config_for(_job_cron(workflow_id))
+    if live is None:
+        return definition
     nodes = [({**node, "config": live} if node["id"] == node_id else node)
              for node in definition.get("nodes") or []]
     return {**definition, "nodes": nodes}
@@ -142,13 +142,24 @@ def init():
         conn.execute("CREATE TABLE IF NOT EXISTS workflow_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         done = conn.execute("SELECT value FROM workflow_meta WHERE key='trigger_migration'").fetchone()
         if not done:
+            crons: dict[str, str | None] = {}
+            complete = True
             for version_row in conn.execute("SELECT id, workflow_id, definition FROM workflow_versions WHERE state IN ('active','draft')").fetchall():
+                workflow_id = version_row["workflow_id"]
+                if workflow_id not in workflow_triggers.JOB_FOR_WORKFLOW:
+                    continue
+                if workflow_id not in crons:
+                    crons[workflow_id] = _job_cron(workflow_id)
+                if crons[workflow_id] is None:
+                    complete = False
+                    continue
                 definition = json.loads(version_row["definition"])
-                migrated, changed = _with_trigger(definition, version_row["workflow_id"])
+                migrated, changed = _with_trigger(definition, workflow_id, crons[workflow_id])
                 if changed:
                     conn.execute("UPDATE workflow_versions SET definition=? WHERE id=?",
                                  (json.dumps(migrated), version_row["id"]))
-            conn.execute("INSERT OR REPLACE INTO workflow_meta(key, value) VALUES('trigger_migration','1')")
+            if complete:
+                conn.execute("INSERT OR REPLACE INTO workflow_meta(key, value) VALUES('trigger_migration','1')")
 
 
 def _version_row(workflow_id: str, state: str = "active"):
@@ -206,25 +217,51 @@ def promote(version_id: str) -> dict:
     if not draft or draft["state"] != "draft":
         raise ValueError("draft not found")
     workflow_registry.validate_promotion(draft["workflow_id"], draft["definition"])
-    _apply_trigger_schedule(draft["workflow_id"], draft["definition"])
+    plan = _trigger_schedule_plan(draft["workflow_id"], draft["definition"])
     now = int(time.time())
     with _conn() as conn:
+        previous = conn.execute("SELECT id FROM workflow_versions WHERE workflow_id=? AND state='active'",
+                                (draft["workflow_id"],)).fetchone()
         conn.execute("UPDATE workflow_versions SET state='archived' WHERE workflow_id=? AND state='active'", (draft["workflow_id"],))
         conn.execute("UPDATE workflow_versions SET state='active', promoted_at=? WHERE id=?", (now, version_id))
+    if plan:
+        try:
+            from . import scheduler
+            scheduler.set_job_cron(*plan)
+        except Exception:
+            with _conn() as conn:
+                conn.execute("UPDATE workflow_versions SET state='draft', promoted_at=NULL WHERE id=?", (version_id,))
+                if previous:
+                    conn.execute("UPDATE workflow_versions SET state='active' WHERE id=?", (previous["id"],))
+            raise ValueError("the schedule could not be applied, so the promotion was rolled back")
     return get_version(version_id)
 
 
-def _apply_trigger_schedule(workflow_id: str, definition: dict):
-    job_id = workflow_triggers.JOB_FOR_WORKFLOW.get(workflow_id)
+def _trigger_config(definition: dict) -> dict | None:
     node_id = _trigger_node_id(definition)
-    if not job_id or not node_id:
-        return
+    if not node_id:
+        return None
     node = next(node for node in definition["nodes"] if node["id"] == node_id)
-    cron = workflow_triggers.cron_for(node.get("config") or {})
+    return node.get("config") or {}
+
+
+def _trigger_schedule_plan(workflow_id: str, definition: dict) -> tuple[str, str] | None:
+    job_id = workflow_triggers.JOB_FOR_WORKFLOW.get(workflow_id)
+    config = _trigger_config(definition)
+    if not job_id or config is None:
+        return None
+    current = None
+    row = _version_row(workflow_id)
+    if row:
+        current = _trigger_config(_version(row)["definition"])
+    if config == current:
+        return None
+    cron = workflow_triggers.cron_for(config)
     from . import scheduler
+    scheduler.ensure_job_cron_allowed(job_id, cron)
     if cron == scheduler.job_cron(job_id):
-        return
-    scheduler.set_job_cron(job_id, cron)
+        return None
+    return (job_id, cron)
 
 
 def start_run(workflow_id: str, run_id: str) -> dict:

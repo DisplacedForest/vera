@@ -435,8 +435,9 @@ final class PulseWorkflowStore: ObservableObject {
         } ?? draft.definition.nodes.endIndex
         draft.definition.nodes.insert(node, at: index)
         draft.definition.positions[node.id] = position
-        let edge = requestedEdge.flatMap { draft.definition.edges.contains($0) ? $0 : nil }
-            ?? nearestWorkflowEdge(to: point, in: draft.definition)
+        let edge = catalog.isTriggerType(type) ? nil
+            : requestedEdge.flatMap { draft.definition.edges.contains($0) ? $0 : nil }
+                ?? nearestWorkflowEdge(to: point, in: draft.definition)
         if let edge {
             draft.definition.edges.removeAll { $0 == edge }
             draft.definition.edges.append(PulseWorkflowEdge(from: edge.from, to: node.id))
@@ -535,7 +536,8 @@ final class PulseWorkflowStore: ObservableObject {
 
     private func applySplice(of id: String, into edge: PulseWorkflowEdge,
                              in definition: inout PulseWorkflowDefinition) -> Bool {
-        guard definition.node(withID: id) != nil,
+        guard let node = definition.node(withID: id),
+              catalog?.isTriggerType(node.type) != true,
               edge.from != id, edge.to != id,
               definition.edges.contains(edge),
               !definition.edges.contains(where: { $0.from == id || $0.to == id }) else { return false }
@@ -1209,6 +1211,7 @@ struct PulseWorkflowEditor: View {
                                          height: value.translation.height / nav.transform.scale)
                 nodeDrag = WorkflowCanvasDragState(nodeID: node.id, offset: translation)
                 guard let definition = store.displayed?.definition,
+                      store.catalog?.isTriggerType(node.type) != true,
                       isUnconnected(node.id, in: definition),
                       let position = WorkflowCardGeometry.position(of: node.id, in: definition,
                                                                    offsets: [node.id: translation]) else {
@@ -1295,8 +1298,9 @@ struct PulseWorkflowEditor: View {
     private func updateDropHighlight(_ viewportPoint: CGPoint) {
         guard store.mode == .edit, let definition = store.displayed?.definition else { return }
         if let type = store.paletteDragType, let catalog = store.catalog,
-           catalog.canonicalIndex(of: type) != nil,
-           definition.nodes.contains(where: { $0.type == type }) {
+           catalog.isTriggerType(type)
+               || (catalog.canonicalIndex(of: type) != nil
+                   && definition.nodes.contains(where: { $0.type == type })) {
             spliceEdge = nil
             return
         }

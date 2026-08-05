@@ -98,6 +98,8 @@ FLOW_FACE: dict[str, dict] = {
                              "tint": "purple", "group": "Memory", "feeds": ["memory"], "tools": []},
     "weight_fit":     {"label": "Weight fit", "icon": "chart.xyaxis.line", "tint": "purple",
                        "group": "Memory", "feeds": ["memory"], "tools": []},
+    "knowledge_groom": {"label": "Knowledge groom", "icon": "archivebox", "tint": "cyan",
+                        "group": "Home", "feeds": ["pulse_feed"], "tools": []},
 }
 
 # A job with no authored face still renders (and the test suite flags the omission).
@@ -147,9 +149,9 @@ def _surface_stat(surface_id: str) -> str | None:
         n = sum(1 for c in pulse_store.list_cards() if (c.get("kind") or "research") != "research")
         return f"{n} active card{'s' if n != 1 else ''}"
     if surface_id == "memory":
-        from . import vera_memory_store
-        n = len(vera_memory_store.core())
-        return f"{n} core fact{'s' if n != 1 else ''}"
+        from . import profile_graph_store as pg
+        n = len(pg.all_nodes())
+        return f"{n} graph node{'s' if n != 1 else ''}"
     if surface_id == "actions":
         n = action_store.pending_count()
         return f"{n} pending proposal{'s' if n != 1 else ''}"

@@ -15,7 +15,7 @@ GROUPS: list[tuple[str, list[str]]] = [
     ("core llm",      ["VERA_BASE", "VERA_MODEL", "VERA_CHAT_TEMPLATE_KWARGS",
                        "VERA_THINK_KWARGS_ON", "VERA_THINK_KWARGS_OFF"]),
     ("web search",    ["SEARXNG_BASE", "PLAYWRIGHT_WS"]),
-    ("dream/coder",   ["DREAM_BASE", "DREAM_MODEL", "DREAM_TOOL_PROTOCOL"]),
+    ("coder",         ["DREAM_BASE", "DREAM_MODEL", "DREAM_TOOL_PROTOCOL"]),
     ("research",      ["RESEARCH_MAX_ITERATIONS"]),
     ("image gen",     ["VERA_IMAGE_BASE", "IMAGE_PROTOCOL"]),
     ("embeddings",    ["VERA_EMBED_URL", "VERA_EMBED_MODEL"]),
@@ -39,11 +39,8 @@ GROUPS: list[tuple[str, list[str]]] = [
     ("kitchen",       ["GROCY_BASE", "GROCY_KEY", "MEALIE_BASE", "MEALIE_KEY"]),
     ("media",         ["OVERSEERR_BASE", "OVERSEERR_KEY"]),
     ("weather",       ["TEMPERATURE_UNIT", "WEATHER_FORECAST_URL"]),
-    ("dream tuning",  ["DREAM_DEDUP_THRESHOLD", "DREAM_PROMOTE_CONF", "DREAM_CLUSTER_THRESHOLD",
-                       "DREAM_MAX_OPINIONS"]),
-    ("toggles",       ["KNOWLEDGE_GROOM_ENABLED", "MEMORY_GROOM_ENABLED"]),
-    ("tunables",      ["VERA_MEMORY_CORE_CHARS", "VERA_MEMORY_SCRATCH_TTL_HOURS",
-                       "VERA_INTEREST_COOLDOWN_HOURS", "MEDIA_CURATION_CAP", "PULSE_RUN_STALE_SECS",
+    ("toggles",       ["KNOWLEDGE_GROOM_ENABLED"]),
+    ("tunables",      ["VERA_INTEREST_COOLDOWN_HOURS", "MEDIA_CURATION_CAP", "PULSE_RUN_STALE_SECS",
                        "HOME_EVENTS_RETAIN_DAYS", "HOME_MODEL_WINDOW_DAYS",
                        "STRUCTURED_REPAIR_ATTEMPTS"]),
     ("actuation",     ["UNRAID_BASE", "UNRAID_KEY", "HA_ALLOWED_SERVICES", "HA_ALLOWED_DOMAINS"]),
@@ -70,7 +67,7 @@ def report(version: str, data_root: str | None = None) -> None:
     # is diagnosable from the boot log alone.
     raw_proto = os.environ.get("DREAM_TOOL_PROTOCOL", "").strip().lower()
     proto = "hermes" if raw_proto == "hermes" else "openai"
-    log.info("  dream/coder tool protocol: %s", proto)
+    log.info("  coder tool protocol: %s", proto)
     if raw_proto == "mlx":
         log.warning("  deprecated DREAM_TOOL_PROTOCOL value in use: mlx — set openai, "
                     "or hermes for text pass-through servers")

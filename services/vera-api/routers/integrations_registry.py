@@ -22,7 +22,7 @@ REGISTRY: dict[str, dict] = {
                     "identity instead of a chat backend account"],
     },
     "coder": {
-        "display_name": "Coder / Dream model",
+        "display_name": "Coder model",
         "fields": [
             {"id": "url", "env": "DREAM_BASE", "label": "OpenAI-compatible base URL", "secret": False,
              "hint": "any /v1 endpoint (llama.cpp, vLLM, llama-swap, mlx_lm.server, or a hosted API)"},
@@ -32,7 +32,7 @@ REGISTRY: dict[str, dict] = {
              "hint": "openai = standard tool_calls (default); hermes = Hermes-style text tool "
                      "calls for servers that pass model text through untouched"},
         ],
-        "unlocks": ["nightly dreaming consolidation and grooming",
+        "unlocks": ["cross-model claim auditing",
                     "fact verification research with web search"],
     },
     "image_gen": {

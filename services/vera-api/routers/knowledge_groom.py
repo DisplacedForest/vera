@@ -1,8 +1,7 @@
 """Nightly knowledge-store grooming — the counterweight to the store's fast-landing write path.
 
 The flexible knowledge core lets facts land fast and a little messy during the day; this pass trends
-it back toward clean overnight without ever slowing a write. It is the sibling of the vera-memory
-groomer — same pattern, different store.
+it back toward clean overnight without ever slowing a write.
 
 It touches the store ONLY through the knowledge store's gated API: a merge is a `set` on the canonical
 entity plus a `delete` of each superseded member (propose->commit), and a promotion is `promote()`. So
@@ -191,12 +190,16 @@ def summary_parts(out):
 async def groom_pass(b: GroomPass, x_agent_token: str = Header(default="")):
     if not AGENT_TOKEN or x_agent_token != AGENT_TOKEN:
         raise HTTPException(403, "groom_pass requires X-Agent-Token")
-    if os.environ.get("KNOWLEDGE_GROOM_ENABLED", "true").lower() == "false":
-        return {"ok": True, "disabled": True}
+    return await run(dry_run=b.dry_run, run_id=b.run_id)
 
-    run_id = b.run_id or str(int(time.time()))
-    out = await run_pass(b.dry_run, run_id)
-    if b.dry_run:
+
+async def run(dry_run=False, run_id=None):
+    if os.environ.get("KNOWLEDGE_GROOM_ENABLED", "true").lower() == "false":
+        return {"ok": True, "disabled": True, "detail": "KNOWLEDGE_GROOM_ENABLED is false"}
+
+    run_id = run_id or str(int(time.time()))
+    out = await run_pass(dry_run, run_id)
+    if dry_run:
         return out  # intended actions only; nothing written, no cards
 
     # Pulse: per-review cards (bounded) + one run-summary status card --------------------------

@@ -100,9 +100,9 @@ struct PluginEntry: Identifiable, Hashable, Sendable {
                         hint: hint, value: value, isSet: isSet || !value.isEmpty, choices: choices)
         }
         return [
-            PluginEntry(id: "coder", displayName: "Coder / Dream model", status: "enabled",
+            PluginEntry(id: "coder", displayName: "Coder model", status: "enabled",
                         enabled: true, configured: true,
-                        unlocks: ["nightly dreaming consolidation and grooming",
+                        unlocks: ["cross-model claim auditing",
                                   "fact verification research with web search"],
                         fields: [field("url", "OpenAI-compatible base URL", value: "http://192.0.2.10:8084/v1"),
                                  field("model", "Model id", value: "your-coder-model"),

@@ -1,16 +1,14 @@
 """Per-user profile store — the "personal vibe" half of shared-mind / personal-vibe.
 
-Vera has ONE shared world-model (vera_memory) and one home (knowledge_store). This store is the
-opposite: keyed by OWUI user id, it holds what is personal to each person — her relationship with
+Keyed by OWUI user id, it holds what is personal to each person — her relationship with
 them. It starts empty and accrues from patterns (the "goals start non-existent" stance).
 
   - persona:   free-text notes on how Vera relates to this person (tone, what they're like).
   - interests: weighted topics she pursues on THEIR behalf (Pulse grounds in these).
   - prefs:     per-user Pulse/behaviour preferences (json).
 
-The digest (persona + top interests) is injected per-user by the vera_memory inlet filter, on top
-of the shared world-model core. Writes are free — it's about the person, no external effect.
-Mirrors the vera_memory_store / knowledge_store SQLite pattern.
+The digest (persona + top interests) is injected per-user. Writes are free — it's about the
+person, no external effect. Mirrors the knowledge_store SQLite pattern.
 """
 import hashlib
 import json
@@ -152,7 +150,7 @@ def get(user_id):
 
 
 def digest(user_id, top=12):
-    """Compact per-user vibe injected by the inlet filter (on top of the shared world-model core)."""
+    """Compact per-user vibe injected per conversation."""
     p = get(user_id)
     lines = []
     if p["name"]:

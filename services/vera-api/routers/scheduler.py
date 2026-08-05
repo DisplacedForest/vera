@@ -73,6 +73,11 @@ async def _job_weight_fit():
     return {"installed": coeffs is not None, "coeffs": coeffs}
 
 
+async def _job_knowledge_groom():
+    from . import knowledge_groom
+    return await knowledge_groom.run()
+
+
 # id -> (label, default cron, handler). The shipped schedule; everything overridable.
 REGISTRY: dict[str, tuple[str, str, object]] = {
     "pulse":          ("Pulse briefing run",        "0 5 * * *",    _job_pulse),
@@ -81,6 +86,7 @@ REGISTRY: dict[str, tuple[str, str, object]] = {
     "home_digest":    ("Home rhythm digest",        "0 2 * * *",    _job_home_digest),
     "conversation_extract": ("Conversation extraction into the Profile Graph", "45 4 * * *", _job_conversation_extract),
     "weight_fit":     ("Ranking weight fit from feedback", "30 4 * * 0",  _job_weight_fit),
+    "knowledge_groom": ("Knowledge store grooming",        "0 4 * * *",   _job_knowledge_groom),
 }
 
 
@@ -233,6 +239,22 @@ def summarize_outcome(job_id: str, result) -> str:
             line += f" {_plural(len(warnings), 'warning')}."
         return line
 
+
+    if job_id == "knowledge_groom":
+        merged, promoted = len(r.get("merged") or []), len(r.get("promoted") or [])
+        review = len(r.get("review") or [])
+        gc = r.get("gc") or {}
+        gc_n = int(gc.get("pending") or 0) + len(gc.get("orphans") or [])
+        parts = []
+        if merged:
+            parts.append(f"merged {merged}")
+        if promoted:
+            parts.append(f"promoted {promoted}")
+        if gc_n:
+            parts.append(f"gc'd {gc_n}")
+        if review:
+            parts.append(f"{review} for review")
+        return "Knowledge groom: " + (", ".join(parts) if parts else "nothing to groom") + "."
 
     if job_id == "updates":
         total = int(r.get("total") or 0)

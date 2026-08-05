@@ -53,6 +53,23 @@ def test_healthcheck_summary():
     assert "2 services down" in down and "voice, searxng" in down
 
 
+def test_knowledge_groom_summary_counts_and_quiet_path():
+    out = summarize_outcome("knowledge_groom", {"ok": True, "merged": ["a"], "promoted": [],
+                                                "review": [1, 2], "gc": {"pending": 3}})
+    assert "merged 1" in out and "gc'd 3" in out and "2 for review" in out
+    _no_record_markers(out)
+    orphan_only = summarize_outcome("knowledge_groom", {"ok": True, "merged": [], "promoted": [],
+                                                        "review": [],
+                                                        "gc": {"pending": 0, "orphans": ["note:empty"]}})
+    assert "gc'd 1" in orphan_only
+    quiet = summarize_outcome("knowledge_groom", {"ok": True, "merged": [], "promoted": [],
+                                                  "review": [], "gc": {"pending": 0, "orphans": []}})
+    assert "nothing to groom" in quiet
+    disabled = summarize_outcome("knowledge_groom", {"ok": True, "disabled": True,
+                                                     "detail": "KNOWLEDGE_GROOM_ENABLED is false"})
+    assert disabled.startswith("Skipped")
+
+
 def test_gated_run_is_plain_skip():
     out = summarize_outcome("weather", {"ok": False, "disabled": True, "detail": "the weather vein is off"})
     assert out == "Skipped: the weather vein is off"

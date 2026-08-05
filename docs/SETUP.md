@@ -49,7 +49,7 @@ docker compose logs vera-api | head -60
 | Core LLM | `VERA_BASE`, `VERA_MODEL` | Everything generated: Pulse briefings, card text, judges |
 | Web search | `SEARXNG_BASE` (+ optional `PLAYWRIGHT_WS`) | Research, Pulse sourcing, watcher veins, and the Mac app's web search and deep research chat tools (the app reaches them through its `vera_api_base` setting, never SearXNG directly) |
 | Identity | `VERA_OWNER_ID`, `VERA_OWNER_NAME`, `HOME_LOCATION_NAME`, `HOME_TZ`, `WEATHER_LAT`/`LON`, `TEMPERATURE_UNIT` | Personalization, the owner id that cards/read marks/profiles are keyed by (defaults to `owner`), schedules in your timezone, weather anchoring |
-| Dream/coder | `DREAM_BASE`, `DREAM_MODEL`, `DREAM_TOOL_PROTOCOL` | Nightly knowledge consolidation + fact verification |
+| Coder | `DREAM_BASE`, `DREAM_MODEL`, `DREAM_TOOL_PROTOCOL` | Cross-model claim auditing + fact verification |
 | Audit hooks | `AUDIT_WAKE_URL`, `AUDIT_RELEASE_URL` | Cross-model claim audits on every Pulse run when the audit model is served on demand (POSTed before/after the batched end-of-run audit; unset = no hook calls) |
 | Embeddings | `VERA_EMBED_URL`, `VERA_EMBED_MODEL` | Document knowledge collections (upload, indexing, retrieval that grounds research and chat) plus Profile Graph dedup and Pulse novelty math; unset, collection management still works while indexing and retrieval report unconfigured |
 | Image gen | `VERA_IMAGE_BASE`, `IMAGE_PROTOCOL` | Generated cover art on Pulse cards |
@@ -111,7 +111,7 @@ otherwise. Re-running is safe: files already present with identical content are 
 and the report lists everything created, uploaded, skipped, or failed. Chat history is not
 migrated; the native store starts fresh by design.
 
-Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api or the standalone bridge service. They are available only during an explicit chat turn. Pulse, dreaming, scheduled work, voice, and other autonomous paths cannot invoke them.
+Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api or the standalone bridge service. They are available only during an explicit chat turn. Pulse, scheduled work, voice, and other autonomous paths cannot invoke them.
 
 Each call renders as a pending, succeeded, or failed activity chip. Expand it to inspect the JSON request and result. Activity is stored with local conversation history without endpoint credentials or authorization headers. Unknown tools, disabled or unavailable tools, invalid JSON arguments, and calls past the loop limits do not execute. Their bounded error result is returned to the model. A turn stops after four tool rounds or eight total calls. A tool failure, malformed stream, endpoint outage, or exhausted limit keeps received text and activity and marks the assistant turn interrupted when no final answer arrives.
 
@@ -227,7 +227,7 @@ These are **documented HTTP contracts** with reference implementations in this r
 |---|---|---|
 | Image gen | OpenAI Images API: `POST {base}/v1/images/generations` | `services/vera-image` — serves the standard contract out of the box; `IMAGE_PROTOCOL=vera` adds deterministic seeds + the vision pause/resume extension |
 | Vision | OpenAI chat completions with `image_url` content parts | Any MLX/vLLM-served VLM; see `services/vera-vision` for the launchd template |
-| Dream/coder | OpenAI `/v1` with tool calling (`DREAM_TOOL_PROTOCOL=hermes` for servers that pass model text through untouched) | `services/vera-coder` |
+| Coder | OpenAI `/v1` with tool calling (`DREAM_TOOL_PROTOCOL=hermes` for servers that pass model text through untouched) | `services/vera-coder` |
 | Voice | Wyoming protocol (ASR + TTS) plus a small batch HTTP API | `services/vera-voice`; install with `scripts/deploy-vera-voice.sh` |
 | Reminders | Small HTTP API over EventKit: `/health`, `/lists`, `/reminders` | `services/vera-reminders`; install with `scripts/deploy-vera-reminders.sh` |
 
@@ -260,6 +260,7 @@ vera-api runs all recurring work itself — no external cron. Defaults:
 |---|---|---|
 | Pulse briefing | daily 5:00 | — (core; needs your LLM) |
 | Home modeling (3 nightly jobs) | 2:00–3:30 | Home Assistant's home-modeling consent |
+| Knowledge grooming | daily 4:00 | `KNOWLEDGE_GROOM_ENABLED` |
 | Vein runs (`vein_<kind>`) | each definition's `schedule` | that vein's enable state |
 
 Pipeline veins register their jobs dynamically — one per definition, appearing and disappearing with the definition file — and the standard override convention applies (`SCHEDULE_VEIN_<KIND>`, `SCHEDULE_VEIN_<KIND>_ENABLED`).

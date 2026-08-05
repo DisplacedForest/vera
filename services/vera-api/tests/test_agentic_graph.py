@@ -18,7 +18,7 @@ from routers import action_store  # noqa: E402
 from routers import agentic  # noqa: E402
 from routers import pulse_store  # noqa: E402
 from routers import scheduler_store  # noqa: E402
-from routers import vera_memory_store  # noqa: E402
+from routers import profile_graph_store  # noqa: E402
 from routers import workflow_store  # noqa: E402
 from routers.scheduler import REGISTRY  # noqa: E402
 
@@ -28,7 +28,8 @@ def _clean(monkeypatch, tmp_path):
     monkeypatch.setattr(action_store, "DB_PATH", str(tmp_path / "actions.db"))
     monkeypatch.setattr(scheduler_store, "DB_PATH", str(tmp_path / "scheduler.db"))
     monkeypatch.setattr(pulse_store, "DB_PATH", str(tmp_path / "pulse.db"))
-    monkeypatch.setattr(vera_memory_store, "DB_PATH", str(tmp_path / "vera_memory.db"))
+    monkeypatch.setattr(profile_graph_store, "DB_PATH", str(tmp_path / "graph.db"))
+    profile_graph_store.init()
     monkeypatch.setattr(workflow_store, "DB_PATH", str(tmp_path / "workflows.db"))
     yield
 
@@ -150,12 +151,12 @@ def test_surface_stats_live():
     stats = {s["id"]: s["stat"] for s in _graph()["surfaces"]}
     assert stats["pulse_feed"] == "1 card today"
     assert stats["veins"] == "1 active card"
-    assert stats["memory"] == "0 core facts"
+    assert stats["memory"] == "0 graph nodes"
     assert stats["actions"] == "1 pending proposal"
 
 
 def test_missing_stores_degrade_to_none_stats():
-    for mod in (pulse_store, action_store, vera_memory_store):
+    for mod in (pulse_store, action_store, profile_graph_store):
         setattr(mod, "DB_PATH", "/dev/null/nope/x.db")
     out = _graph()
     assert {f["id"] for f in out["flows"]} == set(REGISTRY)  # topology survives

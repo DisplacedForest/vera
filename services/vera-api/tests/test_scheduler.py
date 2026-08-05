@@ -113,6 +113,22 @@ def test_fire_skips_overlapping_run(monkeypatch):
         sch._running.discard("weather")
 
 
+def test_knowledge_groom_registered_daily():
+    assert "knowledge_groom" in sch.REGISTRY
+    j = sch._effective("knowledge_groom", None)
+    assert j["enabled"] is True
+    assert j["cron"] == "0 4 * * *"
+    assert j["gated"] is None
+
+
+def test_knowledge_groom_kill_switch_records_skip(monkeypatch):
+    monkeypatch.setenv("KNOWLEDGE_GROOM_ENABLED", "false")
+    asyncio.run(sch._fire("knowledge_groom"))
+    row = store.overrides()["knowledge_groom"]
+    assert row["last_ok"] == 1
+    assert "KNOWLEDGE_GROOM_ENABLED" in row["last_detail"]
+
+
 def _save_pipeline_vein(monkeypatch, tmp_path, kind="rivergauge"):
     from routers import vein_defs
     monkeypatch.setattr(vein_defs, "CUSTOM_DIR", str(tmp_path / "veins.d"))

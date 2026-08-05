@@ -1282,6 +1282,11 @@ final class ChatStore: ObservableObject {
         let imageLimit: Int?
     }
 
+    struct BridgeTurnFailure: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
     struct NativeParameterRejectionPrompt: Identifiable, Equatable {
         let rejection: ModelParameterRejection
         let model: String
@@ -1496,8 +1501,8 @@ final class ChatStore: ObservableObject {
                 }
                 if routeNote?.route == .bridged {
                     guard let bridgeConfig else {
-                        throw NativeChatClient.ClientError.server(
-                            "The vision bridge is no longer configured. Your message and attachment are saved; nothing was sent.")
+                        throw BridgeTurnFailure(
+                            message: "The vision bridge is no longer configured. Your message and attachment are saved; nothing was sent.")
                     }
                     streamStatus = "Describing the attachment…"
                     let bridge = VisionBridge(
@@ -1513,8 +1518,8 @@ final class ChatStore: ObservableObject {
                                 (record.name, try await bridge.describe(name: record.name, dataURL: dataURL)))
                         }
                     } catch {
-                        throw NativeChatClient.ClientError.server(
-                            "The vision bridge couldn't describe the attachment: \(error.localizedDescription). Your message and attachment are saved locally; nothing was sent to the model.")
+                        throw BridgeTurnFailure(
+                            message: "The vision bridge couldn't describe the attachment: \(error.localizedDescription). Your message and attachment are saved locally; nothing was sent to the model.")
                     }
                     let disclosure = VisionBridgeDisclosure.block(
                         descriptions: descriptions, bridgeModel: bridgeConfig.model)

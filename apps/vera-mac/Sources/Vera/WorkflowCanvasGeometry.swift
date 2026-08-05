@@ -30,14 +30,39 @@ struct WorkflowCanvasTransform: Equatable {
         offset = CGSize(width: screenPoint.x - anchor.x * scale,
                         height: screenPoint.y - anchor.y * scale)
     }
+
+    static func fitting(_ bounds: CGRect, in viewport: CGSize, padding: CGFloat = 70) -> WorkflowCanvasTransform {
+        guard bounds.width > 0, bounds.height > 0, viewport.width > padding * 2, viewport.height > padding * 2 else {
+            return WorkflowCanvasTransform()
+        }
+        let fit = min((viewport.width - padding * 2) / bounds.width,
+                      (viewport.height - padding * 2) / bounds.height)
+        let scale = min(max(fit, minScale), 1)
+        let offset = CGSize(width: (viewport.width - bounds.width * scale) / 2 - bounds.minX * scale,
+                            height: (viewport.height - bounds.height * scale) / 2 - bounds.minY * scale)
+        return WorkflowCanvasTransform(scale: scale, offset: offset)
+    }
 }
 
 enum WorkflowCardGeometry {
-    static let size = CGSize(width: 164, height: 66)
-    static let placementPitch: CGFloat = size.width * 1.5
+    static let size = CGSize(width: 92, height: 92)
+    static let cornerRadius: CGFloat = 16
+    static let labelClearance: CGFloat = 30
+    static let placementPitch: CGFloat = size.width * 2
     static let portHitRadius: CGFloat = 20
     static let spliceRange: CGFloat = 46
     static let wireHoverRange: CGFloat = 14
+
+    static func bounds(of definition: PulseWorkflowDefinition) -> CGRect? {
+        let rects = definition.nodes.compactMap { node in
+            definition.positions[node.id].map { point in
+                CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2,
+                       width: size.width, height: size.height + labelClearance)
+            }
+        }
+        guard let first = rects.first else { return nil }
+        return rects.dropFirst().reduce(first) { $0.union($1) }
+    }
 
     static func inputPort(_ center: CGPoint) -> CGPoint {
         CGPoint(x: center.x - size.width / 2, y: center.y)

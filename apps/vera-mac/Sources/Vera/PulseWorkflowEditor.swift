@@ -630,6 +630,7 @@ struct PulseWorkflowPalette: View {
     @Binding var searchText: String
     var snapshot = false
     var onBack: () -> Void = {}
+    @State private var hoveredType: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -686,19 +687,29 @@ struct PulseWorkflowPalette: View {
     }
 
     private var paletteList: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(store.catalog?.paletteCategories ?? [], id: \.self) { category in
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(orderedCategories, id: \.self) { category in
                 let entries = visibleEntries.filter { $0.category == category }
                 if !entries.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(category.uppercased()).font(.system(size: 9, weight: .bold))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(sectionTitle(category).uppercased()).font(.system(size: 9, weight: .bold))
                             .tracking(0.7).foregroundStyle(Theme.textSecondary.opacity(0.68))
+                            .padding(.horizontal, 8).padding(.bottom, 3)
                         ForEach(entries) { entry in paletteNode(entry) }
                     }
                 }
             }
         }
         .padding(.bottom, 12)
+    }
+
+    private var orderedCategories: [String] {
+        let all = store.catalog?.paletteCategories ?? []
+        return all.filter { $0 == "trigger" } + all.filter { $0 != "trigger" }
+    }
+
+    private func sectionTitle(_ category: String) -> String {
+        category == "trigger" ? "Triggers" : category.prefix(1).uppercased() + category.dropFirst()
     }
 
     private var visibleEntries: [WorkflowCatalogNode] {
@@ -738,6 +749,13 @@ struct PulseWorkflowPalette: View {
                 } preview: {
                     WorkflowNodeCardPreview(spec: entry)
                 }
+                .onHover { hovering in
+                    if hovering {
+                        hoveredType = entry.type
+                    } else if hoveredType == entry.type {
+                        hoveredType = nil
+                    }
+                }
                 .help(installed ? "Drag to reposition" : "Drag to add")
                 .opacity(store.phase == .ready && !store.busy ? 1 : 0.5)
                 .allowsHitTesting(store.phase == .ready && !store.busy)
@@ -746,21 +764,31 @@ struct PulseWorkflowPalette: View {
     }
 
     private func paletteNodeLabel(_ entry: WorkflowCatalogNode, installed: Bool) -> some View {
-        HStack(spacing: 9) {
-            Image(systemName: entry.icon).font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(graphTint(entry.tint)).frame(width: 30, height: 30)
-                .background(graphTint(entry.tint).opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 2) {
+        let hovered = snapshot ? entry.type == store.displayed?.definition.node(withID: store.selectedNodeID ?? "")?.type
+                               : hoveredType == entry.type
+        return HStack(spacing: 9) {
+            Image(systemName: entry.icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(graphTint(entry.tint)).frame(width: 28, height: 28)
+                .background(graphTint(entry.tint).opacity(0.12))
+                .clipShape(workflowNodeIsTrigger(entry)
+                           ? UnevenRoundedRectangle(topLeadingRadius: 14, bottomLeadingRadius: 14,
+                                                    bottomTrailingRadius: 8, topTrailingRadius: 8, style: .continuous)
+                           : UnevenRoundedRectangle(topLeadingRadius: 8, bottomLeadingRadius: 8,
+                                                    bottomTrailingRadius: 8, topTrailingRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
                 Text(entry.label).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                Text(entry.description).font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                Text(entry.description).font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 0)
-            Image(systemName: installed ? "scope" : "plus")
-                .font(.system(size: 9, weight: .bold)).foregroundStyle(installed ? Theme.textSecondary : Theme.accent)
+            Image(systemName: installed ? "scope" : "plus.circle.fill")
+                .font(.system(size: installed ? 10 : 13, weight: .bold))
+                .foregroundStyle(installed ? Theme.textSecondary : Theme.accent)
+                .opacity(installed ? 0.7 : (hovered ? 1 : 0))
         }
-        .padding(.horizontal, 8).padding(.vertical, 7).frame(minHeight: 46).contentShape(Rectangle())
-        .background(Theme.surface.opacity(0.76)).clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 1))
+        .padding(.horizontal, 8).padding(.vertical, 6).frame(minHeight: 40).contentShape(Rectangle())
+        .background(hovered ? Theme.surfaceHover : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -987,14 +1015,15 @@ struct PulseWorkflowEditor: View {
                 update: { location in updateDropHighlight(location) },
                 exit: { spliceEdge = nil },
                 perform: { location, info in performCanvasDrop(location, info: info) }))
-            .overlay(alignment: .topLeading) {
-                Label(store.isEditing ? "Drag nodes to arrange. Drag a port to connect. Drag empty space to pan."
-                      : "Create a draft to move or connect nodes.", systemImage: "cursorarrow.motionlines")
-                    .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 10).padding(.vertical, 7).background(Theme.bg.opacity(0.88))
-                    .clipShape(RoundedRectangle(cornerRadius: 8)).padding(14).allowsHitTesting(false)
+            .overlay(alignment: .bottom) {
+                Text(store.isEditing ? "Drag to arrange · drag a port to connect · drag empty space to pan"
+                     : "Viewing the active workflow · Edit workflow to make changes")
+                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 11).padding(.vertical, 5)
+                    .background(Capsule().fill(Theme.bg.opacity(0.85)))
+                    .padding(.bottom, 13).allowsHitTesting(false)
             }
-            .overlay(alignment: .bottomTrailing) { zoomControls(viewport.size) }
+            .overlay(alignment: .bottomLeading) { zoomControls(viewport.size) }
             .overlay { insertPickerOverlay(viewport.size) }
             .onAppear {
                 nav.startMonitoring()
@@ -1023,11 +1052,18 @@ struct PulseWorkflowEditor: View {
                                      selected: store.selectedNodeID == node.id,
                                      connecting: store.connectionSourceID == node.id,
                                      inputHighlighted: wireDrag?.targetID == node.id,
+                                     hovered: hoveredNodeID == node.id && wireDrag == nil && nodeDrag == nil,
+                                     canDelete: store.isEditing && store.catalog?.isRequired(node.type) == false,
                                      portHitDiameter: 2 * WorkflowCardGeometry.portHitRadius / nav.transform.scale,
                                      onInput: store.isEditing ? { store.completeConnection(to: node.id) } : nil,
                                      onOutput: store.isEditing ? { store.startConnection(from: node.id) } : nil,
                                      onOutputDragChanged: store.isEditing ? { location in updateWireDrag(from: node.id, viewportPoint: location) } : nil,
-                                     onOutputDragEnded: store.isEditing ? { location in finishWireDrag(viewportPoint: location) } : nil)
+                                     onOutputDragEnded: store.isEditing ? { location in finishWireDrag(viewportPoint: location) } : nil,
+                                     onConfigure: store.isEditing ? { store.selectedNodeID = node.id } : nil,
+                                     onDelete: store.isEditing ? {
+                                         store.selectedNodeID = node.id
+                                         store.removeSelectedNode()
+                                     } : nil)
                     .position(x: point.x, y: point.y)
                     .zIndex(hoveredNodeID == node.id ? 4 : (store.selectedNodeID == node.id ? 3 : 1))
                     .onTapGesture { store.selectedNodeID = node.id }
@@ -1047,10 +1083,10 @@ struct PulseWorkflowEditor: View {
                     insertRequest = WorkflowInsertRequest(point: midpoint, edge: hoverEdge, connectFrom: nil)
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.accent)
-                        .frame(width: 22, height: 22).background(Theme.bg)
-                        .clipShape(Circle())
-                        .overlay(Circle().stroke(Theme.accent.opacity(0.7), lineWidth: 1))
+                        .font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                        .frame(width: 24, height: 24).background(Circle().fill(Theme.accent))
+                        .overlay(Circle().stroke(Theme.bg.opacity(0.6), lineWidth: 1.5))
+                        .shadow(color: Theme.bg.opacity(0.4), radius: 4, y: 1)
                 }
                 .buttonStyle(.plain)
                 .position(x: midpoint.x, y: midpoint.y)
@@ -1067,16 +1103,15 @@ struct PulseWorkflowEditor: View {
                 guard let start = WorkflowCardGeometry.outputPort(for: edge.from, in: definition, offsets: offsets),
                       let end = WorkflowCardGeometry.inputPort(for: edge.to, in: definition, offsets: offsets) else { continue }
                 let emphasized = edge == spliceEdge || edge == hoverEdge
-                context.stroke(edgePath(start, end),
-                               with: .color(emphasized ? Theme.accent.opacity(0.85) : Theme.textSecondary.opacity(0.52)),
-                               lineWidth: emphasized ? 2.5 : 1.5)
+                drawWorkflowWire(context, from: start, to: end,
+                                 color: emphasized ? Theme.accent.opacity(0.9) : Theme.textSecondary.opacity(0.68),
+                                 lineWidth: emphasized ? 3 : 2)
             }
             if let wireDrag,
                let start = WorkflowCardGeometry.outputPort(for: wireDrag.sourceID, in: definition, offsets: offsets) {
                 let end = wireDrag.targetID.flatMap { WorkflowCardGeometry.inputPort(for: $0, in: definition, offsets: offsets) } ?? wireDrag.point
-                context.stroke(edgePath(start, end), with: .color(Theme.accent.opacity(0.9)),
-                               style: StrokeStyle(lineWidth: 2, lineCap: .round,
-                                                  dash: wireDrag.targetID == nil ? [6, 5] : []))
+                drawWorkflowWire(context, from: start, to: end, color: Theme.accent.opacity(0.9),
+                                 lineWidth: 2, dash: wireDrag.targetID == nil ? [6, 5] : [], arrow: false)
             }
         }
     }
@@ -1242,6 +1277,11 @@ struct PulseWorkflowEditor: View {
     private func zoomControls(_ viewport: CGSize) -> some View {
         let center = CGPoint(x: viewport.width / 2, y: viewport.height / 2)
         return HStack(spacing: 0) {
+            Button { fitView(viewport) } label: {
+                Image(systemName: "viewfinder").frame(width: 26, height: 24).contentShape(Rectangle())
+            }
+            .help("Fit workflow")
+            Divider().frame(height: 14).overlay(Theme.hairline)
             Button { nav.transform.zoom(by: 1 / 1.2, around: center) } label: {
                 Image(systemName: "minus").frame(width: 26, height: 24).contentShape(Rectangle())
             }
@@ -1261,6 +1301,14 @@ struct PulseWorkflowEditor: View {
         .clipShape(RoundedRectangle(cornerRadius: 7))
         .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.hairline, lineWidth: 1))
         .padding(12)
+    }
+
+    private func fitView(_ viewport: CGSize) {
+        guard let definition = store.displayed?.definition,
+              let bounds = WorkflowCardGeometry.bounds(of: definition) else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            nav.transform = WorkflowCanvasTransform.fitting(bounds, in: viewport)
+        }
     }
 
     @ViewBuilder private func insertPickerOverlay(_ viewport: CGSize) -> some View {
@@ -1326,21 +1374,32 @@ struct PulseWorkflowEditor: View {
 
     @ViewBuilder private var snapshotCanvas: some View {
         if let workflow = store.displayed {
-            workflowCanvas(workflow)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Theme.bg)
+            ZStack(alignment: .topLeading) {
+                WorkflowCanvasGrid(transform: WorkflowCanvasTransform())
+                WorkflowFittedCanvas(definition: workflow.definition) {
+                    workflowGraphContent(workflow)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                Text("Drag to arrange · drag a port to connect")
+                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 11).padding(.vertical, 5)
+                    .background(Capsule().fill(Theme.bg.opacity(0.85)))
+                    .padding(.bottom, 13)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.bg)
         }
     }
 
-    private func workflowCanvas(_ workflow: PulseWorkflowVersion) -> some View {
+    private func workflowGraphContent(_ workflow: PulseWorkflowVersion) -> some View {
         ZStack(alignment: .topLeading) {
-            DotGrid()
             Canvas { context, _ in
                 for edge in workflow.definition.edges {
                     guard let start = WorkflowCardGeometry.outputPort(for: edge.from, in: workflow.definition),
                           let end = WorkflowCardGeometry.inputPort(for: edge.to, in: workflow.definition) else { continue }
-                    context.stroke(edgePath(start, end),
-                                   with: .color(Theme.textSecondary.opacity(0.52)), lineWidth: 1.5)
+                    drawWorkflowWire(context, from: start, to: end,
+                                     color: Theme.textSecondary.opacity(0.68), lineWidth: 2)
                 }
             }
             ForEach(workflow.definition.nodes) { node in
@@ -1350,19 +1409,20 @@ struct PulseWorkflowEditor: View {
                         .position(x: point.x, y: point.y)
                 }
             }
-            Label("Drag nodes to arrange. Drag a port to connect.", systemImage: "cursorarrow.motionlines")
-                .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 10).padding(.vertical, 7).background(Theme.bg.opacity(0.88))
-                .clipShape(RoundedRectangle(cornerRadius: 8)).padding(14)
         }
     }
 
     @ViewBuilder private var runCanvas: some View {
         if let workflow = store.runVersion, let run = store.latestRun {
             if snapshot {
-                runGraph(workflow, run: run)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Theme.bg)
+                ZStack(alignment: .topLeading) {
+                    WorkflowCanvasGrid(transform: WorkflowCanvasTransform())
+                    WorkflowFittedCanvas(definition: workflow.definition) {
+                        runGraphContent(workflow, run: run)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.bg)
             } else {
                 GeometryReader { viewport in
                     ScrollView([.horizontal, .vertical]) {
@@ -1379,13 +1439,26 @@ struct PulseWorkflowEditor: View {
 
     private func runGraph(_ workflow: PulseWorkflowVersion, run: PulseWorkflowRun) -> some View {
         ZStack(alignment: .topLeading) {
-            DotGrid()
+            WorkflowCanvasGrid(transform: WorkflowCanvasTransform())
+            runGraphContent(workflow, run: run)
+        }
+    }
+
+    private func runGraphContent(_ workflow: PulseWorkflowVersion, run: PulseWorkflowRun) -> some View {
+        ZStack(alignment: .topLeading) {
             Canvas { context, _ in
                 for edge in workflow.definition.edges {
                     guard let start = WorkflowCardGeometry.outputPort(for: edge.from, in: workflow.definition),
                           let end = WorkflowCardGeometry.inputPort(for: edge.to, in: workflow.definition) else { continue }
-                    context.stroke(edgePath(start, end),
-                                   with: .color(Theme.textSecondary.opacity(0.52)), lineWidth: 1.5)
+                    drawWorkflowWire(context, from: start, to: end,
+                                     color: Theme.textSecondary.opacity(0.68), lineWidth: 2)
+                    if let count = run.nodeRun(edge.from)?.itemCount {
+                        let mid = workflowWirePoint(start, end, t: 0.5)
+                        context.draw(Text("\(count) \(count == 1 ? "item" : "items")")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary),
+                                     at: CGPoint(x: mid.x, y: mid.y - 13))
+                    }
                 }
             }
             ForEach(workflow.definition.nodes) { node in
@@ -1617,45 +1690,156 @@ struct PulseWorkflowEditor: View {
     }
 }
 
+func drawWorkflowWire(_ context: GraphicsContext, from start: CGPoint, to end: CGPoint,
+                      color: Color, lineWidth: CGFloat, dash: [CGFloat] = [], arrow: Bool = true) {
+    context.stroke(edgePath(start, end), with: .color(color),
+                   style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, dash: dash))
+    guard arrow else { return }
+    let ahead = workflowWirePoint(start, end, t: 0.56)
+    let behind = workflowWirePoint(start, end, t: 0.44)
+    let angle = atan2(ahead.y - behind.y, ahead.x - behind.x)
+    let mid = workflowWirePoint(start, end, t: 0.5)
+    let length: CGFloat = 5.5
+    var head = Path()
+    head.move(to: CGPoint(x: mid.x + cos(angle) * length, y: mid.y + sin(angle) * length))
+    head.addLine(to: CGPoint(x: mid.x + cos(angle + 2.4) * length, y: mid.y + sin(angle + 2.4) * length))
+    head.addLine(to: CGPoint(x: mid.x + cos(angle - 2.4) * length, y: mid.y + sin(angle - 2.4) * length))
+    head.closeSubpath()
+    context.fill(head, with: .color(color))
+}
+
+func workflowCardShape(trigger: Bool) -> UnevenRoundedRectangle {
+    let radius = WorkflowCardGeometry.cornerRadius
+    let leading = trigger ? WorkflowCardGeometry.size.height / 2 : radius
+    return UnevenRoundedRectangle(topLeadingRadius: leading, bottomLeadingRadius: leading,
+                                  bottomTrailingRadius: radius, topTrailingRadius: radius,
+                                  style: .continuous)
+}
+
+func workflowNodeIsTrigger(_ spec: WorkflowCatalogNode?) -> Bool {
+    spec?.category == "trigger"
+}
+
+struct WorkflowCardFace: View {
+    var spec: WorkflowCatalogNode?
+    var fallbackType: String
+    var stroke: Color
+    var strokeWidth: CGFloat
+    var fillOpacity: Double = 1
+
+    var body: some View {
+        let trigger = workflowNodeIsTrigger(spec)
+        let shape = workflowCardShape(trigger: trigger)
+        ZStack {
+            shape.fill(Theme.surface.opacity(fillOpacity))
+            Image(systemName: spec?.icon ?? "puzzlepiece")
+                .font(.system(size: 30, weight: .medium))
+                .foregroundStyle(graphTint(spec?.tint ?? "accent"))
+        }
+        .overlay(shape.stroke(stroke, lineWidth: strokeWidth))
+        .overlay(alignment: .bottomLeading) {
+            if trigger {
+                Image(systemName: "bolt.fill").font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.leading, 12).padding(.bottom, 10)
+            }
+        }
+        .frame(width: WorkflowCardGeometry.size.width, height: WorkflowCardGeometry.size.height)
+    }
+}
+
+struct WorkflowCardName: View {
+    var text: String
+    var muted: Bool = false
+
+    var body: some View {
+        Text(text).font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(muted ? Theme.textSecondary : Theme.textPrimary)
+            .lineLimit(1)
+            .frame(maxWidth: 150)
+            .fixedSize()
+            .offset(y: WorkflowCardGeometry.size.height / 2 + 16)
+            .allowsHitTesting(false)
+    }
+}
+
+struct WorkflowPortDot: View {
+    var body: some View {
+        Circle().fill(Theme.bg)
+            .overlay(Circle().stroke(Theme.textSecondary.opacity(0.55), lineWidth: 1.5))
+            .frame(width: 8, height: 8)
+    }
+}
+
 struct WorkflowNodeCard: View {
     let node: PulseWorkflowNode
     var spec: WorkflowCatalogNode?
     var selected: Bool
     var connecting: Bool = false
     var inputHighlighted: Bool = false
+    var hovered: Bool = false
+    var canDelete: Bool = false
     var portHitDiameter: CGFloat = 2 * WorkflowCardGeometry.portHitRadius
     var onInput: (() -> Void)? = nil
     var onOutput: (() -> Void)? = nil
     var onOutputDragChanged: ((CGPoint) -> Void)? = nil
     var onOutputDragEnded: ((CGPoint) -> Void)? = nil
+    var onConfigure: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
+
+    private var strokeColor: Color {
+        if connecting || selected { return Theme.accent }
+        if hovered { return Theme.accent.opacity(0.45) }
+        return Theme.hairline
+    }
+
+    private var showsActions: Bool {
+        hovered && (onConfigure != nil || (canDelete && onDelete != nil))
+    }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: spec?.icon ?? "puzzlepiece").font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(graphTint(spec?.tint ?? "accent"))
-                .frame(width: 34, height: 34).background(graphTint(spec?.tint ?? "accent").opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(spec?.label ?? workflowDisplayName(node.type)).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-                Text(spec?.categoryLabel ?? "Node").font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary)
+        WorkflowCardFace(spec: spec, fallbackType: node.type,
+                         stroke: strokeColor, strokeWidth: connecting || selected ? 2 : 1)
+            .shadow(color: Theme.bg.opacity(0.35), radius: selected || hovered ? 9 : 4, y: 2)
+            .overlay { WorkflowCardName(text: spec?.label ?? workflowDisplayName(node.type)) }
+            .overlay(alignment: .leading) { inputPort.offset(x: onInput != nil ? -portHitDiameter / 2 : -4) }
+            .overlay(alignment: .trailing) { outputPort.offset(x: onOutput != nil ? portHitDiameter / 2 : 4) }
+            .overlay(alignment: .top) {
+                if showsActions { quickActions.offset(y: -27) }
             }
-            Spacer(minLength: 0)
+    }
+
+    private var quickActions: some View {
+        HStack(spacing: 2) {
+            if let onConfigure {
+                quickAction("slider.horizontal.3", help: "Configure", action: onConfigure)
+            }
+            if canDelete, let onDelete {
+                quickAction("trash", help: "Delete", action: onDelete)
+            }
         }
-        .padding(.horizontal, 11)
-        .frame(width: WorkflowCardGeometry.size.width, height: WorkflowCardGeometry.size.height)
-        .background(selected ? Theme.surface.opacity(1) : Theme.surface.opacity(0.9))
-        .clipShape(RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(connecting || selected ? Theme.accent : Theme.hairline, lineWidth: connecting || selected ? 1.5 : 1))
-        .shadow(color: Theme.bg.opacity(0.35), radius: selected ? 8 : 3, y: 2)
-        .overlay(alignment: .leading) { inputPort.offset(x: onInput != nil ? -portHitDiameter / 2 : -4) }
-        .overlay(alignment: .trailing) { outputPort.offset(x: onOutput != nil ? portHitDiameter / 2 : 4) }
+        .padding(3)
+        .background(Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.hairline, lineWidth: 1))
+        .shadow(color: Theme.bg.opacity(0.4), radius: 6, y: 2)
+    }
+
+    private func quickAction(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 24, height: 21).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     @ViewBuilder private var inputPort: some View {
         if let onInput {
             WorkflowEditorPort(highlighted: inputHighlighted, hitDiameter: portHitDiameter, onTap: onInput)
         } else {
-            PortDot()
+            WorkflowPortDot()
         }
     }
 
@@ -1664,7 +1848,7 @@ struct WorkflowNodeCard: View {
             WorkflowEditorPort(highlighted: connecting, hitDiameter: portHitDiameter, onTap: onOutput,
                                dragChanged: onOutputDragChanged, dragEnded: onOutputDragEnded)
         } else {
-            PortDot()
+            WorkflowPortDot()
         }
     }
 }
@@ -1681,9 +1865,9 @@ struct WorkflowEditorPort: View {
 
     var body: some View {
         Circle().fill(Theme.bg)
-            .overlay(Circle().stroke(emphasized ? Theme.accent : .white.opacity(0.22),
-                                     lineWidth: emphasized ? 1.5 : 1))
-            .frame(width: emphasized ? 11 : 7, height: emphasized ? 11 : 7)
+            .overlay(Circle().stroke(emphasized ? Theme.accent : Theme.textSecondary.opacity(0.55),
+                                     lineWidth: 1.5))
+            .frame(width: emphasized ? 13 : 8, height: emphasized ? 13 : 8)
             .frame(width: hitDiameter, height: hitDiameter)
             .contentShape(Circle())
             .onHover { hovering = $0 }
@@ -1697,6 +1881,22 @@ struct WorkflowEditorPort: View {
     }
 }
 
+struct WorkflowFittedCanvas<Content: View>: View {
+    var definition: PulseWorkflowDefinition
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        GeometryReader { viewport in
+            let transform = WorkflowCardGeometry.bounds(of: definition)
+                .map { WorkflowCanvasTransform.fitting($0, in: viewport.size) }
+                ?? WorkflowCanvasTransform()
+            content
+                .scaleEffect(transform.scale, anchor: .topLeading)
+                .offset(transform.offset)
+        }
+    }
+}
+
 struct WorkflowCanvasGrid: View {
     var transform: WorkflowCanvasTransform
 
@@ -1704,7 +1904,7 @@ struct WorkflowCanvasGrid: View {
         Canvas { context, size in
             let step = 24 * transform.scale
             guard step >= 7 else { return }
-            let dot = max(1.2, 2 * transform.scale)
+            let dot = max(1, 1.6 * transform.scale)
             let phaseX = (transform.offset.width + 12 * transform.scale).truncatingRemainder(dividingBy: step)
             let phaseY = (transform.offset.height + 12 * transform.scale).truncatingRemainder(dividingBy: step)
             var y = phaseY - step
@@ -1712,7 +1912,7 @@ struct WorkflowCanvasGrid: View {
                 var x = phaseX - step
                 while x < size.width {
                     context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: dot, height: dot)),
-                                 with: .color(.white.opacity(0.05)))
+                                 with: .color(Theme.textSecondary.opacity(0.14)))
                     x += step
                 }
                 y += step
@@ -1769,22 +1969,11 @@ struct WorkflowNodeCardPreview: View {
     let spec: WorkflowCatalogNode
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: spec.icon).font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(graphTint(spec.tint))
-                .frame(width: 34, height: 34).background(graphTint(spec.tint).opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(spec.label).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-                Text(spec.categoryLabel).font(.system(size: 9.5)).foregroundStyle(Theme.textSecondary)
-            }
-            Spacer(minLength: 0)
+        VStack(spacing: 6) {
+            WorkflowCardFace(spec: spec, fallbackType: spec.type, stroke: Theme.accent, strokeWidth: 1.5)
+            Text(spec.label).font(.system(size: 11, weight: .semibold)).lineLimit(1)
         }
-        .padding(.horizontal, 11)
-        .frame(width: WorkflowCardGeometry.size.width, height: WorkflowCardGeometry.size.height)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 11))
-        .overlay(RoundedRectangle(cornerRadius: 11).stroke(Theme.accent, lineWidth: 1.5))
+        .padding(4)
     }
 }
 

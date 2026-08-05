@@ -3920,6 +3920,8 @@ enum SelfTest {
                                                           "pulse.cover_art", "pulse.visual_review", "pulse.cover_retry", "pulse.inject"],
                   editorCatalog.label(for: "pulse.inject") == "Inject",
                   editorCatalog.label(for: "flow.mystery_step") == "Mystery step",
+                  editorCatalog.label(for: "LegacyNode") == "Legacy node",
+                  editorCatalog.label(for: "vendor.legacyFetchStep") == "Legacy fetch step",
                   editorCatalog.node(for: "pulse.triage")?.description.hasPrefix("Pulls in") == true,
                   editorCatalog.nodes.allSatisfy({ !$0.description.isEmpty }) else {
                 print("SELFTEST ERROR: workflow catalog parse"); exit(1)

@@ -91,8 +91,21 @@ struct WorkflowSchemaField: Hashable, Identifiable {
 
 func workflowDisplayName(_ type: String) -> String {
     let tail = type.split(separator: ".").last.map(String.init) ?? type
-    let words = tail.split(separator: "_").joined(separator: " ")
-    return words.isEmpty ? tail : words.prefix(1).uppercased() + words.dropFirst()
+    var words: [String] = []
+    var current = ""
+    for character in tail {
+        if character == "_" || character == "-" {
+            if !current.isEmpty { words.append(current); current = "" }
+        } else if character.isUppercase, current.last?.isLowercase == true {
+            words.append(current)
+            current = String(character)
+        } else {
+            current.append(character)
+        }
+    }
+    if !current.isEmpty { words.append(current) }
+    let joined = words.joined(separator: " ").lowercased()
+    return joined.isEmpty ? tail : joined.prefix(1).uppercased() + joined.dropFirst()
 }
 
 struct WorkflowCatalogNode: Hashable, Identifiable {

@@ -73,6 +73,7 @@ struct NativeAdvancedControlsEditor: View {
                 ModelParameterRow(
                     declaration: declaration, model: model, profile: profile,
                     value: overrides.values[declaration.id])
+                    .id("\(model)|\(declaration.id.rawValue)")
             }
         }
         .padding(10).frame(maxWidth: .infinity, alignment: .leading)

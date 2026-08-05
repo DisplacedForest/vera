@@ -753,7 +753,7 @@ struct ComposerField: View {
         config.clearRejectedParameter(model: prompt.model, rejection: prompt.rejection)
         try? config.save()
         if let resolved = config.nativeResolved { store.applyNativeOptions(resolved) }
-        store.retryLastTurn()
+        store.retryLastTurn(conversationID: prompt.conversationID)
     }
 
     private func pickFiles() {

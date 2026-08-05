@@ -486,6 +486,26 @@ enum SelfTest {
               envWins.kwargs.first?.source == .environment else {
             print("SELFTEST ERROR: environment kwargs precedence"); exit(1)
         }
+        for suppressing in ["{}", "not json"] {
+            let suppressed = NativeChatRequestOptions.resolve(
+                overrides: overrides, profile: reasoningProfile,
+                savedTemplateKwargs: "{\"legacy\": true}",
+                environmentTemplateKwargs: suppressing)
+            guard suppressed.kwargs.isEmpty else {
+                print("SELFTEST ERROR: environment kwargs wholesale suppression"); exit(1)
+            }
+        }
+        var duplicated = overrides
+        duplicated.custom = [
+            CustomModelParameter(id: "d1", key: "min_p", kind: .number, raw: "0.05"),
+            CustomModelParameter(id: "d2", key: "min_p", kind: .number, raw: "0.2"),
+        ]
+        let deduped = NativeChatRequestOptions.resolve(
+            overrides: duplicated, profile: reasoningProfile,
+            savedTemplateKwargs: nil, environmentTemplateKwargs: nil)
+        guard deduped.kwargs.map(\.key) == ["enable_thinking"] else {
+            print("SELFTEST ERROR: duplicate custom keys dropped"); exit(1)
+        }
 
         let base = URL(string: "http://localhost:9/v1")!
         let plainClient = NativeChatClient(config: NativeChatConfig(
@@ -594,6 +614,19 @@ enum SelfTest {
         guard trimmedTools.map(\.role) == ["system", "user"] else {
             print("SELFTEST ERROR: tool round trims atomically \(trimmedTools.map(\.role))"); exit(1)
         }
+        guard trimmedHistory.drop(while: { $0.role == "system" }).first?.role == "user" else {
+            print("SELFTEST ERROR: trim keeps whole turns"); exit(1)
+        }
+        let unevenTurns = [
+            NativeChatMessage(role: "system", content: "sys"),
+            NativeChatMessage(role: "user", content: filler + filler),
+            NativeChatMessage(role: "assistant", content: "short"),
+            NativeChatMessage(role: "user", content: "latest"),
+        ]
+        guard NativeChatHistoryBuilder.trimmed(unevenTurns, ceiling: 60).map(\.role)
+            == ["system", "user"] else {
+            print("SELFTEST ERROR: turn-unit trim drops orphaned replies"); exit(1)
+        }
 
         guard ModelParameterRejectionClassifier.classify(
                 detail: "Unknown parameter: 'top_k'",
@@ -616,6 +649,29 @@ enum SelfTest {
               ModelParameterRejectionClassifier.classify(
                 detail: "connection refused", options: resolved) == nil else {
             print("SELFTEST ERROR: rejection classification"); exit(1)
+        }
+        guard ModelParameterRejectionClassifier.classify(
+                error: NativeChatClient.ClientError.http(
+                    400, "Field 'top_k': type must be number"),
+                options: NativeChatRequestOptions(
+                    topLevel: [NativeChatRequestOptions.Entry(
+                        key: "top_k", value: .number(40), source: .override)],
+                    kwargs: [], streamingOverride: nil, contextCeiling: nil))?.key == "top_k",
+              ModelParameterRejectionClassifier.classify(
+                error: NativeChatClient.ClientError.server("temperature out of range"),
+                options: resolved)?.parameterID == .temperature,
+              ModelParameterRejectionClassifier.classify(
+                error: NativeChatClient.ClientError.malformedEvent,
+                options: resolved) == nil,
+              ModelParameterRejectionClassifier.classify(
+                error: NativeChatClient.ClientError.interrupted,
+                options: resolved) == nil,
+              ModelParameterRejectionClassifier.classify(
+                error: NativeChatClient.ClientError.http(500, "temperature service crashed"),
+                options: resolved) == nil,
+              ModelParameterRejectionClassifier.classify(
+                error: URLError(.timedOut), options: resolved) == nil else {
+            print("SELFTEST ERROR: rejection classification error gating"); exit(1)
         }
 
         let trace = NativeRequestTrace.make(

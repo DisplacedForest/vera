@@ -465,15 +465,12 @@ enum NativeChatHistoryBuilder {
         var total = result.reduce(0) { $0 + cost($1) }
         while total > budget {
             guard let index = result.firstIndex(where: { $0.role != "system" }) else { break }
-            let remaining = result.count - index
-            guard remaining > 1 else { break }
+            guard result.count - index > 1 else { break }
             let dropped = result.remove(at: index)
             total -= cost(dropped)
-            if !dropped.toolCalls.isEmpty {
-                while index < result.count, result[index].role == "tool" {
-                    let tool = result.remove(at: index)
-                    total -= cost(tool)
-                }
+            while index < result.count - 1, result[index].role != "user" {
+                let follower = result.remove(at: index)
+                total -= cost(follower)
             }
         }
         return result

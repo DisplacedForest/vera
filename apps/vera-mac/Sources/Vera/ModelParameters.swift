@@ -440,8 +440,8 @@ struct NativeChatRequestOptions: Equatable, Sendable {
         }
         topLevel.sort { $0.key < $1.key }
         var kwargs: [Entry] = []
-        if let environment = parsedKwargs(environmentTemplateKwargs) {
-            kwargs = environment
+        if environmentTemplateKwargs?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            kwargs = (parsedKwargs(environmentTemplateKwargs) ?? [:])
                 .map { Entry(key: $0.key, value: $0.value, source: .environment) }
                 .sorted { $0.key < $1.key }
         } else {
@@ -452,8 +452,13 @@ struct NativeChatRequestOptions: Equatable, Sendable {
                 }
             }
             for entry in declaredKwargs { merged[entry.key] = entry }
+            var keyCounts: [String: Int] = [:]
             for parameter in overrides.custom {
-                guard parameter.validationError(siblingKeys: []) == nil,
+                keyCounts[parameter.trimmedKey, default: 0] += 1
+            }
+            for parameter in overrides.custom {
+                guard keyCounts[parameter.trimmedKey] == 1,
+                      parameter.validationError(siblingKeys: []) == nil,
                       let value = parameter.jsonValue() else { continue }
                 merged[parameter.trimmedKey] = Entry(
                     key: parameter.trimmedKey, value: value, source: .custom)
@@ -481,6 +486,21 @@ struct ModelParameterRejection: Equatable, Sendable {
 }
 
 enum ModelParameterRejectionClassifier {
+    static func classify(
+        error: Error, options: NativeChatRequestOptions
+    ) -> ModelParameterRejection? {
+        guard let client = error as? NativeChatClient.ClientError else { return nil }
+        switch client {
+        case .http(let status, let detail):
+            guard (400..<500).contains(status) else { return nil }
+            return classify(detail: detail, options: options)
+        case .server(let detail):
+            return classify(detail: detail, options: options)
+        case .invalidResponse, .malformedEvent, .noUsableModels, .interrupted:
+            return nil
+        }
+    }
+
     static func classify(
         detail: String, options: NativeChatRequestOptions
     ) -> ModelParameterRejection? {

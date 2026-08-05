@@ -1433,9 +1433,9 @@ final class ChatStore: ObservableObject {
         nativeTransport = NativeChatClient(config: cfg)
     }
 
-    func retryLastTurn() {
+    func retryLastTurn(conversationID: String? = nil) {
         guard !generating, let repository else { return }
-        guard let id = selectedID,
+        guard let id = conversationID ?? selectedID,
               let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
         let messages = conversations[idx].messages
         guard let replyIndex = messages.indices.last, replyIndex >= 1,
@@ -1623,7 +1623,7 @@ final class ChatStore: ObservableObject {
             } catch {
                 streamStatus = nil
                 if let rejection = ModelParameterRejectionClassifier.classify(
-                    detail: error.localizedDescription, options: nativeConfig.options) {
+                    error: error, options: nativeConfig.options) {
                     parameterRejection = NativeParameterRejectionPrompt(
                         rejection: rejection, model: nativeConfig.model,
                         detail: error.localizedDescription, conversationID: id)

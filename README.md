@@ -27,14 +27,12 @@ All endpoints, model servers, thresholds, and behavioral defaults are configurat
 Three components, connected by URLs:
 
 - **An OpenAI-compatible model endpoint**: native text chat connects directly to its `/v1` API and keeps conversation history on the Mac.
-- **[Open WebUI](https://github.com/open-webui/open-webui)** (optional, transitional): the existing tool and skill surfaces remain available while those capabilities move into the native engine.
 - **vera-api** (optional): a single FastAPI service that lights up the ambient and experimental surfaces; each capability is one router: research briefings, ambient watch veins, home intelligence, kitchen inventory, document knowledge collections with retrieval, memory grooming, a scheduler, and a typed confirm-before-acting actuation layer. The app is complete without it; connecting its URL adds these surfaces.
 - **Vera.app**: a native SwiftUI macOS client: chat, the Pulse feed, veins, memory curation, integrations, and voice.
 
 ```mermaid
 flowchart LR
     APP["Vera.app<br/>native macOS client"]
-    OWUI["Open WebUI<br/>tools · skills"]
     LLM["any OpenAI-compatible<br/>LLM server"]
     API["vera-api<br/>one container, every capability"]
     SEARX["SearXNG"]
@@ -43,9 +41,7 @@ flowchart LR
     SAT["satellite contracts<br/>voice · image · vision · coder"]
 
     APP --> LLM
-    OWUI --> LLM
     APP --> API
-    OWUI --> API
     API --> LLM
     API --> SEARX
     API --> HA
@@ -60,11 +56,11 @@ Run everything on one machine or spread it across several: topology is configura
 
 ### Chat: native, streaming, and local
 
-Text chat streams directly from the selected saved OpenAI-compatible endpoint. Settings lists every model identifier returned by discovery, shows which model is selected and why, keeps the last successful model list for offline reference, and preserves the selection across relaunches. Conversations, messages, and inspected tool activity live in `~/.vera/vera.sqlite`, so chat works without Open WebUI or vera-api. Each request's system context is assembled at send time in a fixed order: a compact shipped policy block, the active persona, user context, per-conversation instructions, the current date, time, and owner name, any recalled memory facts, and usage contracts for exactly the tools and presentation formats available to the selected model. Disabling a tool or switching to a model without tool support removes its instructions from the next request.
+Text chat streams directly from the selected saved OpenAI-compatible endpoint. Settings lists every model identifier returned by discovery, shows which model is selected and why, keeps the last successful model list for offline reference, and preserves the selection across relaunches. Conversations, messages, and inspected tool activity live in `~/.vera/vera.sqlite`, so chat works without vera-api. Each request's system context is assembled at send time in a fixed order: a compact shipped policy block, the active persona, user context, per-conversation instructions, the current date, time, and owner name, any recalled memory facts, and usage contracts for exactly the tools and presentation formats available to the selected model. Disabling a tool or switching to a model without tool support removes its instructions from the next request.
 
 A native prompt library manages personas, user context, and reusable prompts in the local database with revision history, exact restore, markdown import and export, and a request preview that shows the read-only policy block above the user-authored sections. The previous single system prompt appears as the default persona after upgrade with no user action, and reusable prompts insert into the composer as message text rather than system text.
 
-Native chat uses the standard OpenAI Chat Completions `tools` and streamed `tool_calls` fields. It validates names and JSON arguments before local execution, returns ordinary `tool` messages to the model, and continues until the model sends its final answer. The loop stops after four tool rounds or eight calls. Each executor has a 20-second deadline unless a tool declares its own. Limits, denials, timeouts, and failures retain received text and activity. Apple Reminders is the first built-in. It is disabled by default, requests macOS permission when deliberately enabled in Settings, Tools, and supports explicit chat requests to list, create, and complete reminders. Web search and deep research are built-ins too, riding the configured vera-api URL: search answers from live results, and research runs a long multi-step pass (up to five minutes on its own deadline) that returns a cited report rendered with inline citation chips and a numbered sources row, persisted with the conversation. Both stay disabled by default and show an unconfigured hint until a vera-api URL is set. The separate Settings, Plugins switch controls optional legacy service wiring and does not expose a native chat tool. Each call appears as a live expandable chip and remains with the conversation after relaunch. Endpoints without standard tool calling continue as text chat and receive no private text protocol. Voice, additional native tools, and MCP remain separate work; chat history starts fresh on a native install by design, with Open WebUI knowledge collections migrated server-side into the document store.
+Native chat uses the standard OpenAI Chat Completions `tools` and streamed `tool_calls` fields. It validates names and JSON arguments before local execution, returns ordinary `tool` messages to the model, and continues until the model sends its final answer. The loop stops after four tool rounds or eight calls. Each executor has a 20-second deadline unless a tool declares its own. Limits, denials, timeouts, and failures retain received text and activity. Apple Reminders is the first built-in. It is disabled by default, requests macOS permission when deliberately enabled in Settings, Tools, and supports explicit chat requests to list, create, and complete reminders. Web search and deep research are built-ins too, riding the configured vera-api URL: search answers from live results, and research runs a long multi-step pass (up to five minutes on its own deadline) that returns a cited report rendered with inline citation chips and a numbered sources row, persisted with the conversation. Both stay disabled by default and show an unconfigured hint until a vera-api URL is set. The separate Settings, Plugins switch controls optional legacy service wiring and does not expose a native chat tool. Each call appears as a live expandable chip and remains with the conversation after relaunch. Endpoints without standard tool calling continue as text chat and receive no private text protocol. Voice, additional native tools, and MCP remain separate work; chat history starts fresh on a native install by design.
 
 Additional tools are config, not code: drop a JSON declaration in `~/.vera/tools.d/` and the app loads it as a native chat tool alongside the built-ins, complete with its own Settings toggle, model-facing description, and confirmation policy. The app bundles two declarations this way, an actions surface and a self-authoring/journal surface over vera-api routes, that light up once the vera-api base URL is configured. Anyone can add their own by pointing a declaration at any HTTP endpoint, such as a home inventory service reachable at `http://inventory.example:8090/items`.
 
@@ -129,7 +125,6 @@ Every external dependency is a configuration slot with defined behavior when emp
 | Slot | Contract | Powers | When absent |
 |---|---|---|---|
 | Main LLM | OpenAI `/v1` | Native text chat and configured generation | Chat reports unconfigured; API surfaces still serve |
-| Open WebUI | OWUI API | Transitional server-side tools and the legacy voice transport | Everything but voice still works |
 | SearXNG | `/search` JSON | Research, watcher veins, image sourcing | Search-dependent features report unconfigured |
 | Dream/coder LLM | OpenAI `/v1` + tool calls | Nightly consolidation, fact verification | Dreaming skips; daily features unaffected |
 | Image gen | OpenAI Images API | Pulse cover art | Cards use the best researched image instead |
@@ -151,7 +146,7 @@ Every external dependency is a configuration slot with defined behavior when emp
 
 <br>
 
-One Linux server runs Open WebUI, vera-api, SearXNG, and an RTX 3090 serving the main model via llama-swap. A Mac Studio runs the MLX satellite services (image generation, vision, the dream/coder model) on demand, and a Mac mini runs voice and the Apple Reminders bridge. A single capable machine can run the entire stack, and any component can be replaced by a hosted equivalent by changing one URL.
+One Linux server runs vera-api, SearXNG, and an RTX 3090 serving the main model via llama-swap. A Mac Studio runs the MLX satellite services (image generation, vision, the dream/coder model) on demand, and a Mac mini runs voice and the Apple Reminders bridge. A single capable machine can run the entire stack, and any component can be replaced by a hosted equivalent by changing one URL.
 
 </details>
 
@@ -183,7 +178,7 @@ Onboarding walks through a friendly endpoint name, an OpenAI-compatible URL endi
 
 <div align="center"><img src="docs/assets/onboarding.png" alt="Onboarding" width="700"></div>
 
-The full walkthrough, including native chat, optional Open WebUI wiring, and every integration: **[docs/SETUP.md](docs/SETUP.md)**.
+The full walkthrough, including native chat and every integration: **[docs/SETUP.md](docs/SETUP.md)**.
 
 ## Constraints
 

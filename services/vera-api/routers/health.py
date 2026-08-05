@@ -23,9 +23,6 @@ def _services() -> list[dict]:
     from urllib.parse import urlparse
 
     svcs: list[dict] = [{"name": "vera-api", "self": True}]
-    owui = os.environ.get("OWUI_BASE", "").rstrip("/")
-    if owui:
-        svcs.append({"name": "open-webui", "url": f"{owui}/health"})
     vera = os.environ.get("VERA_BASE", "").rstrip("/")
     if vera:
         svcs.append({"name": "llm-server", "url": f"{vera}/models"})

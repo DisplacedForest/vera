@@ -167,13 +167,13 @@ def _p_skill(args):
     name = (args.get("name") or "(unnamed)").strip()
     content = (args.get("content") or "").strip()
     opening = content.splitlines()[0][:80] if content else ""
-    return f"Author OWUI skill '{name}' ({len(content)} chars). Opens: {opening}"
+    return f"Author skill '{name}' ({len(content)} chars). Opens: {opening}"
 
 
 SPEC = {
-    "owui.skill_upsert": {"validate": _v_skill, "preview": _p_skill, "risk": "high", "reversible": True,
+    "authoring.skill_upsert": {"validate": _v_skill, "preview": _p_skill, "risk": "high", "reversible": True,
                           "autonomous": False,
-                          "summary": "create or modify an OWUI skill (Vera's own cognition config)",
+                          "summary": "create or modify a skill (Vera's own cognition config)",
                           "args": '{"name": "...", "content": "...", "id": "...", "description": "..."}'},
     "ha.service": {"validate": _v_ha, "preview": _p_ha, "risk": "medium", "reversible": True,
                    "autonomous": False,

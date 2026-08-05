@@ -1,9 +1,3 @@
-"""Self-authoring revision log — version history for Vera's self-edited docs.
-
-OWUI Skills holds the *live* copy of each skill/heartbeat; this holds the **history** so every
-self-authored change is auditable + revertible. One row per version written. Mirrors the simple
-append-log pattern used elsewhere.
-"""
 import os
 import sqlite3
 import time
@@ -30,6 +24,15 @@ def init():
             )"""
         )
         c.execute("CREATE INDEX IF NOT EXISTS idx_rev_target ON revision(target)")
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS skill (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                description TEXT,
+                content TEXT,
+                updated INTEGER
+            )"""
+        )
 
 
 def snapshot(target, content, note=None):
@@ -58,3 +61,45 @@ def get(rev_id):
     with _conn() as c:
         r = c.execute("SELECT * FROM revision WHERE id=?", (rev_id,)).fetchone()
     return dict(r) if r else None
+
+
+def skill_upsert(sid, name, description, content):
+    init()
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO skill(id, name, description, content, updated) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, "
+            "content=excluded.content, updated=excluded.updated",
+            (sid, name or sid, description or "", content, int(time.time())),
+        )
+    return sid
+
+
+def skill_get(sid):
+    init()
+    with _conn() as c:
+        r = c.execute("SELECT * FROM skill WHERE id=?", (sid,)).fetchone()
+        if r:
+            return dict(r)
+        rev = c.execute(
+            "SELECT content FROM revision WHERE target=? ORDER BY id DESC LIMIT 1",
+            (f"skill:{sid}",),
+        ).fetchone()
+        if not rev:
+            return None
+        c.execute(
+            "INSERT OR IGNORE INTO skill(id, name, description, content, updated) VALUES(?,?,?,?,?)",
+            (sid, sid, "", rev["content"], int(time.time())),
+        )
+        r = c.execute("SELECT * FROM skill WHERE id=?", (sid,)).fetchone()
+    return dict(r) if r else None
+
+
+def skill_list():
+    init()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, name, description, length(content) AS size, updated "
+            "FROM skill ORDER BY id"
+        ).fetchall()
+    return [dict(r) for r in rows]

@@ -1,12 +1,5 @@
 """Agentic activity feed and canvas graph — what Vera does on her own, as data.
 
-The activity feed is one normalized, newest-first list of autonomous events, merged
-from the heartbeat outcome log, the action audit log, the scheduler run log, and OWUI
-automation runs. Event shape: {ts, source: scheduler|heartbeat|action|owui, kind,
-title, detail, tool?, ref?}. `tool` carries attribution when known (action verb,
-producer job id). Each source contributes independently: a missing store or an
-unreachable OWUI yields an empty contribution, never an error.
-
 The graph is the canvas manifest: every flow (scheduler job + the heartbeat), the
 surface each one feeds, and per-flow presentation/topology metadata. Declarative in
 the vein-catalog spirit — the app renders whatever this says; a new capability is a
@@ -14,11 +7,8 @@ new entry here, never an app release. This is also the reserved editor lane: a
 server-declared graph can later accept mutations.
 """
 import logging
-import os
-import time
 from datetime import datetime
 
-import aiohttp
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
@@ -28,9 +18,6 @@ from . import workflow_store
 
 log = logging.getLogger("agentic")
 router = APIRouter()
-
-OWUI_BASE = os.environ.get("OWUI_BASE", "").rstrip("/")
-OWUI_KEY = os.environ.get("OWUI_KEY", "")
 
 # Human titles for heartbeat outcome kinds; unknown kinds fall back to the kind itself.
 _HEARTBEAT_TITLES = {
@@ -98,43 +85,6 @@ def _scheduler_events(hours: int) -> list[dict]:
             "tool": r["job_id"],
             "ref": None,
         })
-    return out
-
-
-async def _owui_events(hours: int, cutoff: float) -> list[dict]:
-    """Automation runs from OWUI's API. While OWUI's automations engine is disabled
-    these endpoints refuse, which reads as an empty contribution."""
-    if not OWUI_BASE or not OWUI_KEY:
-        return []
-    headers = {"Authorization": f"Bearer {OWUI_KEY}"}
-    timeout = aiohttp.ClientTimeout(total=10)
-    out = []
-    async with aiohttp.ClientSession() as s:
-        async with s.get(f"{OWUI_BASE}/api/v1/automations/list",
-                         headers=headers, timeout=timeout) as r:
-            if r.status != 200:
-                return []
-            automations = (await r.json()).get("items") or []
-        for a in automations:
-            prompt = ((a.get("data") or {}).get("prompt") or "")[:300]
-            async with s.get(f"{OWUI_BASE}/api/v1/automations/{a['id']}/runs",
-                             headers=headers, timeout=timeout) as r:
-                if r.status != 200:
-                    continue
-                runs = await r.json()
-            for run in runs:
-                ts = float(run.get("created_at") or 0) / 1e9  # OWUI stamps nanoseconds
-                if ts <= cutoff:
-                    continue
-                out.append({
-                    "ts": ts,
-                    "source": "owui",
-                    "kind": run.get("status") or "unknown",
-                    "title": a.get("name") or "OWUI automation",
-                    "detail": run.get("error") or prompt,
-                    "tool": "owui.automation",
-                    "ref": run.get("chat_id"),
-                })
     return out
 
 
@@ -367,7 +317,6 @@ async def promote_workflow_draft(version_id: str):
 
 @router.get("/agentic/activity", tags=["agentic"])
 async def activity(hours: int = Query(24, ge=1, le=168)):
-    cutoff = time.time() - hours * 3600
     events: list[dict] = []
     for name, collect in (("heartbeat", _heartbeat_events),
                           ("action", _action_events),
@@ -376,9 +325,5 @@ async def activity(hours: int = Query(24, ge=1, le=168)):
             events.extend(collect(hours))
         except Exception as e:  # noqa: BLE001 — one bad source must never empty the feed
             log.warning("activity source %s failed: %s", name, e)
-    try:
-        events.extend(await _owui_events(hours, cutoff))
-    except Exception as e:  # noqa: BLE001
-        log.warning("activity source owui failed: %s", e)
     events.sort(key=lambda e: e["ts"], reverse=True)
     return {"hours": hours, "events": events}

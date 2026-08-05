@@ -35,8 +35,6 @@ services/vera-voice/    STT/TTS reference service (MLX; HTTP + Wyoming protocol)
 services/vera-image/    image-gen reference service (MLX; OpenAI Images API + native)
 services/vera-vision/   vision serving notes + launchd template
 services/vera-coder/    coding-agent harness for the dream/coder endpoint
-services/owui-tools/    Open WebUI tools (model-invokable)
-services/owui-functions/ Open WebUI filter functions (every-turn pipeline)
 scripts/                ops scripts; each documents its own env in its header
 docs/                   SETUP.md + screenshots
 ```

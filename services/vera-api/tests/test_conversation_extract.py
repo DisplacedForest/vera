@@ -1,5 +1,5 @@
 """Conversation extraction — source adapters, the structured-output extraction call, and the
-merge into the Profile Graph. All I/O (OWUI fetch, LLM, embeddings) is injected/mocked, so the
+merge into the Profile Graph. All I/O (LLM, embeddings) is injected/mocked, so the
 suite is offline and deterministic. Run under pytest."""
 import asyncio
 import json
@@ -91,35 +91,6 @@ def test_dump_adapter_respects_cursor(tmp_path):
     assert ce.dump_conversations({"last_ts": 2_000, "last_id": None}, root=str(d)) == []
 
 
-# --------------------------------------------------------------- OWUI adapter
-
-def test_owui_adapter_fetches_new_chats_and_skips_old():
-    async def list_fn():
-        return [{"id": "c1", "updated_at": 2000}, {"id": "c0", "updated_at": 500}]
-
-    async def chat_fn(cid):
-        return {"chat": {"messages": [{"role": "user", "content": "unifi roaming"},
-                                      {"role": "assistant", "content": "set DTIM"}]}}
-
-    out = asyncio.run(ce.owui_conversations({"last_ts": 1000, "last_id": None},
-                                            list_fn=list_fn, chat_fn=chat_fn))
-    assert len(out) == 1                       # c1 (ts 2000) in, c0 (ts 500) below cursor
-    assert out[0]["conv_id"] == "c1" and out[0]["source"] == "owui"
-    assert "unifi roaming" in out[0]["text"] and "set DTIM" in out[0]["text"]
-
-
-def test_owui_adapter_normalizes_millisecond_timestamps():
-    async def list_fn():
-        return [{"id": "c1", "updated_at": 1_700_000_000_000}]   # ms epoch
-
-    async def chat_fn(cid):
-        return {"chat": {"messages": [{"role": "user", "content": "hi"}]}}
-
-    out = asyncio.run(ce.owui_conversations({"last_ts": 0, "last_id": None},
-                                            list_fn=list_fn, chat_fn=chat_fn))
-    assert out[0]["ts"] == 1_700_000_000   # ms collapsed to seconds
-
-
 # --------------------------------------------------------------- extraction call
 
 def test_extract_parses_structured_output(monkeypatch):
@@ -156,7 +127,7 @@ EXTRACTED = {
     "edges": [{"src": "hazelnuts", "dst": "food resilience", "type": "supports"}],
     "threads": [{"question": "best local TTS?", "status": "open"}],
 }
-CONV = {"conv_id": "c1", "ts": 1_717_000_000, "text": "...", "source": "owui"}
+CONV = {"conv_id": "c1", "ts": 1_717_000_000, "text": "...", "source": "native"}
 
 
 def test_merge_lands_nodes_edges_threads_with_provenance():
@@ -187,15 +158,9 @@ def test_merge_resolves_an_open_thread():
 # --------------------------------------------------------------- run() orchestration
 
 def _wire_run(monkeypatch, convs):
-    """Wire run() with a cursor-respecting dump source and OWUI empty."""
+    """Wire run() with a cursor-respecting dump source."""
     monkeypatch.setattr(ce, "dump_conversations",
                         lambda cur, root=None: [c for c in convs if c["ts"] > cur["last_ts"]])
-
-    async def no_owui(cur, **kw):
-        return []
-
-    monkeypatch.setattr(ce, "owui_conversations", no_owui)
-    monkeypatch.setattr(ce, "OWUI_BASE", "")
 
     async def fake_extract(text):
         return {"nodes": [{"type": "interest", "label": "hazelnuts", "facts": [],

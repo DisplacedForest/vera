@@ -1,5 +1,5 @@
 {
-  "_comment": "Vera's capability registry — the catalog the tool-selection harness is built from. Edit this, then run scripts/vera-sync-capabilities.py to regenerate the tool-selection catalog in Vera's OWUI system prompt. 'node' makes cross-node capabilities explicit so they slot in as one entry when that node is up.",
+  "_comment": "Vera's capability registry: the catalog the server's runtime context assembly reads when it builds Vera's tool-selection guidance. Edit this file and the server picks it up on its next context build. 'node' makes cross-node capabilities explicit so they slot in as one entry when that node is up.",
   "capabilities": [
     {
       "tool": "web_search", "node": "api",

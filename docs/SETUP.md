@@ -49,7 +49,7 @@ docker compose logs vera-api | head -60
 | Block | Variables | What it unlocks |
 |---|---|---|
 | Core LLM | `VERA_BASE`, `VERA_MODEL` | Everything generated: Pulse briefings, card text, judges |
-| Open WebUI | `OWUI_BASE`, `OWUI_KEY` | Self-authored skills, knowledge collections, and chat-history learning while one is still connected |
+| Open WebUI | `OWUI_BASE`, `OWUI_KEY` | Transitional server-side tool and skill surfaces, and the app's legacy voice transport, while one is still connected |
 | Web search | `SEARXNG_BASE` (+ optional `PLAYWRIGHT_WS`) | Research, Pulse sourcing, watcher veins, and the Mac app's web search and deep research chat tools (the app reaches them through its `vera_api_base` setting, never SearXNG directly) |
 | Identity | `VERA_OWNER_ID`, `VERA_OWNER_NAME`, `HOME_LOCATION_NAME`, `HOME_TZ`, `WEATHER_LAT`/`LON`, `TEMPERATURE_UNIT` | Personalization, the owner id that cards/read marks/profiles are keyed by (defaults to `owner`), schedules in your timezone, weather anchoring |
 | Dream/coder | `DREAM_BASE`, `DREAM_MODEL`, `DREAM_TOOL_PROTOCOL` | Nightly knowledge consolidation + fact verification |
@@ -76,7 +76,7 @@ Vera attaches to Open WebUI as a set of tools (model-invokable capabilities) and
 
 Open WebUI tools and features do not apply to native text chat. Native chat sends the saved system prompt, selected model, and completed local conversation history directly to `POST /v1/chat/completions`. It uses only the standard OpenAI `tools`, streamed `tool_calls`, assistant tool-call, and `tool` result fields. No Open WebUI fallback or model-specific text convention is used. Endpoints that return text only continue to work as text chat.
 
-If you install the Mac app, its integration store performs the per-integration OWUI wiring (attaching kitchen/media tools when you connect Grocy or Overseerr, etc.) automatically — the manual steps above are only needed once for the base tools.
+The Mac app no longer performs any Open WebUI wiring; the manual steps above are the only way to attach these transitional server-side surfaces.
 
 ## 4. The Mac app
 
@@ -96,13 +96,36 @@ Settings, Models keeps the last successful discovery result, shows the active mo
 
 With a vera-api URL configured (Settings, Services), the Knowledge area manages document collections stored in the engine: create collections, add txt, md, pdf, docx, or html files, watch per-file index state, and reindex or remove files. Any chat can ground its answers on selected collections through the chip above the composer; replies cite the retrieved passages and the sources row names the collection and file behind each citation. Without a vera-api URL the area shows its unconfigured state and chat shows no knowledge controls.
 
+### Migrating Open WebUI knowledge collections
+
+If you are moving off an existing Open WebUI instance, its knowledge collections can be
+migrated into the vera-api document store in one pass:
+
+```bash
+python3 scripts/migrate_owui_knowledge.py \
+  --owui-base http://your-owui-host:PORT \
+  --owui-key YOUR_OWUI_API_KEY \
+  --vera-api-base http://your-vera-api-host:PORT \
+  --dry-run
+```
+
+Drop `--dry-run` to run it for real (the flags also read from `OWUI_BASE`, `OWUI_API_KEY`,
+and `VERA_API_BASE`). The script recreates each knowledge base as a vera-api collection,
+downloads every stored file, and uploads it through the documents ingestion endpoints, so
+the native engine re-chunks and re-embeds everything with your configured embeddings
+integration; no vectors are copied and the Open WebUI instance is never modified. It
+requires the embeddings integration to be configured first and stops with a clear message
+otherwise. Re-running is safe: files already present with identical content are skipped,
+and the report lists everything created, uploaded, skipped, or failed. Chat history is not
+migrated; the native store starts fresh by design.
+
 Apple Reminders is the first native tool surface. A standard tool-calling endpoint can list reminders, create reminders, and complete a reminder by the identifier returned from a list call. These operations run through EventKit inside the Mac app and do not need vera-api, the standalone bridge service, or Open WebUI. They are available only during an explicit chat turn. Pulse, dreaming, scheduled work, voice, and other autonomous paths cannot invoke them.
 
 Each call renders as a pending, succeeded, or failed activity chip. Expand it to inspect the JSON request and result. Activity is stored with local conversation history without endpoint credentials or authorization headers. Unknown tools, disabled or unavailable tools, invalid JSON arguments, and calls past the loop limits do not execute. Their bounded error result is returned to the model. A turn stops after four tool rounds or eight total calls. A tool failure, malformed stream, endpoint outage, or exhausted limit keeps received text and activity and marks the assistant turn interrupted when no final answer arrives.
 
 Settings, Model also holds each model's capability profile and the optional vision bridge. The profile (accepts image input, supports tool calls, supports streaming replies, images per request) defaults from a bundled name-pattern table of known vision-model families and can be overridden per model; the pane names which pattern matched or that your override is active, and Use defaults clears an override. The profile is enforced at request time: a model marked without tool support receives no tool schemas, a model marked without streaming gets one complete non-streamed response, image history is trimmed to the per-request limit, and a model marked text-only never receives image parts, including images from earlier turns after a model switch. The vision bridge is any separate OpenAI-compatible vision endpoint (base URL ending in `/v1`, model id, optional keychain-stored API key; `VERA_VISION_BRIDGE_BASE`, `VERA_VISION_BRIDGE_MODEL`, and `VERA_VISION_BRIDGE_API_KEY` override the saved values). When the active model does not accept an attached image, a configured bridge describes it and the description enters the request as labeled context with the bridge model named on the turn; without a bridge the app asks whether to send the message without its attachment. Attachments only ever leave the machine toward the model endpoint or the bridge you configured.
 
-Voice, document knowledge, and MCP remain unavailable in the native chat path.
+Voice and MCP remain unavailable in the native chat path.
 
 Continuing a Pulse card into chat is native and local. The first continuation of a card re-reads `GET /pulse/cards` and then stores the card's text, sources, and provenance in the local database, so vera-api must be reachable only for that first step. After that the conversation opens offline, survives the card's expiry, and is reused by later continues of the same card. Card images are not cached locally.
 
@@ -224,15 +247,13 @@ to everyone.
 **If you run the Vera Mac app, native chat does not need this service.** Open Settings,
 Tools and enable **Apple Reminders**. The native permission prompt appears, and standard
 OpenAI tool calls then reach EventKit directly inside the app. The separate Apple
-Reminders switch in Settings, Plugins controls optional legacy service wiring and does
-not expose the native chat schema. This path needs neither
-vera-api nor Open WebUI and runs only for an explicit chat ask. Settings, Plugins still
-owns the separate optional wiring for legacy Open WebUI and vera-api use.
+Reminders switch in Settings, Plugins controls the optional vera-api bridge wiring and
+does not expose the native chat schema. This path needs neither vera-api nor Open WebUI
+and runs only for an explicit chat ask.
 
 `services/vera-reminders` remains the headless reference for deployments with no Mac
 app. Run `scripts/deploy-vera-reminders.sh` on a signed-in Mac, approve the one-time
-prompt, then enable the Apple Reminders integration with the bridge URL and install
-`services/owui-tools/reminders.py` as an Open WebUI tool.
+prompt, then enable the Apple Reminders integration with the bridge URL.
 
 Every satellite env var (models, ports, voices, paths) is documented in `.env.example`'s
 companion-services section; voice installs with one command (`scripts/deploy-vera-voice.sh` —

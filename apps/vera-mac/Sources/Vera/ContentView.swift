@@ -9,7 +9,6 @@ enum SidebarItem: Hashable {
 
 struct ContentView: View {
     @EnvironmentObject var store: ChatStore
-    @EnvironmentObject var tools: ToolsStore
     @EnvironmentObject var voice: VoiceSession
     @EnvironmentObject var config: ConfigStore
     @State private var search = ""
@@ -57,8 +56,6 @@ struct ContentView: View {
                 }
             }
             .task { await store.connect() }
-            .task { await tools.load() }
-            .task { await tools.start() }   // long-lived: consume the live tool-invocation feed
 
             if voice.isActive {
                 VoiceView().transition(.opacity).zIndex(1)

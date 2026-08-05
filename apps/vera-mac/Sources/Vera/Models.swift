@@ -36,13 +36,13 @@ struct Message: Identifiable, Hashable {
 
 /// A conversation shown in the sidebar.
 struct Conversation: Identifiable, Hashable {
-    let id: String          // the OWUI chat id; a local UUID only until first persisted
+    let id: String
     var title: String
     var messages: [Message]
     var createdAt: Date = Date()
     var updatedAt: Date
-    var isPersisted: Bool = false   // false = local draft OWUI doesn't know about yet
-    var serverUpdatedAt: Int = 0    // OWUI's own updated_at stamp — the reconcile freshness baseline
+    var isPersisted: Bool = false
+    var serverUpdatedAt: Int = 0
     var pinned: Bool = false
     var memoryExcluded: Bool = false
     var originType: String? = nil

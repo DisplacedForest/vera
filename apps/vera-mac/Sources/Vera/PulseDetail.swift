@@ -7,7 +7,6 @@ import MarkdownUI
 struct PulseDetailView: View {
     @EnvironmentObject var store: ChatStore
     let card: PulseCard
-    var token: String? = nil
     var apiBase: String? = nil
     var onClose: () -> Void = {}
     var onContinue: () -> Void = {}
@@ -21,11 +20,11 @@ struct PulseDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if let img = card.imageURL, !img.isEmpty {
-                        AuthedAsyncImage(url: img, token: token, apiBase: apiBase)
+                        AuthedAsyncImage(url: img, apiBase: apiBase)
                             .frame(height: 300).frame(maxWidth: .infinity).clipped()
                     }
                     VStack(alignment: .leading, spacing: 16) {
-                        PulseArticleView(card: card, token: token, apiBase: apiBase, includeHero: false)
+                        PulseArticleView(card: card, apiBase: apiBase, includeHero: false)
                         if !card.changeSet.isEmpty {
                             GroomChangeSetView(card: card)   // grooming diff (renders its own flagged items)
                         } else if !card.items.isEmpty {      // multi-item digest (media picks / stack updates)
@@ -106,7 +105,6 @@ struct PulseDetailView: View {
 /// in the detail view (which draws its own full-bleed hero above).
 struct PulseArticleView: View {
     let card: PulseCard
-    var token: String? = nil
     var apiBase: String? = nil
     var includeHero: Bool = true
     var heroHeight: CGFloat = 200
@@ -119,7 +117,7 @@ struct PulseArticleView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if includeHero, let img = card.imageURL, !img.isEmpty {
-                AuthedAsyncImage(url: img, token: token, apiBase: apiBase)
+                AuthedAsyncImage(url: img, apiBase: apiBase)
                     .frame(height: heroHeight).frame(maxWidth: .infinity).clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 14))
             }
@@ -129,7 +127,7 @@ struct PulseArticleView: View {
                 case .paragraph(_, let text, let refs):
                     PulseParagraph(text: text, refs: refs, sources: card.sourceList)
                 case .image(let im):
-                    PulseInlineImageView(image: im, token: token, apiBase: apiBase)
+                    PulseInlineImageView(image: im, apiBase: apiBase)
                 case .chart(_, let spec):
                     ChartBlockView(spec: spec)
                 case .stats(_, let cards):
@@ -240,12 +238,11 @@ extension View {
 /// A real photo woven into the article body, with caption.
 struct PulseInlineImageView: View {
     let image: PulseInlineImage
-    var token: String? = nil
     var apiBase: String? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Natural aspect ratio, width-driven, capped height — shows the whole photo (no face/edge crop).
-            AuthedAsyncImage(url: image.url, token: token, apiBase: apiBase, natural: true, placeholderHeight: 200)
+            AuthedAsyncImage(url: image.url, apiBase: apiBase, natural: true, placeholderHeight: 200)
                 .frame(maxWidth: .infinity)
                 .frame(maxHeight: 360)
                 .clipShape(RoundedRectangle(cornerRadius: 12))

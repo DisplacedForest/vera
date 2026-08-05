@@ -12,7 +12,6 @@ final class ChatStore: ObservableObject {
     @Published var agenticFlowID: String?
     @Published var pulseCards: [PulseCard] = []
     @Published var pulseVeins: [PulseVein] = []   // pinned ambient veins, populated from vera-api
-    @Published var memories: [MemoryItem] = []
     @Published var memoryRecords: [NativeMemoryRecord] = []
     @Published var memoryProposals: [NativeMemoryProposal] = []
     @Published var memoryServiceState: NativeMemoryServiceState = .off
@@ -44,9 +43,7 @@ final class ChatStore: ObservableObject {
     @Published var parameterRejection: NativeParameterRejectionPrompt?
     @Published private(set) var pendingToolConfirmation: NativeToolConfirmationRequest?
 
-    private var config: OWUIConfig?
-    private var client: OWUIClient?
-    private var socket: VeraSocket?           // stream through OWUI's pipeline (tools + memory)
+    private var client: VeraAPIClient?
     private var nativeConfig: NativeChatConfig?
     private var nativeTransport: (any NativeChatTransport)?
     private var nativeSystemPrompt: String
@@ -64,21 +61,17 @@ final class ChatStore: ObservableObject {
     private var toolConfirmationContinuation: CheckedContinuation<Bool, Never>?
     private let repository: (any ChatRepository)?
     private let repositoryInitializationError: String?
-    private let hasLegacyOWUI: Bool
     let attachmentStore: NativeAttachmentStore
     private let pulseFeedProvider: (any PulseFeedProviding)?
     var isLive: Bool { nativeTransport != nil && repository != nil }
     var canSubmitChat: Bool { !generating && repository != nil }
-    var isPulseConfigured: Bool { config?.veraAPIBase != nil }
-    var isLegacyConfigured: Bool { hasLegacyOWUI }
-    var apiToken: String? { hasLegacyOWUI ? config?.apiKey : nil }   // for authed OWUI image loads (Pulse cover art)
-    var mediaBase: String? { config?.veraAPIBase?.absoluteString }
-    var currentConfig: OWUIConfig? { config }  // for Settings to diff against saved edits
+    var isPulseConfigured: Bool { client != nil }
+    var mediaBase: String? { client?.base.absoluteString }
     var currentNativeConfig: NativeChatConfig? { nativeConfig }
 
-    init(config: OWUIConfig?, client: OWUIClient?, socket: VeraSocket?,
+    init(veraAPI: VeraAPIClient? = nil,
          nativeConfig: NativeChatConfig?, nativeTransport: (any NativeChatTransport)?,
-         repository: (any ChatRepository)?, repositoryError: String? = nil, hasLegacyOWUI: Bool,
+         repository: (any ChatRepository)?, repositoryError: String? = nil,
          nativeSystemPrompt: String = NativeChatSettings.defaultSystemPrompt,
          nativePersonaID: String? = nil,
          nativeOwnerName: String? = nil,
@@ -93,9 +86,7 @@ final class ChatStore: ObservableObject {
          pulseFeed: (any PulseFeedProviding)? = nil,
          attachmentStore: NativeAttachmentStore = NativeAttachmentStore(),
          sweepOrphanedAttachments: Bool = false) {
-        self.config = config
-        self.client = client
-        self.socket = socket
+        self.client = veraAPI
         self.nativeConfig = nativeConfig
         self.nativeTransport = nativeTransport
         self.nativeSystemPrompt = nativeSystemPrompt
@@ -113,7 +104,6 @@ final class ChatStore: ObservableObject {
         usesInjectedToolRegistry = nativeToolRegistry != nil
         self.repository = repository
         self.repositoryInitializationError = repositoryError
-        self.hasLegacyOWUI = hasLegacyOWUI
         self.pulseFeedProvider = pulseFeed
         self.attachmentStore = attachmentStore
         chatConfigurationError = repositoryError
@@ -172,39 +162,17 @@ final class ChatStore: ObservableObject {
     convenience init() {
         let configStore = ConfigStore()
         let native = configStore.nativeResolved
-        let legacy = OWUIConfig.load()
-        let ambient = legacy ?? OWUIConfig.ambientOnly(native: native)
         self.init(
-            config: ambient,
-            client: ambient.map { OWUIClient(config: $0) },
-            socket: legacy.map { VeraSocket(config: $0) },
+            veraAPI: VeraAPIClient.resolved(model: native?.model ?? ""),
             nativeConfig: native,
             nativeTransport: native.map { NativeChatClient(config: $0) },
             repository: try? LocalChatRepository(inMemory: true),
-            hasLegacyOWUI: legacy != nil,
             nativeOwnerName: configStore.ownerName,
             nativeMemorySettings: .fresh)
     }
 
-    /// Wire up a config at runtime (first-run onboarding, or connection edits in Settings):
-    /// rebuild the client and a fresh signed-in socket, then connect. Voice mode and the MCP
-    /// board pick the change up on next launch.
-    func adopt(_ cfg: OWUIConfig) {
-        config = cfg
-        client = OWUIClient(config: cfg)
-        socket = VeraSocket(config: cfg)
-        Task { await connect() }
-    }
-
-    /// Apply edits that don't touch the OWUI session (vera-api base, model, identity) live —
-    /// the socket and its sign-in are left alone.
-    func applyLight(_ cfg: OWUIConfig) {
-        config = cfg
-        client = OWUIClient(config: cfg)
-    }
-
     static func buildToolRegistry(_ declarations: [NativeToolDeclaration]) -> NativeToolRegistry {
-        let base: @Sendable () -> URL? = { OWUIConfig.resolvedVeraAPIBase() }
+        let base: @Sendable () -> URL? = { VeraAPIClient.resolvedBase() }
         return NativeToolRegistry(
             definitions: NativeRemindersTools.definitions(service: RemindersBridge.shared)
                 + NativeWebTools.definitions(base: base)
@@ -267,9 +235,7 @@ final class ChatStore: ObservableObject {
         if let memorySettings { nativeMemorySettings = memorySettings }
         nativeMemoryService = memoryService
         if let capabilityDeclarations { reloadCapabilityTools(capabilityDeclarations) }
-        let ambient = OWUIConfig.load() ?? OWUIConfig.ambientOnly(native: cfg)
-        config = ambient
-        client = ambient.map { OWUIClient(config: $0) }
+        client = VeraAPIClient.resolved(model: cfg.model)
         chatConfigurationError = nil
         Task { await connect() }
     }
@@ -296,65 +262,9 @@ final class ChatStore: ObservableObject {
         startMemoryGroomLoop()
     }
 
-    private var reconcilingChats = false
-    /// Diff the store's conversations against OWUI's chat list — the server is the source of
-    /// truth for everything persisted; local unpersisted drafts are never touched. One pass at
-    /// a time: a focus-triggered pass and the 30s tick must not interleave their diffs.
-    func reconcileChats() async {
-        guard !reconcilingChats else { return }
-        reconcilingChats = true
-        defer { reconcilingChats = false }
-        guard let client, let chats = try? await client.listChats() else { return }
-        let pinned = await client.pinnedChatIDs()
-        let serverIDs = Set(chats.map(\.id))
-
-        for summary in chats {
-            let serverStamp = summary.updated_at ?? 0
-            guard let i = conversations.firstIndex(where: { $0.id == summary.id }) else {
-                conversations.append(Conversation(
-                    id: summary.id, title: summary.title, messages: [],
-                    updatedAt: Date(timeIntervalSince1970: TimeInterval(serverStamp)),
-                    isPersisted: true, serverUpdatedAt: serverStamp,
-                    pinned: pinned.contains(summary.id)))
-                continue
-            }
-            // Leave the open chat alone mid-stream; the next tick reconciles it once settled.
-            if summary.id == selectedID && generating { continue }
-            let changedElsewhere = serverStamp > conversations[i].serverUpdatedAt
-            conversations[i].title = summary.title
-            conversations[i].updatedAt = Date(timeIntervalSince1970: TimeInterval(serverStamp))
-            conversations[i].serverUpdatedAt = serverStamp
-            conversations[i].pinned = pinned.contains(summary.id)
-            guard changedElsewhere, !conversations[i].messages.isEmpty else { continue }
-            if summary.id == selectedID {
-                // Turns taken elsewhere appear in the open chat without reselecting.
-                let msgs = await client.loadMessages(chatID: summary.id)
-                if let j = conversations.firstIndex(where: { $0.id == summary.id }), !msgs.isEmpty {
-                    conversations[j].messages = msgs
-                }
-            } else {
-                conversations[i].messages = []   // stale history; the next select re-fetches
-            }
-        }
-
-        // Server-side deletions leave the sidebar; a deleted open chat closes gracefully.
-        let selectedWasDeleted = conversations.contains {
-            $0.id == selectedID && $0.isPersisted && !serverIDs.contains($0.id)
-        }
-        conversations.removeAll { $0.isPersisted && !serverIDs.contains($0.id) }
-        if selectedWasDeleted { selectedID = nil; newConversation() }
-    }
-
-    /// Re-fetch memories from OWUI. A failed fetch keeps the current list; an empty result is
-    /// real (memories deleted elsewhere) and applies.
-    func refreshMemories() async {
-        guard hasLegacyOWUI, let client, let mems = await client.memories() else { return }
-        memories = mems
-    }
-
     /// Re-fetch her journal (self-authored, rendered read-only). Pulled when the view opens.
     func refreshJournal() async {
-        guard hasLegacyOWUI, let client else { return }
+        guard let client else { return }
         let (entries, archive) = await client.fetchJournal()
         journalEntries = entries
         journalArchive = archive
@@ -434,10 +344,6 @@ final class ChatStore: ObservableObject {
     }
 
     private var reconcileStarted = false
-    private var reconcileTick = 0
-    /// The app's single sync heartbeat: every 30 seconds (and instantly on window focus) the
-    /// store reconciles against the server. Per-surface fetches run independently so one
-    /// failing endpoint never blocks the others; memories ride a slower multiple.
     private func startReconcileLoop() {
         guard !reconcileStarted else { return }
         reconcileStarted = true
@@ -450,15 +356,13 @@ final class ChatStore: ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
                 guard let self else { return }
-                self.reconcileTick += 1
-                await self.reconcile(refreshingMemories: self.reconcileTick % 5 == 0)
+                await self.reconcile()
             }
         }
     }
 
-    private func reconcile(refreshingMemories: Bool = false) async {
+    private func reconcile() async {
         await refreshPulse()
-        _ = refreshingMemories
     }
 
     // MARK: - Bookmark + feedback
@@ -478,7 +382,7 @@ final class ChatStore: ObservableObject {
         Task {
             await client.postFeedback([
                 "kind": "pulse", "sentiment": sentiment, "topic": card.title, "title": card.title,
-                "content": card.body, "chat_id": card.id, "model": config?.model ?? "",
+                "content": card.body, "chat_id": card.id, "model": nativeConfig?.model ?? "",
             ])
         }
     }
@@ -585,16 +489,6 @@ final class ChatStore: ObservableObject {
     }
 
     // MARK: - Memory actions
-
-    /// Forget a memory: optimistically remove it, then delete it in OWUI — revert on failure.
-    func deleteMemory(_ item: MemoryItem) {
-        let prev = memories
-        memories.removeAll { $0.id == item.id }
-        guard hasLegacyOWUI, let client else { return }
-        Task {
-            if await client.deleteMemory(id: item.id) == false { memories = prev }
-        }
-    }
 
     func reloadNativeMemory() {
         guard let memoryRepository = repository as? any NativeMemoryRepository else { return }
@@ -964,7 +858,6 @@ final class ChatStore: ObservableObject {
         focusTick &+= 1
     }
 
-    /// Pin/unpin a conversation (local + persisted to OWUI).
     func togglePin(_ id: String) {
         guard let i = conversations.firstIndex(where: { $0.id == id }) else { return }
         conversations[i].pinned.toggle()
@@ -1247,23 +1140,6 @@ final class ChatStore: ObservableObject {
         return att
     }
 
-    private func process(_ att: Attachment) async {
-        if att.kind == .image {
-            if let r = ImageEncoder.dataURL(from: att.url) {
-                att.dataURL = r.dataURL
-                att.thumbnail = r.thumb
-                att.status = .ready
-            } else { att.status = .failed }
-            return
-        }
-        // Document → upload to OWUI for RAG-style grounding.
-        guard let client, let data = try? Data(contentsOf: att.url) else { att.status = .failed; return }
-        let mime = (UTType(filenameExtension: att.url.pathExtension)?.preferredMIMEType) ?? "application/octet-stream"
-        if let obj = await client.uploadFile(name: att.name, data: data, mime: mime) {
-            att.owuiFile = obj; att.status = .ready
-        } else { att.status = .failed }
-    }
-
     func removeAttachment(_ id: UUID) {
         attachmentError = nil
         for att in attachments where att.id == id {
@@ -1481,10 +1357,10 @@ final class ChatStore: ObservableObject {
         let memoryService = nativeMemoryService
         let scopes = resolvePromptScopes(conversationID: id)
         let persona = scopes.persona
-        let ownerName = nativeOwnerName ?? config?.ownerName
+        let ownerName = nativeOwnerName
         let activeTools = nativeToolRegistry.active(enabledIDs: enabledToolIDs)
         let groundingCollections = conversations.first(where: { $0.id == id })?.grounding ?? []
-        let groundingBase = config?.veraAPIBase
+        let groundingBase = client?.base
         groundingStatus[id] = nil
         lastRequestTrace = NativeRequestTrace.make(
             model: nativeConfig.model, streaming: nativeConfig.streaming,

@@ -1,9 +1,5 @@
 import SwiftUI
 
-/// Live state for the Plugins store — vera-api's integration registry plus the OWUI
-/// orchestration step (attach the right OWUI tools to the Vera model when a plugin
-/// turns on). Cards render purely from the API; unreachable/unconfigured states render
-/// honestly (never fake data).
 @MainActor
 final class PluginsStore: ObservableObject {
     enum Phase { case loading, unconfigured, unreachable, unsupported, ready }
@@ -11,17 +7,12 @@ final class PluginsStore: ObservableObject {
     @Published var entries: [PluginEntry] = []
     @Published var busy: Set<String> = []
     @Published var error: String?
-    /// Plugin ids whose OWUI side hasn't been wired yet (save succeeded, OWUI step didn't) —
-    /// shown as "OWUI step pending" with a retry, never papered over.
-    @Published var owuiPending: [String: String] = [:]
 
     private var client: IntegrationsClient?
-    private weak var tools: ToolsStore?
     var baseDescription: String { client?.base.absoluteString ?? "vera-api" }
 
-    func configure(base: URL?, tools: ToolsStore) {
+    func configure(base: URL?) {
         client = base.map { IntegrationsClient(base: $0) }
-        self.tools = tools
         if client == nil { phase = .unconfigured }
     }
 
@@ -33,21 +24,6 @@ final class PluginsStore: ObservableObject {
         case .ok(let list):
             entries = list
             phase = .ready
-            derivePendingFromOWUI()
-        }
-    }
-
-    /// On load, surface plugins whose vera-api half is on but whose declared OWUI tools
-    /// exist and aren't attached to the Vera model — an honest "half-wired" state.
-    private func derivePendingFromOWUI() {
-        guard let tools, tools.isLive else { return }
-        let present = Dictionary(uniqueKeysWithValues: tools.tools.map { ($0.id, $0.availableToVera) })
-        for e in entries where e.enabled {
-            let expected = (PluginOWUI.tools[e.id] ?? []).filter { present[$0] != nil }
-            if !expected.isEmpty, expected.contains(where: { present[$0] == false }),
-               owuiPending[e.id] == nil {
-                owuiPending[e.id] = "OWUI tools not attached yet"
-            }
         }
     }
 
@@ -57,8 +33,6 @@ final class PluginsStore: ObservableObject {
         return await client.test(id: id, fields: fields)
     }
 
-    /// Save fields + enabled in one PUT, then run the plugin's OWUI step.
-    /// Returns the server's refusal detail (sheet stays open), nil on success.
     func save(id: String, fields: [String: String], enable: Bool?) async -> String? {
         guard let client else { return "vera-api isn't configured" }
         busy.insert(id); defer { busy.remove(id) }
@@ -66,9 +40,6 @@ final class PluginsStore: ObservableObject {
             return detail
         }
         await refresh()
-        if let entry = entries.first(where: { $0.id == id }) {
-            await runOWUIStep(for: entry, enable: entry.enabled)
-        }
         return nil
     }
 
@@ -86,23 +57,17 @@ final class PluginsStore: ObservableObject {
                 error = detail
             } else {
                 await refresh()
-                await runOWUIStep(for: entry, enable: on)
             }
             busy.remove(entry.id)
         }
     }
 
-    /// Apple Reminders is hosted by the app itself: enabling starts the in-app EventKit
-    /// bridge (which triggers the macOS permission prompt), points vera-api at this Mac's
-    /// LAN address, and installs + attaches the OWUI tool — no URL to type, no manual paste.
-    /// Disabling reverses it and stops the listener.
     func applyReminders(_ entry: PluginEntry, enable: Bool) async {
         guard let client else { return }
         if !enable {
             _ = await client.save(id: entry.id, enabled: false)
             RemindersBridge.shared.stop()
             await refresh()
-            if let e = entries.first(where: { $0.id == entry.id }) { await runOWUIStep(for: e, enable: false) }
             return
         }
 
@@ -120,13 +85,6 @@ final class PluginsStore: ObservableObject {
             return
         }
         await refresh()
-        // Give the permission grant a moment so the default-list guess can read the lists.
-        try? await Task.sleep(nanoseconds: 400_000_000)
-        if let tools {
-            _ = await tools.installReminders(veraApiURL: client.base.absoluteString,
-                                             defaultList: RemindersBridge.shared.suggestedDefaultList())
-        }
-        if let e = entries.first(where: { $0.id == entry.id }) { await runOWUIStep(for: e, enable: true) }
     }
 
     /// The LAN address vera-api can reach this app on. When vera-api is local, loopback is fine.
@@ -147,48 +105,4 @@ final class PluginsStore: ObservableObject {
         return detail
     }
 
-    // MARK: OWUI orchestration — reveal, don't replicate
-
-    /// Attach (or detach) the plugin's declared OWUI tools on the Vera model via the
-    /// existing admin client. Failure marks the card "OWUI step pending" — the vera-api
-    /// half stays saved, partial state is shown honestly.
-    func runOWUIStep(for entry: PluginEntry, enable: Bool) async {
-        let declared = PluginOWUI.tools[entry.id] ?? []
-        guard !declared.isEmpty else { owuiPending[entry.id] = nil; return }
-        guard let tools, tools.isLive else {
-            owuiPending[entry.id] = "OWUI isn't connected"
-            return
-        }
-        await tools.load()
-        guard tools.isAdmin else {
-            owuiPending[entry.id] = "needs an OWUI admin session"
-            return
-        }
-        // Shared tools (kitchen ⇄ grocy/mealie) detach only when no enabled plugin still claims them.
-        var detachable = declared
-        if !enable {
-            let stillClaimed = Set(entries.filter { $0.enabled && $0.id != entry.id }
-                .flatMap { PluginOWUI.tools[$0.id] ?? [] })
-            detachable = declared.filter { !stillClaimed.contains($0) }
-        }
-        let targets = (enable ? declared : detachable).filter { id in tools.tools.contains { $0.id == id } }
-        guard !targets.isEmpty else {
-            owuiPending[entry.id] = enable ? "OWUI tools \(declared.joined(separator: ", ")) not installed" : nil
-            return
-        }
-        if await tools.setToolsAttached(targets, enable) {
-            owuiPending[entry.id] = nil
-        } else {
-            owuiPending[entry.id] = tools.error ?? "OWUI update failed"
-        }
-    }
-
-    /// Retry affordance for a pending card.
-    func retryOWUI(_ entry: PluginEntry) {
-        busy.insert(entry.id)
-        Task {
-            await runOWUIStep(for: entry, enable: entry.enabled)
-            busy.remove(entry.id)
-        }
-    }
 }

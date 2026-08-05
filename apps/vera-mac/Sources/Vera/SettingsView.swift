@@ -2,7 +2,6 @@ import SwiftUI
 
 /// The Settings window (⌘,) — every endpoint and identity value editable in-app, written to
 /// `~/.vera/config.json`. Env vars still win over file values; env-overridden fields carry
-/// an InfoTip naming the variable. Cheap changes apply live; OWUI session changes offer a reconnect.
 struct SettingsView: View {
     @EnvironmentObject var store: ChatStore
     var body: some View {
@@ -13,14 +12,10 @@ struct SettingsView: View {
             NativeMemorySettingsTab().tabItem { Label("Memory", systemImage: "tray.full") }.tag(SettingsTab.memory)
             NativeToolsTab().tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }.tag(SettingsTab.nativeTools)
             ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }.tag(SettingsTab.services)
-            // Plugins and MCP are configuration surfaces, not destinations — they live here, not the sidebar.
             PluginsView().tabItem { Label("Plugins", systemImage: "shippingbox") }.tag(SettingsTab.plugins)
-            MCPView().tabItem { Label("MCP", systemImage: "puzzlepiece.extension") }.tag(SettingsTab.mcp)
             IdentityTab().tabItem { Label("Identity", systemImage: "person") }.tag(SettingsTab.identity)
             AboutTab().tabItem { Label("About", systemImage: "info.circle") }.tag(SettingsTab.about)
         }
-        // Wider than a plain form window so the moved Plugins/MCP surfaces (860-wide content) breathe;
-        // a fixed height keeps their scrolling panes from collapsing in the Settings scene.
         .frame(width: 860, height: 640)
     }
 }
@@ -435,12 +430,14 @@ struct NativeMemorySettingsTab: View {
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }
             Section("Compatible models") {
-                TextField("Embeddings model identifier", text: config.memoryStringBinding(\.embeddingsModel))
-                    .textFieldStyle(.roundedBorder)
-                Text("Semantic recall requires an embeddings model at the active OpenAI-compatible endpoint. If it is missing or unavailable, ordinary chat continues without memory context.")
+                DiscoveredModelPicker(title: "Embeddings model",
+                                      models: config.activeNativeProfile?.discoveredModels ?? [],
+                                      selection: config.memoryStringBinding(\.embeddingsModel))
+                Text("Semantic recall requires an embeddings model at the active OpenAI-compatible endpoint. The list comes from that endpoint's model discovery; refresh it under Model. If the model is missing or unavailable, ordinary chat continues without memory context.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                TextField("Extraction model identifier", text: config.memoryStringBinding(\.extractionModel))
-                    .textFieldStyle(.roundedBorder)
+                DiscoveredModelPicker(title: "Extraction model",
+                                      models: config.activeNativeProfile?.discoveredModels ?? [],
+                                      selection: config.memoryStringBinding(\.extractionModel))
                 Text("The extraction model only creates reviewable proposals from bounded completed turns and natural-language requests in Memory.")
                     .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }

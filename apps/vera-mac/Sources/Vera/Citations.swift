@@ -53,26 +53,6 @@ struct CitationChip: View {
     }
 }
 
-/// Maps OWUI's per-message `sources` payload (RAG/tool citation entries) to numbered
-/// PulseSources, 1-based in payload order — the same numbers the reply's `[n]` refs use.
-enum OWUISources {
-    static func parse(_ raw: [[String: Any]]) -> [PulseSource] {
-        var out: [PulseSource] = []
-        for (i, entry) in raw.enumerated() {
-            let src = entry["source"] as? [String: Any] ?? [:]
-            let metaURL = ((entry["metadata"] as? [[String: Any]])?.first?["source"] as? String) ?? ""
-            let name = (src["name"] as? String) ?? ""
-            let url = (src["url"] as? String)
-                ?? (metaURL.hasPrefix("http") ? metaURL : nil)
-                ?? (name.hasPrefix("http") ? name : nil)
-            guard let url, !url.isEmpty else { continue }
-            out.append(PulseSource(n: i + 1, title: name.isEmpty || name.hasPrefix("http") ? sourceHost(url) : name,
-                                   url: url))
-        }
-        return out
-    }
-}
-
 /// Bottom Sources row — favicons collapsed, tap to expand into numbered linked titles.
 struct SourcesRow: View {
     let sources: [PulseSource]

@@ -1,7 +1,59 @@
 import Foundation
 import SocketIO
 
-/// One streamed event from OWUI's pipeline (delivered over Socket.IO, not raw SSE).
+struct VoiceSocketConfig: Sendable {
+    var baseURL: URL
+    var apiKey: String
+    var model: String
+    var email: String?
+    var password: String?
+    var chatTemplateKwargs: String?
+
+    func chatTemplateKwargsObject() -> [String: Any]? {
+        guard let raw = chatTemplateKwargs, !raw.isEmpty,
+              let data = raw.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              !obj.isEmpty else { return nil }
+        return obj
+    }
+
+    static func load() -> VoiceSocketConfig? {
+        let env = ProcessInfo.processInfo.environment
+        let file = ConfigFile.read()
+        func value(_ envKey: String, _ fileKey: String) -> String? {
+            if let e = env[envKey]?.trimmingCharacters(in: .whitespaces), !e.isEmpty { return e }
+            if let f = (file[fileKey] as? String)?.trimmingCharacters(in: .whitespaces), !f.isEmpty { return f }
+            return nil
+        }
+        guard let b = value("OWUI_BASE", "base"), let u = URL(string: b),
+              let k = value("OWUI_KEY", "api_key") ?? value("OWUI_API_KEY", "api_key") else { return nil }
+        return VoiceSocketConfig(
+            baseURL: u, apiKey: k,
+            model: value("VERA_MODEL", "model") ?? "",
+            email: value("OWUI_EMAIL", "owui_email"),
+            password: value("OWUI_PASSWORD", "owui_password"),
+            chatTemplateKwargs: value("VERA_CHAT_TEMPLATE_KWARGS", "chat_template_kwargs"))
+    }
+}
+
+enum OWUISources {
+    static func parse(_ raw: [[String: Any]]) -> [PulseSource] {
+        var out: [PulseSource] = []
+        for (i, entry) in raw.enumerated() {
+            let src = entry["source"] as? [String: Any] ?? [:]
+            let metaURL = ((entry["metadata"] as? [[String: Any]])?.first?["source"] as? String) ?? ""
+            let name = (src["name"] as? String) ?? ""
+            let url = (src["url"] as? String)
+                ?? (metaURL.hasPrefix("http") ? metaURL : nil)
+                ?? (name.hasPrefix("http") ? name : nil)
+            guard let url, !url.isEmpty else { continue }
+            out.append(PulseSource(n: i + 1, title: name.isEmpty || name.hasPrefix("http") ? sourceHost(url) : name,
+                                   url: url))
+        }
+        return out
+    }
+}
+
 enum StreamEvent: Sendable {
     case status(String)     // tool/progress line (knowledge_search, memory extraction, …)
     case content(String)    // assistant text SO FAR — cumulative, replace don't append
@@ -17,7 +69,7 @@ enum StreamEvent: Sendable {
 /// reference type guarded by a lock. The UI consumes the `AsyncThrowingStream` (which hops back to
 /// the main actor in ChatStore), so no shared mutable UI state is touched off-main.
 final class VeraSocket: @unchecked Sendable {
-    private let config: OWUIConfig
+    private let config: VoiceSocketConfig
     private let lock = NSLock()
 
     private var manager: SocketManager?
@@ -28,11 +80,10 @@ final class VeraSocket: @unchecked Sendable {
     private var conns: [String: AsyncThrowingStream<StreamEvent, Error>.Continuation] = [:]
     private var sourceAcc: [String: [[String: Any]]] = [:]
 
-    /// Broadcast of every `status` event (tool/progress labels) for the MCP activity feed.
     let statusStream: AsyncStream<String>
     private let statusCont: AsyncStream<String>.Continuation
 
-    init(config: OWUIConfig) {
+    init(config: VoiceSocketConfig) {
         self.config = config
         var c: AsyncStream<String>.Continuation!
         self.statusStream = AsyncStream(bufferingPolicy: .bufferingNewest(40)) { c = $0 }

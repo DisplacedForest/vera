@@ -8,8 +8,7 @@ emerging from:
 
 Each tick reads the ACTIVE (non-cooled-down) interests to decide what to explore, then `touch()`es
 the chosen topic onto a fixation cooldown — the anti-fixation mechanism that makes her range widely
-instead of returning to one favourite topic tick after tick. Salience accrues; Dreaming refreshes
-nightly. Writes are free.
+instead of returning to one favourite topic tick after tick. Salience accrues. Writes are free.
 """
 import difflib
 import hashlib
@@ -53,7 +52,7 @@ def init():
             CREATE TABLE IF NOT EXISTS interest (
                 id TEXT PRIMARY KEY,        -- hash(topic)
                 topic TEXT,
-                stance TEXT,                -- her take / why she cares (optional, set by Dreaming)
+                stance TEXT,                -- her take / why she cares (optional)
                 salience REAL,              -- accrues as she returns to / learns the topic
                 source TEXT,                -- 'fact-cluster' | 'self' | 'chat' | 'watch'
                 times_explored INTEGER,     -- how often a tick has chosen it

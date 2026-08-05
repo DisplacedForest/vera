@@ -126,7 +126,7 @@ Every external dependency is a configuration slot with defined behavior when emp
 |---|---|---|---|
 | Main LLM | OpenAI `/v1` | Native text chat and configured generation | Chat reports unconfigured; API surfaces still serve |
 | SearXNG | `/search` JSON | Research, watcher veins, image sourcing | Search-dependent features report unconfigured |
-| Dream/coder LLM | OpenAI `/v1` + tool calls | Nightly consolidation, fact verification | Dreaming skips; daily features unaffected |
+| Coder LLM | OpenAI `/v1` + tool calls | Cross-model claim auditing, fact verification | Audits fall back to the main model; daily features unaffected |
 | Image gen | OpenAI Images API | Pulse cover art | Cards use the best researched image instead |
 | Vision | OpenAI chat + `image_url` | Image understanding in chat | Vision tools report unconfigured |
 | Voice | Wyoming + small HTTP API | Hands-free voice mode | Voice UI disabled |
@@ -146,7 +146,7 @@ Every external dependency is a configuration slot with defined behavior when emp
 
 <br>
 
-One Linux server runs vera-api, SearXNG, and an RTX 3090 serving the main model via llama-swap. A Mac Studio runs the MLX satellite services (image generation, vision, the dream/coder model) on demand, and a Mac mini runs voice and the Apple Reminders bridge. A single capable machine can run the entire stack, and any component can be replaced by a hosted equivalent by changing one URL.
+One Linux server runs vera-api, SearXNG, and an RTX 3090 serving the main model via llama-swap. A Mac Studio runs the MLX satellite services (image generation, vision, the coder model) on demand, and a Mac mini runs voice and the Apple Reminders bridge. A single capable machine can run the entire stack, and any component can be replaced by a hosted equivalent by changing one URL.
 
 </details>
 

@@ -34,7 +34,7 @@ services/vera-api/      the shared FastAPI container; every capability is a rout
 services/vera-voice/    STT/TTS reference service (MLX; HTTP + Wyoming protocol)
 services/vera-image/    image-gen reference service (MLX; OpenAI Images API + native)
 services/vera-vision/   vision serving notes + launchd template
-services/vera-coder/    coding-agent harness for the dream/coder endpoint
+services/vera-coder/    coding-agent harness for the coder endpoint
 scripts/                ops scripts; each documents its own env in its header
 docs/                   SETUP.md + screenshots
 ```

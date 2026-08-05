@@ -8,7 +8,7 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, dreaming, feedback, groom_session, health, home, home_events, home_model, home_reconcile, identity_migrate, images, integrations, journal, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, updates, user_profile, vein_builder, vein_engine, vera_memory, vera_memory_groom, weather, websearch
+from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, identity_migrate, images, integrations, journal, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, updates, user_profile, vein_builder, vein_engine, weather, websearch
 
 # vera-api: ONE container, many capabilities.
 # To add a capability: create routers/<name>.py exposing `router` (an APIRouter
@@ -71,10 +71,6 @@ CAPABILITIES = {
     "user_profile": user_profile.router,
     "conversation_ingest": conversation_ingest.router,
     "documents": documents.router,
-    "vera_memory": vera_memory.router,
-    "vera_memory_groom": vera_memory_groom.router,
-    "dreaming": dreaming.router,
-    "groom_session": groom_session.router,
     "authoring": authoring.router,
     "home": home.router,
     "home_events": home_events.router,

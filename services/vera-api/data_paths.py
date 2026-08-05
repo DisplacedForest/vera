@@ -26,5 +26,4 @@ STORE_PATHS = {
     "EXTRACT_DB_PATH": "extract/cursors.db",
     "LEARN_DB_PATH": "learn/store.db",
     "VERA_JOURNAL_PATH": "journal/JOURNAL.md",
-    "VERA_MEMORY_DIR": "vera_memory",
 }

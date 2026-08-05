@@ -1,7 +1,7 @@
 """User-profile router — read/write each person's personal vibe (interests, persona, prefs).
 
-Keyed by OWUI user id. Writes are FREE (about the person, no external effect). The /digest is what
-the vera_memory inlet filter injects per-user, layered on the shared world-model core.
+Keyed by OWUI user id. Writes are FREE (about the person, no external effect). The /digest is
+the per-user injection payload (persona + top interests).
 """
 from fastapi import APIRouter
 from pydantic import BaseModel

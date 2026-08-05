@@ -1,6 +1,5 @@
 """Profile Graph migration — a one-time, idempotent seed from the existing structured
-stores (interests -> interest nodes, journal -> watch nodes, hand-mapped facts -> typed
-nodes). Re-running must be a no-op: identical node counts and stable engagement, so the
+stores (interests -> interest nodes, hand-mapped facts -> typed nodes). Re-running must be a no-op: identical node counts and stable engagement, so the
 seed is safe to run at every boot until the extraction job takes over. Run under pytest."""
 import os
 
@@ -21,10 +20,6 @@ INTERESTS = [
     {"topic": "Nottingham Forest", "gloss": "English football club", "weight": 1.0},
     {"topic": "winemaking", "gloss": "fermentation chemistry", "weight": 1.0},
 ]
-JOURNAL = [
-    {"heading": "Lumber Prices and Construction Costs",
-     "resolve_condition": "sustained 10% move", "next_check": 1_700_000_000},
-]
 SEED_FACTS = [
     {"type": "location", "label": "Franklin",
      "facts": ["grew up here", "moved away ~20y ago", "suppress local Indiana news"]},
@@ -32,15 +27,13 @@ SEED_FACTS = [
 
 
 def test_migration_seeds_typed_nodes_with_facts():
-    mig.migrate(interests=INTERESTS, journal_entries=JOURNAL, seed_facts=SEED_FACTS)
+    mig.migrate(interests=INTERESTS, seed_facts=SEED_FACTS)
     by_label = {n["label"]: n for n in pg.all_nodes()}
     forest = by_label["Nottingham Forest"]
     assert forest["type"] == "interest"
     gloss = forest["facts"][0]
     assert gloss["text"] == "English football club"        # gloss became a provenance-bearing fact
     assert gloss["source"] == "migration:interest"
-    assert by_label["Lumber Prices and Construction Costs"]["type"] == "watch"
-    assert by_label["Lumber Prices and Construction Costs"]["state"] == "active"
     franklin = by_label["Franklin"]
     assert franklin["type"] == "location"
     assert len(franklin["facts"]) == 3
@@ -48,10 +41,10 @@ def test_migration_seeds_typed_nodes_with_facts():
 
 
 def test_migration_is_idempotent():
-    mig.migrate(interests=INTERESTS, journal_entries=JOURNAL, seed_facts=SEED_FACTS)
+    mig.migrate(interests=INTERESTS, seed_facts=SEED_FACTS)
     first = pg.all_nodes()
     eng_first = {n["label"]: n["engagement"] for n in first}
-    mig.migrate(interests=INTERESTS, journal_entries=JOURNAL, seed_facts=SEED_FACTS)
+    mig.migrate(interests=INTERESTS, seed_facts=SEED_FACTS)
     second = pg.all_nodes()
     assert len(second) == len(first)                       # no duplicate nodes on re-run
     eng_second = {n["label"]: n["engagement"] for n in second}

@@ -33,7 +33,6 @@ struct ShotView: View {
             Group {
                 switch section {
                 case .pulse: pulse
-                case .journal: journal
                 case .memory: memory
                 case .agentic: agenticBoard
                 default: if emptyChat { emptyChatShot } else { chat }
@@ -280,6 +279,11 @@ struct ShotView: View {
 
         With those back you could do a quick `Bolognese`. Want me to add them to the list?
         """))
+        m.append(Message(role: .user, text: "Keep an eye on lumber prices for me"))
+        m.append(Message(role: .assistant, text: """
+        <details type="tool_calls" done="true" name="recurring_watch"><summary>Tool Executed</summary>"drafted: Lumber prices"</details>
+        Here's the watch I'd set up: 'Lumber prices' will run http fetch then trip band every 30 minutes and post a card to your Pulse when something is worth saying. Should I save it?
+        """))
         m.append(Message(role: .assistant, text: "Happy to line up the next batch. Which direction?", ask: VeraAsk.mock()))
         m.append(Message(role: .assistant, text: "Sketched the label mark. Open it in the Canvas to tweak.", artifacts: [Artifact.mock()]))
         m.append(Message.assistant(from: "The downtown farmers market kicks off its 2026 season today.\n\n**Sources** https://www.springfield-downtown.example/news_detail.php https://www.heraldpress.example/story/news/local/2026/06/03/events/90354139007/ https://www.localtv.example/news/downtown-market-2026-schedule.html\n\nLet me know if you want the full vendor list."))
@@ -410,7 +414,6 @@ struct ShotView: View {
             VStack(spacing: 1) {
                 shotNav("New chat", "square.and.pencil", active: false)
                 shotNav("Pulse", "newspaper", active: section == .pulse)
-                shotNav("Journal", "book.closed", active: section == .journal)
                 shotNav("Memory", "tray.full", active: section == .memory)
             }
             .padding(.horizontal, 8)
@@ -521,27 +524,6 @@ struct ShotView: View {
                     .padding(.horizontal, 28).padding(.bottom, 8)
             }
             PulseGrid(cards: store.feedCards).padding(.horizontal, 28).padding(.vertical, 16)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.bg)
-    }
-
-    private var journal: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Journal").font(.system(size: 22, weight: .bold))
-                Text("\(store.journalEntries.count)").font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Theme.surface).clipShape(Capsule())
-                Spacer()
-                Text("what Vera has committed to keep an eye on")
-                    .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
-            }
-            .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 8)
-            JournalList(entries: store.journalEntries, archive: store.journalArchive)
-                .padding(.horizontal, 28).padding(.vertical, 12)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

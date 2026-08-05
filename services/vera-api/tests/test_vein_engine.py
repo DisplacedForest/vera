@@ -514,43 +514,6 @@ def test_monitor_leaves_keyless_cards_alone(monkeypatch):
     assert [c["id"] for c in remaining] == ["foreign-1"]
 
 
-def test_watch_topics_parse():
-    body = "Prose here.\n\nWatching: port backlogs, diesel prices; grain futures and nothing"
-    assert vein_engine._watch_topics(body) == [
-        "port backlogs", "diesel prices", "grain futures", "nothing"]
-    assert vein_engine._watch_topics("no line") == []
-
-
-def test_journal_definition_authors_watches(monkeypatch):
-    from routers import editor
-    calls = []
-
-    async def spy(label, **kw):
-        calls.append((label, kw.get("resolve_condition")))
-        return "node-1"
-    monkeypatch.setattr(editor, "author_watch", spy)
-
-    async def compose(messages, **kw):
-        return ("HEADLINE: Signal watch · Port strike\nSUMMARY: S.\n===\n"
-                "Body.\n\nWatching: port backlogs, diesel prices")
-    monkeypatch.setattr(vein_engine, "_vera", compose)
-    _stub_search(monkeypatch, [{"title": "A", "url": "https://a", "content": "x",
-                                "published": None}])
-    defn = vein_defs.save_custom({
-        "kind": "journaled", "label": "Journaled", "icon": "eye", "journal": True,
-        "pipeline": [
-            {"block": "web_search", "params": {"query": "ports"}},
-            {"block": "llm_compose"},
-        ],
-        "schedule": "0 */6 * * *",
-    })
-    dry = _run(vein_engine.run_definition(defn, dry_run=True))
-    assert dry["ok"] is True and calls == []
-    out = _run(vein_engine.run_vein("journaled", manual=True))
-    assert out["cards"] == 1
-    assert calls == [("Port strike", "port backlogs, diesel prices")]
-
-
 def _findings():
     return [{"title": "River at 24.1 ft", "content": "over flood stage",
              "severity": "notice",

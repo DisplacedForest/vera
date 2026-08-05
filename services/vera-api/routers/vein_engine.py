@@ -511,15 +511,6 @@ def _card_fields(it: dict) -> dict:
     }
 
 
-def _watch_topics(body: str) -> list[str]:
-    m = re.search(r"(?im)^\s*Watching:\s*(.+)$", body or "")
-    if not m:
-        return []
-    return [t for t in (p.strip().strip(".").strip()
-                        for p in re.split(r",|;|\band\b", m.group(1)))
-            if t and len(t) <= 60][:4]
-
-
 def _active_cards(kind: str) -> list[dict]:
     from . import pulse
     return [c for c in pulse.store.list_cards()
@@ -606,17 +597,6 @@ async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False
                             sources=card["sources"], situation_key=card["situation_key"],
                             category=card["category"], change_set=card["change_set"],
                             items=card["items"])
-    if defn.get("journal"):
-        for card in cards:
-            label = card["title"].split("·", 1)[-1].strip() or card["title"]
-            watch = _watch_topics(card["body"])
-            try:
-                from . import editor
-                await editor.author_watch(label, facts=[card["body"]],
-                                          resolve_condition=", ".join(watch) or None,
-                                          origin="self")
-            except Exception as e:
-                log.warning("vein %s journal watch failed: %s", kind, e)
     if standing:
         today = datetime.now(pulse.TZ).date().isoformat()
         for c in standing:

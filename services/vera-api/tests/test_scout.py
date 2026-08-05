@@ -49,16 +49,15 @@ def test_selects_engaged_interest_skips_dormant():
     assert "buried" not in picked
 
 
-def test_watch_cooldown_via_next_check():
+def test_watch_nodes_never_seed():
     nodes = [
         _node(id="due", type="watch", state="active", next_check=NOW - 10, engagement=0.0),
-        _node(id="cooling", type="watch", state="active", next_check=NOW + 10_000, engagement=0.0),
-        _node(id="open_watch", type="watch", state="active", next_check=None, engagement=0.0),
+        _node(id="engaged", type="watch", state="active", next_check=NOW - 10,
+              engagement=2.0, last_engaged=NOW),
+        _node(id="interest", type="interest", engagement=2.0, last_engaged=NOW),
     ]
     picked = [n["id"] for n in scout.select_live_nodes(nodes=nodes, now=NOW)]
-    assert "due" in picked
-    assert "open_watch" in picked
-    assert "cooling" not in picked
+    assert picked == ["interest"]
 
 
 def test_open_engaged_project_and_thread_selected_resolved_skipped():

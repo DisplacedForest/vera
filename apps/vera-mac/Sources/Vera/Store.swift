@@ -16,8 +16,6 @@ final class ChatStore: ObservableObject {
     @Published var memoryProposals: [NativeMemoryProposal] = []
     @Published var memoryServiceState: NativeMemoryServiceState = .off
     @Published var memoryGroomOutcome: NativeMemoryGroomOutcome?
-    @Published var journalEntries: [JournalEntry] = []        // her standing commitments (read-only)
-    @Published var journalArchive: [JournalArchiveMonth] = [] // recently resolved ones
     @Published var streamStatus: String?     // live tool/progress line while Vera is thinking
     @Published var generating = false        // true for the whole turn (drives the living flame mark)
     @Published var groundingStatus: [String: KnowledgeGroundingStatus] = [:]
@@ -260,14 +258,6 @@ final class ChatStore: ObservableObject {
         runNativeMemoryMaintenance()
         startReconcileLoop()
         startMemoryGroomLoop()
-    }
-
-    /// Re-fetch her journal (self-authored, rendered read-only). Pulled when the view opens.
-    func refreshJournal() async {
-        guard let client else { return }
-        let (entries, archive) = await client.fetchJournal()
-        journalEntries = entries
-        journalArchive = archive
     }
 
     /// Re-fetch the Pulse feed from vera-api (its standalone store). Reflects adds/deletes,

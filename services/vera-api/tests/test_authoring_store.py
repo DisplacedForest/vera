@@ -67,7 +67,7 @@ def test_revert_restores_content_with_local_name():
 
 
 def test_revert_rejects_non_skill_targets():
-    rid = store.snapshot("journal:main", "x", note="n")
+    rid = store.snapshot("notes:main", "x", note="n")
     from fastapi import HTTPException
     with pytest.raises(HTTPException):
         asyncio.run(authoring.revert(authoring.RevertBody(rev_id=rid)))

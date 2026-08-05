@@ -114,6 +114,11 @@ def test_unknown_top_level_key_rejected():
         vein_schema.validate_definition(_watcher(mystery=True))
 
 
+def test_journal_field_rejected():
+    with pytest.raises(ValueError):
+        vein_schema.validate_definition(_watcher(journal=True))
+
+
 def test_choice_field_requires_choices():
     opts = [{"group": "Units", "fields": [
         {"id": "unit", "label": "Unit", "type": "choice"}]}]

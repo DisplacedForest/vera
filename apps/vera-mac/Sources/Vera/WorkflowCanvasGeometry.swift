@@ -34,6 +34,7 @@ struct WorkflowCanvasTransform: Equatable {
 
 enum WorkflowCardGeometry {
     static let size = CGSize(width: 164, height: 66)
+    static let placementPitch: CGFloat = size.width * 1.5
     static let portHitRadius: CGFloat = 20
     static let spliceRange: CGFloat = 46
     static let wireHoverRange: CGFloat = 14

@@ -3918,8 +3918,16 @@ enum SelfTest {
                   editorCatalog.paletteCategories == ["core", "visual", "transform"],
                   editorCatalog.profile.canonicalOrder == ["pulse.triage", "pulse.gates", "pulse.synthesis", "pulse.claim_audit",
                                                           "pulse.cover_art", "pulse.visual_review", "pulse.cover_retry", "pulse.inject"],
-                  editorCatalog.label(for: "pulse.inject") == "Inject" else {
+                  editorCatalog.label(for: "pulse.inject") == "Inject",
+                  editorCatalog.label(for: "flow.mystery_step") == "Mystery step",
+                  editorCatalog.node(for: "pulse.triage")?.description.hasPrefix("Pulls in") == true,
+                  editorCatalog.nodes.allSatisfy({ !$0.description.isEmpty }) else {
                 print("SELFTEST ERROR: workflow catalog parse"); exit(1)
+            }
+            guard WorkflowCatalogNode.parse(["type": "x", "label": "X", "category": "core"]) == nil,
+                  WorkflowCatalogNode.parse(["type": "x", "label": "X", "description": "  ", "category": "core"]) == nil,
+                  WorkflowCatalogNode.parse(["type": "x", "label": "X", "description": "Does a thing.", "category": "core"]) != nil else {
+                print("SELFTEST ERROR: workflow catalog description requirement"); exit(1)
             }
             guard let reviewSpec = editorCatalog.node(for: "pulse.visual_review"),
                   case .number(let lowBound, let highBound) = reviewSpec.fields.first?.kind,
@@ -3932,8 +3940,8 @@ enum SelfTest {
                 print("SELFTEST ERROR: workflow catalog schema"); exit(1)
             }
             let malformedCatalogJSON = """
-            {"nodes":[{"type":"pulse.triage","label":"Triage","icon":"globe","tint":"accent","category":"core","config_schema":{},"insertable":false},
-                      {"type":"broken","label":"Broken","icon":"globe","tint":"accent","category":"core",
+            {"nodes":[{"type":"pulse.triage","label":"Triage","description":"Pulls in candidates.","icon":"globe","tint":"accent","category":"core","config_schema":{},"insertable":false},
+                      {"type":"broken","label":"Broken","description":"Breaks on purpose.","icon":"globe","tint":"accent","category":"core",
                        "config_schema":{"level":{"type":"choice","options":[]}},"insertable":true}],
              "profile":{"id":"pulse","spine":[],"insertable_categories":[],"pairs":[]}}
             """
@@ -3946,7 +3954,7 @@ enum SelfTest {
                   openLow == 0, openHigh == nil,
                   WorkflowSchemaField.parse(key: "mode", raw: ["type": "gradient"]) == nil,
                   WorkflowSchemaField.parse(key: "budget", raw: ["type": "number", "min": "invalid"]) == nil,
-                  WorkflowCatalogNode.parse(["type": "x", "label": "X", "config_schema": "broken"]) == nil,
+                  WorkflowCatalogNode.parse(["type": "x", "label": "X", "description": "Does a thing.", "config_schema": "broken"]) == nil,
                   WorkflowProfile.parse(["id": "pulse", "pairs": "broken"]) == nil,
                   WorkflowProfile.parse(["id": "pulse", "pairs": [["types": ["a"]]]]) == nil,
                   WorkflowProfile.parse(["id": "generic"])?.spine == [] else {
@@ -3959,7 +3967,8 @@ enum SelfTest {
                 print("SELFTEST ERROR: workflow text field parse"); exit(1)
             }
             guard let filterNode = WorkflowCatalogNode.parse([
-                      "type": "flow.filter", "label": "Filter", "category": "transform", "insertable": true,
+                      "type": "flow.filter", "label": "Filter", "description": "Keeps or drops cards.",
+                      "category": "transform", "insertable": true,
                       "config_schema": ["field": ["type": "text", "default": "title"],
                                         "value": ["type": "text", "default": ""],
                                         "operator": ["type": "choice", "options": ["contains", "equals"], "default": "contains"],
@@ -4001,6 +4010,13 @@ enum SelfTest {
                   !CFNumberIsFloatType(attemptsBack), attemptsBack.intValue == 1 else {
                 print("SELFTEST ERROR: pulse workflow config round trip"); exit(1)
             }
+            let fallbackXs = workflow.nodes.compactMap { workflow.positions[$0.id]?.x }
+            let fallbackGaps = zip(fallbackXs.dropFirst(), fallbackXs).map(-)
+            guard fallbackXs.count == 3,
+                  fallbackGaps.allSatisfy({ $0 == WorkflowCardGeometry.placementPitch }),
+                  fallbackGaps.allSatisfy({ $0 - WorkflowCardGeometry.size.width >= WorkflowCardGeometry.size.width / 2 }) else {
+                print("SELFTEST ERROR: workflow fallback placement spacing"); exit(1)
+            }
             guard PulseWorkflowClient.rejectionMessage(from: Data(#"{"detail":"core stages are out of order"}"#.utf8)) == "core stages are out of order",
                   PulseWorkflowClient.rejectionMessage(from: Data("{}".utf8)) == nil else {
                 print("SELFTEST ERROR: workflow rejection parse"); exit(1)
@@ -4024,7 +4040,7 @@ enum SelfTest {
                   editorStore.canSave == false else {
                 print("SELFTEST ERROR: visual workflow removal"); exit(1)
             }
-            editorStore.placeNodeInDraft("pulse.visual_review", at: CGPoint(x: 1030, y: 310))
+            editorStore.placeNodeInDraft("pulse.visual_review", at: CGPoint(x: 1335, y: 310))
             guard editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "visual_review")) == true,
                   editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "visual_review", to: "cover_retry")) == true,
                   editorStore.draft?.definition.edges.contains(PulseWorkflowEdge(from: "cover_art", to: "cover_retry")) == false,

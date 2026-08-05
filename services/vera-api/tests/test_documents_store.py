@@ -293,12 +293,21 @@ def test_takeover_gives_the_new_attempt_its_own_generation(docs_store, fake_embe
     with docs_store._conn() as c:
         c.execute("UPDATE file SET state='indexing', generation=1, updated_at=? WHERE id=?",
                   (docs_store._now() - 3600, f["id"]))
-    res = asyncio.run(docs_store.index_file(f["id"]))
+    real_embed = docs_store.embed_texts
+    loser = {}
+
+    async def racing_embed(texts):
+        with docs_store._conn() as c:
+            cur = c.execute("UPDATE file SET state='failed', error='late loser' "
+                            "WHERE id=? AND generation=1 AND state='indexing'", (f["id"],))
+            loser["rowcount"] = cur.rowcount
+        return await real_embed(texts)
+
+    import unittest.mock
+    with unittest.mock.patch.object(docs_store, "embed_texts", racing_embed):
+        res = asyncio.run(docs_store.index_file(f["id"]))
+    assert loser["rowcount"] == 0
     assert res["status"] == "ready"
-    with docs_store._conn() as c:
-        cur = c.execute("UPDATE file SET state='failed', error='late loser' "
-                        "WHERE id=? AND generation=1 AND state='indexing'", (f["id"],))
-        assert cur.rowcount == 0
     assert docs_store.get_file(f["id"])["state"] == "ready"
 
 

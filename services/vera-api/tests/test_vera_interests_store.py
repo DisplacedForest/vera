@@ -56,5 +56,3 @@ def test_active_tempers_salience_by_novelty():
     future = int(time.time()) + 10 * 24 * 3600
     order = [i["topic"] for i in vi.active(now=future)]
     assert order.index("fresh") < order.index("worked")  # novelty lifts the fresh one above
-
-

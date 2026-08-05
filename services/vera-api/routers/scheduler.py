@@ -243,7 +243,8 @@ def summarize_outcome(job_id: str, result) -> str:
     if job_id == "knowledge_groom":
         merged, promoted = len(r.get("merged") or []), len(r.get("promoted") or [])
         review = len(r.get("review") or [])
-        gc_n = int((r.get("gc") or {}).get("pending") or 0)
+        gc = r.get("gc") or {}
+        gc_n = int(gc.get("pending") or 0) + len(gc.get("orphans") or [])
         parts = []
         if merged:
             parts.append(f"merged {merged}")

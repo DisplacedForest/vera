@@ -180,5 +180,3 @@ def delete(interest_id):
     init()
     with _conn() as c:
         c.execute("DELETE FROM interest WHERE id=?", (interest_id,))
-
-

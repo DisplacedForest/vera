@@ -31,6 +31,24 @@ def stub_node():
     vein_engine.NODE_SPECS.pop("card_stub", None)
 
 
+@pytest.fixture
+def float_choice_node():
+    async def _run(items, params, ctx):
+        return items
+    vein_engine.register("scale_stub", _run, node={
+        "label": "Scale stub", "icon": "circle", "tint": "accent",
+        "category": "transform", "insertable": True,
+        "description": "Scales cards for tests.",
+        "config_schema": {
+            "scale": {"type": "choice", "options": [0.5, 1.0], "default": 1.0},
+            "strict": {"type": "choice", "options": [True, False], "default": False},
+        },
+    })
+    yield "scale_stub"
+    vein_engine.BLOCKS.pop("scale_stub", None)
+    vein_engine.NODE_SPECS.pop("scale_stub", None)
+
+
 def _pulse_definition():
     return workflow_store.active("pulse")["definition"]
 
@@ -221,6 +239,43 @@ def test_choice_config_rejects_unknown_option():
             node["config"] = {"style": "vaporwave"}
     with pytest.raises(ValueError, match="style"):
         workflow_registry.validate_definition("pulse", definition)
+
+
+def _definition_with_scale_config(node_type, config):
+    definition = _pulse_definition()
+    _insert_between(definition, "gates", "synthesis",
+                    {"id": "scale", "type": node_type, "label": "Scale", "config": config})
+    return definition
+
+
+@pytest.mark.parametrize("scale", [1, 1.0, 0.5])
+def test_numeric_choice_matches_by_value(float_choice_node, scale):
+    definition = _definition_with_scale_config(float_choice_node, {"scale": scale})
+    workflow_registry.validate_definition("pulse", definition)
+
+
+@pytest.mark.parametrize("scale", [True, False, "1", 2, 0.75, 10 ** 400, float("inf"), float("nan")])
+def test_numeric_choice_rejects_non_matching_values(float_choice_node, scale):
+    definition = _definition_with_scale_config(float_choice_node, {"scale": scale})
+    with pytest.raises(ValueError, match="must be one of"):
+        workflow_registry.validate_definition("pulse", definition)
+
+
+@pytest.mark.parametrize("strict", [1, 1.0, 0, 0.0])
+def test_bool_choice_rejects_numeric_values(float_choice_node, strict):
+    definition = _definition_with_scale_config(float_choice_node, {"strict": strict})
+    with pytest.raises(ValueError, match="must be one of"):
+        workflow_registry.validate_definition("pulse", definition)
+
+
+def test_bool_choice_accepts_bool(float_choice_node):
+    definition = _definition_with_scale_config(float_choice_node, {"strict": True})
+    workflow_registry.validate_definition("pulse", definition)
+
+
+def test_int_choice_accepts_float_serialized_value():
+    definition = _definition_with_review_pair(retry_config={"max_attempts": 1.0})
+    workflow_registry.validate_definition("pulse", definition)
 
 
 def _definition_with_review_pair(retry_config=None, review_config=None):

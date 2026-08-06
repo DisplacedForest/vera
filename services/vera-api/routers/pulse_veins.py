@@ -357,6 +357,8 @@ async def delete_vein(kind: str):
     if not vein_defs.delete_custom(kind):
         raise HTTPException(status_code=404, detail=f"unknown vein '{kind}'")
     vein_store.remove(kind)
+    from . import workflow_store
+    workflow_store.drop_workflow(f"vein_{kind}")
     return {"deleted": kind}
 
 

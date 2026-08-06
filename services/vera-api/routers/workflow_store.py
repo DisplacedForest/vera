@@ -185,7 +185,8 @@ def _overlay_projection(definition: dict, workflow_id: str) -> dict:
     nodes = []
     for node in projection["nodes"]:
         match = stored.get(node["id"])
-        if match and match.get("type") == node["type"] and isinstance(match.get("config"), dict):
+        if (match and match.get("type") == node["type"] and isinstance(match.get("config"), dict)
+                and "rule" not in node):
             node = {**node, "config": match["config"]}
         nodes.append(node)
     out = {**projection, "nodes": nodes}
@@ -196,6 +197,9 @@ def _overlay_projection(definition: dict, workflow_id: str) -> dict:
 
 
 def active(workflow_id: str) -> dict:
+    if (isinstance(workflow_id, str) and workflow_id.startswith("vein_")
+            and workflow_triggers.job_for(workflow_id) is None):
+        raise KeyError(workflow_id)
     row = _version_row(workflow_id)
     if not row:
         projection = workflow_projection.definition_for(workflow_id)
@@ -226,6 +230,18 @@ def get_version(version_id: str) -> dict | None:
     with _conn() as conn:
         row = conn.execute("SELECT * FROM workflow_versions WHERE id=?", (version_id,)).fetchone()
     return _version(row) if row else None
+
+
+def drop_workflow(workflow_id: str):
+    init()
+    with _conn() as conn:
+        run_ids = [row["id"] for row in conn.execute(
+            "SELECT id FROM workflow_runs WHERE workflow_id=?", (workflow_id,)).fetchall()]
+        for run_id in run_ids:
+            conn.execute("DELETE FROM workflow_node_runs WHERE workflow_run_id=?", (run_id,))
+            conn.execute("DELETE FROM workflow_visual_runs WHERE workflow_run_id=?", (run_id,))
+        conn.execute("DELETE FROM workflow_runs WHERE workflow_id=?", (workflow_id,))
+        conn.execute("DELETE FROM workflow_versions WHERE workflow_id=?", (workflow_id,))
 
 
 def save_draft(version_id: str, definition: dict) -> dict:

@@ -9,6 +9,7 @@ struct WorkflowNode: Identifiable, Hashable {
     var id: String
     var type: String
     var config: [String: WorkflowConfigValue]
+    var rule: String? = nil
 
     var jsonConfig: [String: Any] {
         config.mapValues(\.jsonValue)
@@ -55,8 +56,10 @@ struct WorkflowDefinition: Hashable {
 
     func jsonObject() -> [String: Any] {
         ["id": id,
-         "nodes": nodes.map { node in
-             ["id": node.id, "type": node.type, "config": node.jsonConfig]
+         "nodes": nodes.map { node -> [String: Any] in
+             var raw: [String: Any] = ["id": node.id, "type": node.type, "config": node.jsonConfig]
+             if let rule = node.rule { raw["rule"] = rule }
+             return raw
          },
          "edges": edges.map { ["from": $0.from, "to": $0.to] },
          "positions": positions.mapValues(\.jsonObject)]
@@ -70,7 +73,7 @@ struct WorkflowDefinition: Hashable {
         let nodes = rawNodes.compactMap { raw -> WorkflowNode? in
             guard let id = raw["id"] as? String, let type = raw["type"] as? String else { return nil }
             let config = (raw["config"] as? [String: Any] ?? [:]).mapValues(WorkflowConfigValue.parse)
-            return WorkflowNode(id: id, type: type, config: config)
+            return WorkflowNode(id: id, type: type, config: config, rule: raw["rule"] as? String)
         }
         let edges = rawEdges.compactMap { raw -> WorkflowEdge? in
             guard let from = raw["from"] as? String, let to = raw["to"] as? String else { return nil }
@@ -713,8 +716,11 @@ final class WorkflowEditorStore: ObservableObject {
         let nodes = [
             WorkflowNode(id: "schedule", type: "trigger.schedule",
                               config: ["mode": .string("interval"), "every_minutes": .int(360)]),
-            WorkflowNode(id: "step-1", type: "http_fetch", config: [:]),
-            WorkflowNode(id: "step-2", type: "trip_band", config: [:])
+            WorkflowNode(id: "step-1", type: "http_fetch",
+                              config: ["url": .string("https://forecast.example/v1.json"),
+                                       "extract": .string("gust")]),
+            WorkflowNode(id: "step-2", type: "trip_band",
+                              config: ["hi": .double(45), "severity": .string("alert")])
         ]
         store.active = WorkflowVersion(id: "projected-vein_weather", number: 0, state: "active",
                                             definition: fixtureDefinition(id: "vein_weather", nodes: nodes))
@@ -777,8 +783,14 @@ extension WorkflowCatalog {
                             "weekday":{"type":"choice","default":"monday","options":["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]},
                             "every_minutes":{"type":"choice","default":60,"options":[5,10,15,30,60,120,240,360,720]}},"insertable":false},
           {"type":"step.home_model","label":"Refresh the home model","description":"Rebuilds the model of your home from the latest recorded activity.","icon":"house","tint":"cyan","category":"core","config_schema":{},"insertable":false},
-          {"type":"http_fetch","label":"HTTP fetch","description":"Fetches a URL and turns the response into items.","icon":"arrow.down.circle","tint":"accent","category":"enrich","config_schema":{},"insertable":false},
-          {"type":"trip_band","label":"Trip band","description":"Watches a numeric reading and emits an item when it crosses the band you set.","icon":"waveform.path","tint":"accent","category":"transform","config_schema":{},"insertable":false}
+          {"type":"http_fetch","label":"HTTP fetch","description":"Fetches a URL and turns the response into items.","icon":"arrow.down.circle","tint":"accent","category":"enrich",
+           "config_schema":{"url":{"type":"text","default":""},
+                            "extract":{"type":"text","default":""},
+                            "label":{"type":"text","default":""}},"insertable":false},
+          {"type":"trip_band","label":"Trip band","description":"Watches a numeric reading and emits an item when it crosses the band you set.","icon":"waveform.path","tint":"accent","category":"transform",
+           "config_schema":{"hi":{"type":"number"},"lo":{"type":"number"},
+                            "field":{"type":"text","default":"value"},
+                            "severity":{"type":"choice","default":"alert","options":["notice","alert","critical"]}},"insertable":false}
         ],
         "profile":{"id":"locked","spine":[],"insertable_categories":[],"pairs":[],"triggers":["trigger.schedule"],"locked":true}}
         """
@@ -1737,11 +1749,12 @@ struct WorkflowEditor: View {
     private func inspectorContent(selected: WorkflowNode, spec: WorkflowCatalogNode?) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             inspectorSection("Parameters") {
-                if store.isEditing {
+                VStack(alignment: .leading, spacing: 10) {
                     controls(for: selected, spec: spec)
-                } else {
-                    Text("Create a draft to configure this node.")
-                        .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    if !store.isEditing, !snapshot, selected.rule == nil, spec?.fields.isEmpty == false {
+                        Text("Create a draft to change these settings.")
+                            .font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                    }
                 }
             }
             inspectorSection("Connections") { connectionList(for: selected) }
@@ -1796,10 +1809,17 @@ struct WorkflowEditor: View {
     }
 
     @ViewBuilder private func controls(for node: WorkflowNode, spec: WorkflowCatalogNode?) -> some View {
-        if let fields = spec?.fields, !fields.isEmpty {
+        if let rule = node.rule {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(cronSummary(rule)).font(.system(size: 11.5, weight: .semibold))
+                Text("This schedule is set on the server and can't be edited here.")
+                    .font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else if let fields = spec?.fields, !fields.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(fields) { field in
-                    fieldControl(field, node: node)
+                    fieldControl(field, node: node, readOnly: snapshot || !store.isEditing)
                 }
             }
         } else {
@@ -1807,13 +1827,13 @@ struct WorkflowEditor: View {
         }
     }
 
-    @ViewBuilder private func fieldControl(_ field: WorkflowSchemaField, node: WorkflowNode) -> some View {
+    @ViewBuilder private func fieldControl(_ field: WorkflowSchemaField, node: WorkflowNode, readOnly: Bool) -> some View {
         let current = node.config[field.key] ?? field.defaultValue
         switch field.kind {
         case .choice(let options):
             VStack(alignment: .leading, spacing: 6) {
                 Text(field.label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                if snapshot {
+                if readOnly {
                     Text((current ?? options.first)?.display ?? "Not set")
                         .font(.system(size: 11, weight: .semibold))
                 } else {
@@ -1844,7 +1864,7 @@ struct WorkflowEditor: View {
                 }
                 if let low, let high, low < high {
                     let step = high - low <= 2 ? 0.1 : 1
-                    if snapshot {
+                    if readOnly {
                         GeometryReader { proxy in
                             let fraction = (value - low) / (high - low)
                             ZStack(alignment: .leading) {
@@ -1860,7 +1880,7 @@ struct WorkflowEditor: View {
                             store.setConfigValue(field.key, step < 1 ? .double((newValue * 10).rounded() / 10) : .double(newValue.rounded()))
                         }), in: low...high, step: step)
                     }
-                } else if snapshot {
+                } else if readOnly {
                     Text(value.formatted(.number))
                         .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                 } else {
@@ -1879,7 +1899,7 @@ struct WorkflowEditor: View {
                 if case .bool(let value) = current { return value }
                 return false
             }()
-            if snapshot {
+            if readOnly {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(field.label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
                     Text(flag ? "On" : "Off").font(.system(size: 11, weight: .semibold))
@@ -1896,7 +1916,7 @@ struct WorkflowEditor: View {
             }()
             VStack(alignment: .leading, spacing: 6) {
                 Text(field.label).font(.system(size: 10.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                if snapshot {
+                if readOnly {
                     Text(value.isEmpty ? "Not set" : value)
                         .font(.system(size: 11))
                         .foregroundStyle(value.isEmpty ? Theme.textSecondary : Theme.textPrimary)

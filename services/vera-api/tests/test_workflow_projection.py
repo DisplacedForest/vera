@@ -162,3 +162,82 @@ def test_workflow_endpoint_serves_the_flow_face():
     assert out["trigger_job"]["id"] == "home_model"
     catalog = asyncio.run(agentic.workflow_catalog("home_model"))
     assert catalog["profile"]["locked"] is True
+
+
+def test_vein_steps_carry_stock_block_params(vein_shapes):
+    definition = workflow_projection.definition_for("vein_weather")
+    steps = definition["nodes"][1:]
+    assert steps[0]["config"] == {"url": "https://forecast.example/v1.json", "extract": "gust"}
+    assert steps[1]["config"] == {"hi": 45}
+
+
+def test_step_config_coerces_and_filters():
+    schema = workflow_registry.block_config_schema("present")
+    config = workflow_projection._step_config(
+        {"stats": [{"value": "{data.temp}", "label": "Now"}], "unknown": 1}, schema)
+    assert config == {"stats": '[{"value": "{data.temp}", "label": "Now"}]'}
+    schema = workflow_registry.block_config_schema("trip_band")
+    config = workflow_projection._step_config(
+        {"hi": 45, "lo": "not a number", "severity": "bogus", "field": "value"}, schema)
+    assert config == {"hi": 45, "field": "value"}
+
+
+def test_stock_blocks_declare_schemas_in_the_catalog():
+    entries = {entry["type"]: entry for entry in workflow_registry.catalog()}
+    for block in ("web_search", "http_fetch", "ha_state", "trip_band",
+                  "llm_judge", "llm_compose", "situation_cluster", "present"):
+        assert entries[block]["description"].strip()
+        assert entries[block]["config_schema"]
+
+
+def test_unrepresentable_cron_serves_honest_trigger(monkeypatch):
+    monkeypatch.setenv("SCHEDULE_HOME_MODEL", "13 4 */2 * *")
+    definition = workflow_projection.definition_for("home_model")
+    trigger = definition["nodes"][0]
+    assert trigger["config"] == {}
+    assert trigger["rule"] == "13 4 */2 * *"
+    active = workflow_store.active("home_model")
+    served = active["definition"]["nodes"][0]
+    assert served["config"] == {}
+    assert served["rule"] == "13 4 */2 * *"
+
+
+def test_unrepresentable_cron_promote_never_rewrites_the_job(monkeypatch):
+    monkeypatch.setenv("SCHEDULE_HOME_MODEL", "13 4 */2 * *")
+    draft = workflow_store.create_draft("home_model")
+    workflow_store.save_draft(draft["id"], draft["definition"])
+    workflow_store.promote(draft["id"])
+    assert scheduler.job_cron("home_model") == "13 4 */2 * *"
+    served = workflow_store.active("home_model")["definition"]["nodes"][0]
+    assert served["config"] == {}
+    assert served["rule"] == "13 4 */2 * *"
+
+
+def test_locked_draft_rejects_a_retyped_node():
+    draft = workflow_store.create_draft("home_model")
+    definition = draft["definition"]
+    for node in definition["nodes"]:
+        if node["id"] == "run":
+            node["type"] = "step.knowledge_groom"
+    with pytest.raises(ValueError, match="managed by the server"):
+        workflow_store.save_draft(draft["id"], definition)
+
+
+def test_duplicate_edges_are_rejected():
+    definition = {
+        "nodes": [{"id": "a", "type": "flow.filter"}, {"id": "b", "type": "flow.notify"}],
+        "edges": [{"from": "a", "to": "b"}, {"from": "a", "to": "b"}],
+    }
+    with pytest.raises(ValueError, match="more than once"):
+        workflow_registry.validate_definition("custom", definition)
+
+
+def test_deleted_vein_reads_gone(vein_shapes):
+    draft = workflow_store.create_draft("vein_weather")
+    workflow_store.save_draft(draft["id"], draft["definition"])
+    workflow_store.promote(draft["id"])
+    (vein_shapes / "weather.json").unlink()
+    with pytest.raises(KeyError):
+        workflow_store.active("vein_weather")
+    workflow_store.drop_workflow("vein_weather")
+    assert workflow_store._version_row("vein_weather") is None

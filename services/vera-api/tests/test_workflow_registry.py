@@ -254,7 +254,7 @@ def test_numeric_choice_matches_by_value(float_choice_node, scale):
     workflow_registry.validate_definition("pulse", definition)
 
 
-@pytest.mark.parametrize("scale", [True, False, "1", 2, 0.75])
+@pytest.mark.parametrize("scale", [True, False, "1", 2, 0.75, 10 ** 400, float("inf"), float("nan")])
 def test_numeric_choice_rejects_non_matching_values(float_choice_node, scale):
     definition = _definition_with_scale_config(float_choice_node, {"scale": scale})
     with pytest.raises(ValueError, match="must be one of"):

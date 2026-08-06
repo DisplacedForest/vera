@@ -159,7 +159,9 @@ def _choice_matches(value, option) -> bool:
     if isinstance(value, bool) or isinstance(option, bool):
         return type(value) is type(option) and value == option
     if isinstance(value, (int, float)) and isinstance(option, (int, float)):
-        return math.isfinite(value) and value == option
+        if isinstance(value, float) and not math.isfinite(value):
+            return False
+        return value == option
     return type(value) is type(option) and value == option
 
 

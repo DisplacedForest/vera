@@ -186,7 +186,7 @@ def _overlay_projection(definition: dict, workflow_id: str) -> dict:
     for node in projection["nodes"]:
         match = stored.get(node["id"])
         if (match and match.get("type") == node["type"] and isinstance(match.get("config"), dict)
-                and "rule" not in node):
+                and workflow_triggers.is_trigger(node["type"]) and "rule" not in node):
             node = {**node, "config": match["config"]}
         nodes.append(node)
     out = {**projection, "nodes": nodes}

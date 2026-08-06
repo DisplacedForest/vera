@@ -6,6 +6,7 @@ with a Schedule trigger at the head, scheduled flows project a single named step
 veins project their block pipelines, locked profiles reject structural edits but
 round-trip the schedule through draft and promote.
 """
+import json
 import os
 import sys
 
@@ -230,6 +231,48 @@ def test_duplicate_edges_are_rejected():
     }
     with pytest.raises(ValueError, match="more than once"):
         workflow_registry.validate_definition("custom", definition)
+
+
+def test_locked_draft_rejects_step_config_edits(vein_shapes):
+    draft = workflow_store.create_draft("vein_weather")
+    definition = draft["definition"]
+    for node in definition["nodes"]:
+        if node["id"] == "step-2":
+            node["config"] = {**node.get("config", {}), "hi": 99}
+    with pytest.raises(ValueError, match="come from its definition"):
+        workflow_store.save_draft(draft["id"], definition)
+
+
+def test_stored_step_config_never_shadows_projection(vein_shapes):
+    draft = workflow_store.create_draft("vein_weather")
+    stripped = json.loads(json.dumps(draft["definition"]))
+    for node in stripped["nodes"]:
+        if node["type"] != "trigger.schedule":
+            node["config"] = {}
+    with workflow_store._conn() as conn:
+        conn.execute("UPDATE workflow_versions SET definition=?, state='active' WHERE id=?",
+                     (json.dumps(stripped), draft["id"]))
+    served = workflow_store.active("vein_weather")
+    step = next(node for node in served["definition"]["nodes"] if node["id"] == "step-1")
+    assert step["config"] == {"url": "https://forecast.example/v1.json", "extract": "gust"}
+
+
+def test_projected_definitions_survive_validation(vein_shapes):
+    (vein_shapes / "newswatch.json").write_text(json.dumps({
+        "kind": "newswatch", "label": "News watch", "icon": "antenna.radiowaves.left.and.right",
+        "order": 9, "nominal_label": "quiet", "blurb": "wire watch",
+        "pipeline": [
+            {"block": "web_search", "params": {"query": "escalation", "max_results": 26}},
+            {"block": "llm_judge", "params": {"bar": "matters to the household"}},
+        ],
+        "schedule": "0 */6 * * *", "requires": [], "providers": [], "options": [],
+    }), encoding="utf-8")
+    definition = workflow_projection.definition_for("vein_newswatch")
+    search = next(node for node in definition["nodes"] if node["type"] == "web_search")
+    assert search["config"] == {"query": "escalation"}
+    for workflow_id in ("vein_newswatch", "vein_weather", "home_model"):
+        workflow_registry.validate_definition(workflow_id,
+                                              workflow_projection.definition_for(workflow_id))
 
 
 def test_deleted_vein_reads_gone(vein_shapes):

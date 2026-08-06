@@ -320,6 +320,12 @@ def _validate_locked(workflow_id: str, nodes: list[dict], edges: list[dict]):
     got_edges = {(edge.get("from"), edge.get("to")) for edge in edges}
     if served_nodes != got_nodes or served_edges != got_edges:
         raise ValueError("this workflow's steps are managed by the server; only its settings can change")
+    served_config = {node["id"]: node.get("config") or {} for node in projection["nodes"]}
+    for node in nodes:
+        if workflow_triggers.is_trigger(node.get("type")):
+            continue
+        if (node.get("config") or {}) != served_config.get(node.get("id"), {}):
+            raise ValueError("this workflow's step settings come from its definition; only its schedule can change here")
 
 
 def validate_definition(workflow_id: str, definition: dict):

@@ -520,6 +520,9 @@ final class WorkflowEditorStore: ObservableObject {
     }
 
     func setConfigValue(_ key: String, _ value: WorkflowConfigValue) {
+        if isLocked, let id = selectedNodeID,
+           let node = draft?.definition.node(withID: id),
+           catalog?.isTriggerType(node.type) != true { return }
         mutateSelected { node in node.config[key] = value }
     }
 
@@ -1751,7 +1754,8 @@ struct WorkflowEditor: View {
             inspectorSection("Parameters") {
                 VStack(alignment: .leading, spacing: 10) {
                     controls(for: selected, spec: spec)
-                    if !store.isEditing, !snapshot, selected.rule == nil, spec?.fields.isEmpty == false {
+                    if !store.isEditing, !snapshot, selected.rule == nil, spec?.fields.isEmpty == false,
+                       !(store.isLocked && store.catalog?.isTriggerType(selected.type) != true) {
                         Text("Create a draft to change these settings.")
                             .font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
                     }
@@ -1817,9 +1821,10 @@ struct WorkflowEditor: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         } else if let fields = spec?.fields, !fields.isEmpty {
+            let managed = store.isLocked && store.catalog?.isTriggerType(node.type) != true
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(fields) { field in
-                    fieldControl(field, node: node, readOnly: snapshot || !store.isEditing)
+                    fieldControl(field, node: node, readOnly: snapshot || !store.isEditing || managed)
                 }
             }
         } else {

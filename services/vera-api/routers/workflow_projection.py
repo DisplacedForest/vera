@@ -132,9 +132,13 @@ def _step_config(params: dict, schema: dict) -> dict:
         kind = field.get("type")
         if kind == "text" and not isinstance(value, str):
             value = json.dumps(value)
-        if kind == "number" and not (isinstance(value, (int, float)) and not isinstance(value, bool)
-                                     and math.isfinite(value)):
-            continue
+        if kind == "number":
+            low, high = field.get("min"), field.get("max")
+            numeric = (isinstance(value, (int, float)) and not isinstance(value, bool)
+                       and math.isfinite(value))
+            if (not numeric or (low is not None and value < low)
+                    or (high is not None and value > high)):
+                continue
         if kind == "choice" and not any(type(value) is type(option) and value == option
                                         for option in field.get("options") or []):
             continue

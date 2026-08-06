@@ -4324,6 +4324,16 @@ enum SelfTest {
                   veinStore.catalog?.label(for: "trip_band") == "Trip band" else {
                 print("SELFTEST ERROR: vein fixture projection"); exit(1)
             }
+            veinStore.draft = veinStore.active
+            veinStore.selectedNodeID = "step-2"
+            veinStore.setConfigValue("hi", .double(99))
+            veinStore.selectedNodeID = "schedule"
+            veinStore.setConfigValue("every_minutes", .int(120))
+            guard veinStore.draft?.definition.node(withID: "step-2")?.config["hi"] == .double(45),
+                  veinStore.draft?.definition.node(withID: "schedule")?.config["every_minutes"] == .int(120) else {
+                print("SELFTEST ERROR: managed step config guard"); exit(1)
+            }
+            veinStore.draft = nil
             let ruleJSON = """
             {"id":"home_model","nodes":[
               {"id":"schedule","type":"trigger.schedule","config":{},"rule":"13 4 */2 * *"},

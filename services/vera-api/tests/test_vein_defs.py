@@ -7,13 +7,14 @@ import os
 import pytest
 from fastapi import HTTPException
 
-from routers import pulse_veins, vein_defs, vein_store
+from routers import pulse_veins, vein_defs, vein_store, workflow_store
 
 
 @pytest.fixture(autouse=True)
 def _fresh(monkeypatch, tmp_path):
     monkeypatch.setattr(vein_store, "PATH", str(tmp_path / "veins.json"))
     monkeypatch.setattr(vein_defs, "CUSTOM_DIR", str(tmp_path / "veins.d"))
+    monkeypatch.setattr(workflow_store, "DB_PATH", str(tmp_path / "workflows.db"))
     yield
 
 
@@ -202,3 +203,31 @@ def test_delete_definition_clears_state(monkeypatch, tmp_path):
 def test_schema_endpoint():
     schema = asyncio.run(pulse_veins.definition_schema())
     assert schema["properties"]["kind"]["pattern"]
+
+
+def test_customs_cache_reuses_until_the_directory_changes(monkeypatch):
+    calls = []
+    original = vein_defs.vein_schema.validate_definition
+
+    def counting(raw):
+        calls.append(raw.get("kind"))
+        return original(raw)
+
+    monkeypatch.setattr(vein_defs.vein_schema, "validate_definition", counting)
+    asyncio.run(pulse_veins.create_vein(_watcher()))
+    vein_defs.customs()
+    baseline = len(calls)
+    vein_defs.customs()
+    vein_defs.customs()
+    assert len(calls) == baseline
+    asyncio.run(pulse_veins.create_vein(_watcher(kind="markets", label="Markets")))
+    out = vein_defs.customs()
+    assert len(calls) > baseline
+    assert set(out) == {"geopolitics", "markets"}
+
+
+def test_customs_cache_sees_deletes():
+    asyncio.run(pulse_veins.create_vein(_watcher()))
+    assert "geopolitics" in vein_defs.customs()
+    vein_defs.delete_custom("geopolitics")
+    assert "geopolitics" not in vein_defs.customs()

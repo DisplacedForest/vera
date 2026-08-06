@@ -4318,10 +4318,40 @@ enum SelfTest {
             guard veinStore.isLocked,
                   veinStore.flowLabel == "Weather",
                   veinStore.displayed?.definition.nodes.map(\.type) == ["trigger.schedule", "http_fetch", "trip_band"],
+                  veinStore.displayed?.definition.node(withID: "step-1")?.config["url"] == .string("https://forecast.example/v1.json"),
+                  veinStore.displayed?.definition.node(withID: "step-2")?.config["hi"] == .double(45),
+                  veinStore.catalog?.node(for: "trip_band")?.fields.map(\.key) == ["field", "hi", "lo", "severity"],
                   veinStore.catalog?.label(for: "trip_band") == "Trip band" else {
                 print("SELFTEST ERROR: vein fixture projection"); exit(1)
             }
-            print("  locked workflows OK (profile flag, chrome, structural gating, tunable edit, vein fixture)")
+            veinStore.draft = veinStore.active
+            veinStore.selectedNodeID = "step-2"
+            veinStore.setConfigValue("hi", .double(99))
+            veinStore.selectedNodeID = "schedule"
+            veinStore.setConfigValue("every_minutes", .int(120))
+            guard veinStore.draft?.definition.node(withID: "step-2")?.config["hi"] == .double(45),
+                  veinStore.draft?.definition.node(withID: "schedule")?.config["every_minutes"] == .int(120) else {
+                print("SELFTEST ERROR: managed step config guard"); exit(1)
+            }
+            veinStore.draft = nil
+            let ruleJSON = """
+            {"id":"home_model","nodes":[
+              {"id":"schedule","type":"trigger.schedule","config":{},"rule":"13 4 */2 * *"},
+              {"id":"run","type":"step.home_model","config":{}}
+            ],"edges":[{"from":"schedule","to":"run"}]}
+            """
+            guard let ruleObject = try? JSONSerialization.jsonObject(with: Data(ruleJSON.utf8)),
+                  let ruleWorkflow = WorkflowDefinition.parse(ruleObject),
+                  ruleWorkflow.node(withID: "schedule")?.rule == "13 4 */2 * *",
+                  ruleWorkflow.node(withID: "schedule")?.config.isEmpty == true,
+                  ruleWorkflow.node(withID: "run")?.rule == nil,
+                  let ruleTrip = (ruleWorkflow.jsonObject()["nodes"] as? [[String: Any]])?.first,
+                  ruleTrip["rule"] as? String == "13 4 */2 * *",
+                  cronSummary("13 4 */2 * *") == "Custom schedule",
+                  cronSummary("0 6,18 * * *") == "Daily 6:00 AM & 6:00 PM" else {
+                print("SELFTEST ERROR: server-managed schedule rule round trip"); exit(1)
+            }
+            print("  locked workflows OK (profile flag, chrome, structural gating, tunable edit, vein fixture, rule round trip)")
 
             let runFixtureStore = WorkflowEditorStore.runFixture()
             guard runFixtureStore.mode == .run,

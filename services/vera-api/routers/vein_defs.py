@@ -16,6 +16,7 @@ SHIPPED_DIR = os.environ.get(
 CUSTOM_DIR = os.environ.get("VEINS_D_PATH", "/data/veins.d")
 
 _shipped_cache: list[dict] | None = None
+_customs_cache: tuple | None = None
 _last_report: list[dict] = []
 
 
@@ -45,18 +46,28 @@ def shipped_kinds() -> set[str]:
     return {d["kind"] for d in shipped()}
 
 
+def _customs_signature() -> tuple | None:
+    try:
+        with os.scandir(CUSTOM_DIR) as entries:
+            stats = sorted((entry.name, entry.stat().st_mtime_ns, entry.stat().st_size)
+                           for entry in entries if entry.name.endswith(".json"))
+    except OSError:
+        return None
+    return (CUSTOM_DIR, tuple(stats))
+
+
 def customs() -> dict[str, dict]:
-    global _last_report
+    global _customs_cache, _last_report
+    signature = _customs_signature()
+    if signature is None:
+        _last_report = []
+        return {}
+    if _customs_cache is not None and _customs_cache[0] == signature:
+        _last_report = list(_customs_cache[2])
+        return dict(_customs_cache[1])
     out: dict[str, dict] = {}
     report: list[dict] = []
-    try:
-        names = sorted(os.listdir(CUSTOM_DIR))
-    except OSError:
-        _last_report = []
-        return out
-    for name in names:
-        if not name.endswith(".json"):
-            continue
+    for name, _mtime, _size in signature[1]:
         path = os.path.join(CUSTOM_DIR, name)
         try:
             with open(path, encoding="utf-8") as f:
@@ -67,8 +78,9 @@ def customs() -> dict[str, dict]:
         except (OSError, ValueError) as e:
             log.warning("skipping custom vein definition %s: %s", path, e)
             report.append({"file": path, "error": str(e)})
-    _last_report = report
-    return out
+    _customs_cache = (signature, out, report)
+    _last_report = list(report)
+    return dict(out)
 
 
 def load_report() -> list[dict]:

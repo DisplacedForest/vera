@@ -40,21 +40,36 @@ PULSE_SPECS = {
 
 BLOCK_META = {
     "web_search": {"label": "Web search", "icon": "magnifyingglass", "category": "enrich",
-                   "description": "Searches the web for a query and turns the results into items."},
+                   "description": "Searches the web for a query and turns the results into items.",
+                   "config_schema": {"query": {"type": "text", "default": ""},
+                                     "max_results": {"type": "number", "min": 1, "max": 25, "default": 5}}},
     "http_fetch": {"label": "HTTP fetch", "icon": "arrow.down.circle", "category": "enrich",
-                   "description": "Fetches a URL and turns the response into items."},
+                   "description": "Fetches a URL and turns the response into items.",
+                   "config_schema": {"url": {"type": "text", "default": ""},
+                                     "extract": {"type": "text", "default": ""},
+                                     "label": {"type": "text", "default": ""}}},
     "ha_state": {"label": "Home state", "icon": "house", "category": "enrich",
-                 "description": "Reads the current state of a Home Assistant entity as an item."},
+                 "description": "Reads the current state of a Home Assistant entity as an item.",
+                 "config_schema": {"entity_id": {"type": "text", "default": ""}}},
     "trip_band": {"label": "Trip band", "icon": "waveform.path", "category": "transform",
-                  "description": "Watches a numeric reading and emits an item when it crosses the band you set."},
+                  "description": "Watches a numeric reading and emits an item when it crosses the band you set.",
+                  "config_schema": {"hi": {"type": "number"}, "lo": {"type": "number"},
+                                    "field": {"type": "text", "default": "value"},
+                                    "severity": {"type": "choice", "default": "alert",
+                                                 "options": ["notice", "alert", "critical"]}}},
     "llm_judge": {"label": "LLM judge", "icon": "scale.3d", "category": "transform",
-                  "description": "Asks the model whether each item clears the bar you describe and keeps the ones that do."},
+                  "description": "Asks the model whether each item clears the bar you describe and keeps the ones that do.",
+                  "config_schema": {"bar": {"type": "text", "default": ""}}},
     "llm_compose": {"label": "LLM compose", "icon": "text.badge.star", "category": "transform",
-                    "description": "Asks the model to write new text from the incoming items."},
+                    "description": "Asks the model to write new text from the incoming items.",
+                    "config_schema": {"style": {"type": "text", "default": ""}}},
     "situation_cluster": {"label": "Situation cluster", "icon": "circle.grid.2x2", "category": "transform",
-                          "description": "Groups related items into one situation so they present together."},
+                          "description": "Groups related items into one situation so they present together.",
+                          "config_schema": {"deepen_query": {"type": "text", "default": ""}}},
     "present": {"label": "Present", "icon": "chart.bar", "category": "notify",
-                "description": "Formats the final items into the card that gets posted."},
+                "description": "Formats the final items into the card that gets posted.",
+                "config_schema": {"stats": {"type": "text", "default": ""},
+                                  "chart": {"type": "text", "default": ""}}},
 }
 
 GENERAL_SPECS = {
@@ -114,6 +129,11 @@ def profile_for(workflow_id: str) -> dict:
     return GENERIC_PROFILE
 
 
+def block_config_schema(name: str) -> dict:
+    declared = vein_engine.NODE_SPECS.get(name) or {}
+    return declared.get("config_schema") or BLOCK_META.get(name, {}).get("config_schema") or {}
+
+
 def _block_spec(name: str) -> dict:
     declared = vein_engine.NODE_SPECS.get(name) or {}
     meta = BLOCK_META.get(name, {})
@@ -124,7 +144,7 @@ def _block_spec(name: str) -> dict:
         "category": declared.get("category") or meta.get("category") or "transform",
         "description": declared.get("description") or meta.get("description")
                        or vein_engine.BLOCK_NOTES.get(name) or "",
-        "config_schema": declared.get("config_schema") or {},
+        "config_schema": block_config_schema(name),
         "insertable": bool(declared.get("insertable", False)),
     }
 
@@ -310,6 +330,12 @@ def _validate_locked(workflow_id: str, nodes: list[dict], edges: list[dict]):
     got_edges = {(edge.get("from"), edge.get("to")) for edge in edges}
     if served_nodes != got_nodes or served_edges != got_edges:
         raise ValueError("this workflow's steps are managed by the server; only its settings can change")
+    served_config = {node["id"]: node.get("config") or {} for node in projection["nodes"]}
+    for node in nodes:
+        if workflow_triggers.is_trigger(node.get("type")):
+            continue
+        if (node.get("config") or {}) != served_config.get(node.get("id"), {}):
+            raise ValueError("this workflow's step settings come from its definition; only its schedule can change here")
 
 
 def validate_definition(workflow_id: str, definition: dict):
@@ -332,6 +358,9 @@ def validate_definition(workflow_id: str, definition: dict):
     declared = set(ids)
     if any(edge.get("from") not in declared or edge.get("to") not in declared for edge in edges):
         raise ValueError("edges must connect declared nodes")
+    pairs = [(edge.get("from"), edge.get("to")) for edge in edges]
+    if len(pairs) != len(set(pairs)):
+        raise ValueError("the same connection appears more than once")
     trigger_ids = _validate_triggers(nodes, edges)
     profile = profile_for(workflow_id)
     if profile.get("locked"):

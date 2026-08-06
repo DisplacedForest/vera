@@ -1,3 +1,6 @@
+import json
+import math
+
 from . import workflow_triggers
 
 
@@ -120,14 +123,36 @@ def catalog_step_specs() -> dict[str, dict]:
     return out
 
 
+def _step_config(params: dict, schema: dict) -> dict:
+    config = {}
+    for key, value in params.items():
+        field = schema.get(key)
+        if not field:
+            continue
+        kind = field.get("type")
+        if kind == "text" and not isinstance(value, str):
+            value = json.dumps(value)
+        if kind == "number":
+            low, high = field.get("min"), field.get("max")
+            numeric = (isinstance(value, (int, float)) and not isinstance(value, bool)
+                       and math.isfinite(value))
+            if (not numeric or (low is not None and value < low)
+                    or (high is not None and value > high)):
+                continue
+        if kind == "choice" and not any(type(value) is type(option) and value == option
+                                        for option in field.get("options") or []):
+            continue
+        config[key] = value
+    return config
+
+
 def _vein_steps(job_id: str) -> list[dict]:
-    from . import pulse_veins, vein_engine
+    from . import pulse_veins, workflow_registry
     defn = pulse_veins.manifest(job_id.removeprefix("vein_")) or {}
     steps = []
     for index, entry in enumerate(defn.get("pipeline") or [], start=1):
         block = entry.get("block")
-        schema = (vein_engine.NODE_SPECS.get(block) or {}).get("config_schema") or {}
-        config = {key: value for key, value in (entry.get("params") or {}).items() if key in schema}
+        config = _step_config(entry.get("params") or {}, workflow_registry.block_config_schema(block))
         step = {"id": f"step-{index}", "type": block}
         if config:
             step["config"] = config
@@ -149,8 +174,16 @@ def definition_for(workflow_id) -> dict | None:
         return None
     from . import scheduler
     cron = scheduler.job_cron(workflow_id)
-    config = workflow_triggers.config_for(cron) or dict(workflow_triggers.DEFAULT_CONFIG)
-    nodes = [{"id": "schedule", "type": workflow_triggers.SCHEDULE_TYPE, "config": config}, *steps]
+    config = workflow_triggers.config_for(cron)
+    trigger = {"id": "schedule", "type": workflow_triggers.SCHEDULE_TYPE}
+    if config is not None:
+        trigger["config"] = config
+    elif cron:
+        trigger["config"] = {}
+        trigger["rule"] = cron
+    else:
+        trigger["config"] = dict(workflow_triggers.DEFAULT_CONFIG)
+    nodes = [trigger, *steps]
     edges = [{"from": "schedule", "to": steps[0]["id"]}]
     edges.extend({"from": steps[index]["id"], "to": steps[index + 1]["id"]}
                  for index in range(len(steps) - 1))

@@ -158,7 +158,8 @@ async def _notify_run(node, items, ctx):
         if card.get("situation_key") == key:
             pulse.store.delete_card(card["id"])
     await pulse._inject(headline, body, summary=summary, kind="notify", severity="notice",
-                        provenance="workflow", situation_key=key, user_id=user_id or None)
+                        provenance="workflow", situation_key=key,
+                        user_id=user_id or pulse.HOUSEHOLD)
     ctx.summaries[node["id"]] = {"cards": count}
     return list(items)
 

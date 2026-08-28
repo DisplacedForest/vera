@@ -12,6 +12,7 @@ def _fresh(monkeypatch, tmp_path):
 
 
 def _inject(**kw):
+    kw.setdefault("user_id", pulse.HOUSEHOLD)
     return asyncio.run(pulse._inject(**kw))
 
 

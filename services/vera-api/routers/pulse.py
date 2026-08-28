@@ -86,9 +86,21 @@ class PulseRequest(BaseModel):
     user_name: str | None = None  # display name for the briefing voice
 
 
-async def _inject(title, body, image_url=None, tint=None, sources=None,
+HOUSEHOLD = "__household__"
+
+
+def _audience(user_id):
+    if user_id == HOUSEHOLD:
+        return store.default_user()
+    uid = user_id.strip() if isinstance(user_id, str) else ""
+    if not uid:
+        raise ValueError("a card needs an audience: a person id or HOUSEHOLD")
+    return uid
+
+
+async def _inject(title, body, *, user_id, image_url=None, tint=None, sources=None,
                   summary=None, inline_images=None, action=None, kind="research", severity=None,
-                  user_id=None, provenance="scheduled", category=None, change_set=None, items=None,
+                  provenance="scheduled", category=None, change_set=None, items=None,
                   situation_key=None):
     """Store a Pulse card. Compat shim for the helper routers (health/kitchen/weather)
     that surface cards.
@@ -105,7 +117,7 @@ async def _inject(title, body, image_url=None, tint=None, sources=None,
         "title": title, "summary": summary or "", "body": body,
         "image_url": image_url, "tint": tint, "sources": src, "inline_images": imgs,
         "action": action, "kind": kind, "severity": severity,
-        "user_id": user_id or store.default_user(), "provenance": provenance,
+        "user_id": _audience(user_id), "provenance": provenance,
         "category": category, "change_set": change_set, "items": items,
         "situation_key": situation_key,
     })
@@ -457,7 +469,6 @@ class StatusCard(BaseModel):
 
 class ReadBody(BaseModel):
     card_id: str
-    user_id: str | None = None
 
 
 @router.get("/pulse/cards", tags=["pulse"])
@@ -493,7 +504,7 @@ async def veins(member: dict = Depends(identity.current_user)):
 async def read(b: ReadBody, member: dict = Depends(identity.current_user)):
     """Record that this person opened a card's detail. Idempotent. Fired only on detail
     open (not on a vein-list glance), so the chip's unread count reflects real reads."""
-    store.mark_read(b.user_id or member["id"], b.card_id)
+    store.mark_read(member["id"], b.card_id)
     return {"ok": True}
 
 
@@ -501,7 +512,7 @@ async def read(b: ReadBody, member: dict = Depends(identity.current_user)):
 async def status_card(s: StatusCard):
     """Producer front door for ambient/status cards: run-summaries and weather/health
     alerts. Action-less — cards that carry an action use /actions/propose_card instead."""
-    await _inject(s.title, s.body, summary=s.summary, kind=s.kind, severity=s.severity, category=s.category)
+    await _inject(s.title, s.body, user_id=HOUSEHOLD, summary=s.summary, kind=s.kind, severity=s.severity, category=s.category)
     return {"ok": True}
 
 

@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from . import groom_common as gcm
 from . import knowledge_store as ks
-from .pulse import _inject, _vera
+from .pulse import HOUSEHOLD, _inject, _vera
 
 router = APIRouter()
 AGENT_TOKEN = os.environ.get("KNOWLEDGE_AGENT_TOKEN", "")
@@ -217,7 +217,7 @@ async def run(dry_run=False, run_id=None):
                 body = (f"The `{r['type']}` type looks like it's stabilizing "
                         f"({r.get('entities', '?')} entities, {r.get('coverage', '?')} coverage) but "
                         f"isn't a confident auto-promote yet. Want me to codify its schema?")
-            await _inject(title, body, summary=title, kind="status", severity=None,
+            await _inject(title, body, user_id=HOUSEHOLD, summary=title, kind="status", severity=None,
                           category="vera", provenance="scheduled")
         except Exception as e:
             out["errors"].append(f"review card: {e}")
@@ -230,7 +230,7 @@ async def run(dry_run=False, run_id=None):
             f"Groomed the knowledge store · {summary}",
             f"Overnight I tidied the home knowledge store: {summary}. Everything I changed is in the "
             f"revision log and reversible; anything ambiguous I left for you to confirm.",
-            summary=summary, kind="status", severity=None, category="vera",
+            user_id=HOUSEHOLD, summary=summary, kind="status", severity=None, category="vera",
             provenance="scheduled", change_set=out["change_set"] or None)
         out["card"] = True
     except Exception as e:

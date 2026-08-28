@@ -592,7 +592,7 @@ async def run_definition(defn: dict, dry_run: bool = False, manual: bool = False
         for c in active:
             if c.get("situation_key") == card["situation_key"]:
                 pulse.store.delete_card(c["id"])
-        await pulse._inject(card["title"], card["body"], kind=kind,
+        await pulse._inject(card["title"], card["body"], user_id=pulse.HOUSEHOLD, kind=kind,
                             severity=card["severity"], summary=card["summary"],
                             sources=card["sources"], situation_key=card["situation_key"],
                             category=card["category"], change_set=card["change_set"],

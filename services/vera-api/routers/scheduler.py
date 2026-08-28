@@ -386,12 +386,12 @@ async def escalate_failures(job_id: str):
     if streak < FAIL_CARD_AFTER or existing or not pulse_veins.is_enabled("status"):
         return
     last_detail = next((r["detail"] for r in store.recent_runs(72) if r["job_id"] == job_id), "")
-    from .pulse import _inject
+    from .pulse import HOUSEHOLD, _inject
     label = _job_label(job_id)
     body = (f"**{label}** has failed {streak} runs in a row.\n\n"
             f"Last error: {last_detail or 'no detail recorded'}\n\n"
             "The flow's node on the Agentic canvas carries the same state.")
-    await _inject(title, body, summary=f"{label} is failing repeatedly.",
+    await _inject(title, body, user_id=HOUSEHOLD, summary=f"{label} is failing repeatedly.",
                   kind="status", category="vera", severity="alert")
 
 

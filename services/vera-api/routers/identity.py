@@ -36,8 +36,10 @@ def owner() -> dict:
 
 async def active_users() -> list[dict]:
     from . import household_store
-    people = [{"id": m["id"], "name": m["name"]} for m in household_store.members()]
-    return people or [owner()]
+    roster = household_store.members(include_disabled=True)
+    if not roster:
+        return [owner()]
+    return [{"id": m["id"], "name": m["name"]} for m in roster if m["enabled"]]
 
 
 def _member(candidate: str) -> dict:
@@ -57,7 +59,12 @@ def resolve_user(header: str | None = None, param: str | None = None) -> dict:
         log.info("user_id query parameter used; callers should send the %s header", USER_HEADER)
         return _member(legacy)
     from . import household_store
-    return household_store.get(owner_id()) or {**owner(), "enabled": True, "created_at": None}
+    seat = household_store.get(owner_id())
+    if seat is None:
+        return {**owner(), "enabled": True, "created_at": None}
+    if not seat["enabled"]:
+        raise HTTPException(status_code=403, detail="unknown or disabled household member")
+    return seat
 
 
 async def current_user(

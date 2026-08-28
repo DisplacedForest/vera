@@ -230,10 +230,13 @@ def _sev_rank(s) -> int:
 
 def mark_read(user_id: str, card_id: str):
     """Record that this person opened this card's detail. Idempotent (composite PK)."""
+    uid = user_id.strip() if isinstance(user_id, str) else ""
+    if not uid:
+        raise ValueError("a read mark needs a person")
     init()
     with _conn() as c:
         c.execute("INSERT OR IGNORE INTO pulse_reads(user_id, card_id, read_at) VALUES (?,?,?)",
-                  (user_id, card_id, int(time.time())))
+                  (uid, card_id, int(time.time())))
 
 
 def read_ids(user_id: str) -> set:

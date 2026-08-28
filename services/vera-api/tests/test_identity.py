@@ -87,3 +87,84 @@ def test_two_members_do_not_cross_leak(monkeypatch):
     up.observe(other, "skateboarding")
     assert {i["topic"] for i in up.interests("zach")} == {"winemaking"}
     assert {i["topic"] for i in up.interests(other)} == {"skateboarding"}
+
+
+def test_a_card_needs_an_audience(monkeypatch):
+    monkeypatch.setenv("VERA_OWNER_ID", "zach")
+    import asyncio as aio
+
+    from routers import pulse
+    pulse_store.init()
+    with pytest.raises(ValueError):
+        aio.run(pulse._inject("t", "b", user_id=None))
+    with pytest.raises(ValueError):
+        aio.run(pulse._inject("t", "b", user_id="  "))
+
+
+def test_household_audience_is_explicit_and_lands_on_the_owner(monkeypatch):
+    monkeypatch.setenv("VERA_OWNER_ID", "zach")
+    import asyncio as aio
+
+    from routers import pulse
+    pulse_store.init()
+    aio.run(pulse._inject("house", "b", user_id=pulse.HOUSEHOLD))
+    assert {c["user_id"] for c in pulse_store.list_cards()} == {"zach"}
+
+
+def test_a_card_for_a_person_keeps_that_person(monkeypatch):
+    monkeypatch.setenv("VERA_OWNER_ID", "zach")
+    import asyncio as aio
+
+    from routers import pulse
+    hs.init()
+    other = hs.add("Nephew")["id"]
+    pulse_store.init()
+    aio.run(pulse._inject("theirs", "b", user_id=other))
+    assert {c["user_id"] for c in pulse_store.list_cards()} == {other}
+
+
+def test_a_read_mark_needs_a_person():
+    pulse_store.init()
+    for bad in (None, "", "   ", 7):
+        with pytest.raises(ValueError):
+            pulse_store.mark_read(bad, "c1")
+    with pulse_store._conn() as c:
+        assert c.execute("SELECT COUNT(*) FROM pulse_reads").fetchone()[0] == 0
+
+
+def test_read_endpoint_marks_only_the_resolved_member(monkeypatch):
+    monkeypatch.setenv("VERA_OWNER_ID", "zach")
+    import asyncio as aio
+
+    from routers import pulse
+    hs.init()
+    other = hs.add("Nephew")["id"]
+    pulse_store.init()
+    pulse_store.insert_card({"id": "c1", "day": "2026-08-04", "title": "t", "user_id": "zach"})
+    aio.run(pulse.read(pulse.ReadBody(card_id="c1"), member=hs.get(other)))
+    assert pulse_store.read_ids(other) == {"c1"}
+    assert pulse_store.read_ids("zach") == set()
+
+
+def test_the_read_body_carries_no_person():
+    from routers import pulse
+    assert "user_id" not in pulse.ReadBody.model_fields
+
+
+def test_a_disabled_owner_is_refused_on_the_no_header_path(monkeypatch):
+    from fastapi import HTTPException
+
+    from routers import identity as ident
+    monkeypatch.setenv("VERA_OWNER_ID", "zach")
+    hs.init()
+    hs.disable("zach")
+    with pytest.raises(HTTPException) as e:
+        ident.resolve_user()
+    assert e.value.status_code == 403
+
+
+def test_active_users_is_empty_when_every_member_is_disabled(monkeypatch):
+    monkeypatch.setenv("VERA_OWNER_ID", "zach")
+    hs.init()
+    hs.disable("zach")
+    assert asyncio.run(identity.active_users()) == []

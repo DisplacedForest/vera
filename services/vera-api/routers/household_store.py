@@ -25,9 +25,20 @@ def init():
             )
             """
         )
+        _ensure_columns(c)
         c.execute("CREATE INDEX IF NOT EXISTS idx_member_enabled ON member(enabled)")
         if c.execute("SELECT COUNT(*) FROM member").fetchone()[0] == 0:
             _seed_owner(c)
+
+
+COLUMNS = {"name": "TEXT", "enabled": "INTEGER NOT NULL DEFAULT 1", "created_at": "INTEGER"}
+
+
+def _ensure_columns(c):
+    have = {r["name"] for r in c.execute("PRAGMA table_info(member)").fetchall()}
+    for name, decl in COLUMNS.items():
+        if name not in have:
+            c.execute(f"ALTER TABLE member ADD COLUMN {name} {decl}")
 
 
 def _seed_owner(c):

@@ -54,7 +54,7 @@ def _insert(cid, image_url=None, inline=None, **extra):
             "status": "new", "title": f"t-{cid}", "summary": "s", "body": "b",
             "image_url": image_url, "tint": "#112233",
             "sources": [{"n": 1, "title": "src", "url": "https://example.com/a"}],
-            "inline_images": inline or []}
+            "inline_images": inline or [], "user_id": pulse_store.default_user()}
     card.update(extra)
     pulse_store.insert_card(card)
 

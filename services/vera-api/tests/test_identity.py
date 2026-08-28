@@ -1,12 +1,9 @@
 import asyncio
-import os
-import sqlite3
-import time
 
 import pytest
 
+from routers import household_store as hs
 from routers import identity
-from routers import identity_migrate as im
 from routers import pulse_store
 from routers import user_profile_store as up
 
@@ -21,6 +18,7 @@ def _clean(monkeypatch, tmp_path):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(pulse_store, "DB_PATH", str(tmp_path / "pulse.db"))
     monkeypatch.setattr(up, "DB_PATH", str(tmp_path / "profiles.db"))
+    monkeypatch.setattr(hs, "DB_PATH", str(tmp_path / "household.db"))
     yield
 
 
@@ -39,79 +37,53 @@ def test_owner_name_and_record(monkeypatch):
     assert identity.owner() == {"id": "zach", "name": "Z"}
 
 
-def test_active_users_always_returns_the_owner(monkeypatch):
+def test_active_users_returns_the_seeded_owner(monkeypatch):
     monkeypatch.setenv("VERA_OWNER_ID", "zach")
     users = asyncio.run(identity.active_users())
     assert users == [{"id": "zach", "name": None}]
 
 
-def _seed_stores():
+def test_an_existing_deployment_keeps_its_id_and_moves_no_rows(monkeypatch):
+    monkeypatch.setenv("VERA_DEFAULT_USER", OWUI_UUID)
     pulse_store.init()
-    now = int(time.time())
-    for cid, uid in (("c1", OWUI_UUID), ("c2", ""), ("c3", None)):
-        pulse_store.insert_card({"id": cid, "created_at": now, "day": "2026-08-04",
-                                 "status": "new", "title": cid, "summary": "", "body": "",
-                                 "image_url": None, "tint": None, "sources": [],
-                                 "inline_images": [], "promoted_chat_id": None,
-                                 "user_id": uid, "kind": "research"})
-    with pulse_store._conn() as c:
-        c.execute("UPDATE cards SET user_id='' WHERE id='c2'")
-        c.execute("UPDATE cards SET user_id=NULL WHERE id='c3'")
-        c.execute("INSERT INTO pulse_reads(user_id, card_id, read_at) VALUES(?,?,?)",
-                  (OWUI_UUID, "c1", now))
-        c.execute("INSERT INTO pulse_reads(user_id, card_id, read_at) VALUES(?,?,?)",
-                  ("", "c1", now))
+    pulse_store.insert_card({"id": "c1", "day": "2026-08-04", "title": "t",
+                             "user_id": OWUI_UUID})
+    pulse_store.mark_read(OWUI_UUID, "c1")
     up.set_persona(OWUI_UUID, name="Z", persona="direct")
-    up.set_persona("", persona="stale")
-    up.observe(OWUI_UUID, "winemaking", weight=2.0, gloss="the craft")
-    up.observe("", "winemaking", weight=1.0)
-    up.observe("", "espresso", weight=0.5)
+    up.observe(OWUI_UUID, "winemaking", weight=2.0)
+
+    hs.init()
+
+    assert [m["id"] for m in hs.members()] == [OWUI_UUID]
+    assert {c["user_id"] for c in pulse_store.list_cards()} == {OWUI_UUID}
+    assert pulse_store.read_ids(OWUI_UUID) == {"c1"}
+    assert up.get(OWUI_UUID)["persona"] == "direct"
+    assert {i["topic"] for i in up.interests(OWUI_UUID)} == {"winemaking"}
 
 
-def _dump(path):
-    c = sqlite3.connect(path)
-    try:
-        return list(c.iterdump())
-    finally:
-        c.close()
+def test_a_card_without_a_person_is_refused():
+    pulse_store.init()
+    with pytest.raises(ValueError):
+        pulse_store.insert_card({"id": "c1", "day": "2026-08-04", "title": "t"})
+    with pytest.raises(ValueError):
+        pulse_store.insert_card({"id": "c2", "day": "2026-08-04", "title": "t", "user_id": "  "})
 
 
-def test_migration_collapses_all_ids_to_the_owner(monkeypatch):
+def test_two_members_do_not_cross_leak(monkeypatch):
     monkeypatch.setenv("VERA_OWNER_ID", "zach")
-    _seed_stores()
-    out = im.run()
-    assert out["owner_id"] == "zach"
-    cards = pulse_store.list_cards()
-    assert {c["user_id"] for c in cards} == {"zach"}
-    assert pulse_store.read_ids("zach") == {"c1"}
-    with pulse_store._conn() as c:
-        assert c.execute("SELECT COUNT(*) FROM pulse_reads").fetchone()[0] == 1
-    prof = up.get("zach")
-    assert prof["name"] == "Z" and prof["persona"] in ("direct", "stale")
-    topics = {i["topic"]: i for i in up.interests("zach")}
-    assert set(topics) == {"winemaking", "espresso"}
-    assert topics["winemaking"]["weight"] == 2.0
-    assert topics["winemaking"]["gloss"] == "the craft"
-    assert topics["winemaking"]["id"] == up._iid("zach", "winemaking")
-    with up._conn() as c:
-        assert c.execute("SELECT COUNT(*) FROM interest WHERE user_id != 'zach'").fetchone()[0] == 0
-        assert c.execute("SELECT COUNT(*) FROM profile").fetchone()[0] == 1
+    hs.init()
+    other = hs.add("Nephew")["id"]
+    pulse_store.init()
+    pulse_store.insert_card({"id": "mine", "day": "2026-08-04", "title": "mine", "user_id": "zach"})
+    pulse_store.insert_card({"id": "theirs", "day": "2026-08-04", "title": "theirs", "user_id": other})
+    pulse_store.mark_read("zach", "mine")
 
+    assert {c["id"] for c in pulse_store.list_cards(user_id="zach")} == {"mine"}
+    assert {c["id"] for c in pulse_store.list_cards(user_id=other)} == {"theirs"}
+    assert pulse_store.read_ids("zach") == {"mine"}
+    assert pulse_store.read_ids(other) == set()
 
-def test_migration_is_idempotent(monkeypatch):
-    monkeypatch.setenv("VERA_OWNER_ID", "zach")
-    _seed_stores()
-    im.run()
-    before = (_dump(pulse_store.DB_PATH), _dump(up.DB_PATH))
-    out = im.run()
-    assert out["pulse"] == {"skipped": True} and out["profiles"] == {"skipped": True}
-    assert (_dump(pulse_store.DB_PATH), _dump(up.DB_PATH)) == before
-
-
-def test_empty_string_default_user_rows_migrate_to_owner():
-    _seed_stores()
-    im.run()
-    assert identity.owner_id() == "owner"
-    assert {c["user_id"] for c in pulse_store.list_cards()} == {"owner"}
-    assert os.path.exists(up.DB_PATH)
-    assert {i["topic"] for i in up.interests("owner")} == {"winemaking", "espresso"}
+    up.observe("zach", "winemaking")
+    up.observe(other, "skateboarding")
+    assert {i["topic"] for i in up.interests("zach")} == {"winemaking"}
+    assert {i["topic"] for i in up.interests(other)} == {"skateboarding"}

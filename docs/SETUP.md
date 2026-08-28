@@ -48,7 +48,7 @@ docker compose logs vera-api | head -60
 |---|---|---|
 | Core LLM | `VERA_BASE`, `VERA_MODEL` | Everything generated: Pulse briefings, card text, judges |
 | Web search | `SEARXNG_BASE` (+ optional `PLAYWRIGHT_WS`) | Research, Pulse sourcing, watcher veins, and the Mac app's web search and deep research chat tools (the app reaches them through its `vera_api_base` setting, never SearXNG directly) |
-| Identity | `VERA_OWNER_ID`, `VERA_OWNER_NAME`, `HOME_LOCATION_NAME`, `HOME_TZ`, `WEATHER_LAT`/`LON`, `TEMPERATURE_UNIT` | Personalization, the owner id that cards/read marks/profiles are keyed by (defaults to `owner`), schedules in your timezone, weather anchoring |
+| Identity | `VERA_OWNER_ID`, `VERA_OWNER_NAME`, `HOME_LOCATION_NAME`, `HOME_TZ`, `WEATHER_LAT`/`LON`, `TEMPERATURE_UNIT` | Personalization, the owner id that cards/read marks/profiles are keyed by (defaults to `owner`) and that seeds the household roster, schedules in your timezone, weather anchoring |
 | Coder | `DREAM_BASE`, `DREAM_MODEL`, `DREAM_TOOL_PROTOCOL` | Cross-model claim auditing + fact verification |
 | Audit hooks | `AUDIT_WAKE_URL`, `AUDIT_RELEASE_URL` | Cross-model claim audits on every Pulse run when the audit model is served on demand (POSTed before/after the batched end-of-run audit; unset = no hook calls) |
 | Embeddings | `VERA_EMBED_URL`, `VERA_EMBED_MODEL` | Document knowledge collections (upload, indexing, retrieval that grounds research and chat) plus Profile Graph dedup and Pulse novelty math; unset, collection management still works while indexing and retrieval report unconfigured |
@@ -62,6 +62,18 @@ Two conventions:
 - **Unset means off, visibly.** A capability without its endpoint reports itself as not configured — it never fakes output and never affects other capabilities.
 
 Integrations (Home Assistant and the rest) can be set in `.env` for headless installs; the app's integration store in step 3 is the recommended path.
+
+### The household roster
+
+Vera serves the people on a roster, and each person gets their own Pulse feed, read state, interests, and persona. What Vera knows about the house stays shared: one set of house facts, one world model, one of everything that is about the home rather than about a person.
+
+You do not have to configure any of this. On first start the roster seeds itself with one member from `VERA_OWNER_ID` and `VERA_OWNER_NAME`, so a single-person install behaves exactly as it always has, and an existing deployment keeps the id its cards and profiles are already written under. Nothing is re-keyed and no people ship with the repo.
+
+To add someone, POST a display name to `/household`. The response carries a generated id; that id is the person, and it never changes. `GET /household` lists members, `PATCH /household/{id}` renames one, and `/household/{id}/disable` takes them out of the rotation without deleting anything they have. A disabled member stops getting Pulse runs and their existing rows stay put, so enabling them again picks up where they left off.
+
+Clients say who they are with the `X-Vera-User` header, carrying the member id. A request with no header resolves to the owner, which is what keeps older clients working. A header naming someone who does not exist, or who is disabled, is refused.
+
+One caveat while this is the whole of it: the header is trusted. The roster separates people from each other, it does not yet verify them, so anyone who can reach the API can name any member. Treat it as separate rather than private until credentials land, and keep the API on a network you trust.
 
 ### Reference corpus sync and backups
 

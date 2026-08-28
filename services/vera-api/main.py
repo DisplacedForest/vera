@@ -8,7 +8,7 @@ import data_root
 
 DATA_ROOT = data_root.apply()
 
-from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, identity_migrate, images, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, updates, user_profile, vein_builder, vein_engine, weather, websearch
+from routers import actions, agentic, authoring, config_report, conversation_ingest, documents, feedback, health, home, home_events, home_model, home_reconcile, household, images, integrations, kitchen, knowledge, knowledge_groom, knowledge_restore, media_curation, overseerr, pulse, pulse_media, pulse_veins, reminders, research, scheduler, updates, user_profile, vein_builder, vein_engine, weather, websearch
 
 # vera-api: ONE container, many capabilities.
 # To add a capability: create routers/<name>.py exposing `router` (an APIRouter
@@ -39,7 +39,6 @@ VERSION = _version()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config_report.report(VERSION, data_root=DATA_ROOT)
-    identity_migrate.run()
     vein_engine.load_block_modules()
     # The home-events supervisor (starts capture only while the home_modeling feature
     # is enabled) + the built-in scheduler run for the app's lifetime.
@@ -68,6 +67,7 @@ CAPABILITIES = {
     "knowledge_groom": knowledge_groom.router,
     "knowledge_restore": knowledge_restore.router,
     "user_profile": user_profile.router,
+    "household": household.router,
     "conversation_ingest": conversation_ingest.router,
     "documents": documents.router,
     "authoring": authoring.router,

@@ -1,6 +1,12 @@
+import logging
 import os
 
+from fastapi import Header, HTTPException
+
 FALLBACK_OWNER_ID = "owner"
+USER_HEADER = "X-Vera-User"
+
+log = logging.getLogger("vera.identity")
 
 
 def _registry_values() -> dict:
@@ -29,4 +35,33 @@ def owner() -> dict:
 
 
 async def active_users() -> list[dict]:
-    return [owner()]
+    from . import household_store
+    people = [{"id": m["id"], "name": m["name"]} for m in household_store.members()]
+    return people or [owner()]
+
+
+def _member(candidate: str) -> dict:
+    from . import household_store
+    m = household_store.get(candidate)
+    if m is None or not m["enabled"]:
+        raise HTTPException(status_code=403, detail="unknown or disabled household member")
+    return m
+
+
+def resolve_user(header: str | None = None, param: str | None = None) -> dict:
+    named = (header or "").strip() if isinstance(header, str) else ""
+    if named:
+        return _member(named)
+    legacy = (param or "").strip() if isinstance(param, str) else ""
+    if legacy:
+        log.info("user_id query parameter used; callers should send the %s header", USER_HEADER)
+        return _member(legacy)
+    from . import household_store
+    return household_store.get(owner_id()) or {**owner(), "enabled": True, "created_at": None}
+
+
+async def current_user(
+    vera_user: str | None = Header(default=None, alias=USER_HEADER),
+    user_id: str | None = None,
+) -> dict:
+    return resolve_user(vera_user, user_id)

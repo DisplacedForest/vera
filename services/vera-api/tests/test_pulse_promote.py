@@ -15,7 +15,8 @@ def _store(tmp_path, monkeypatch):
 def _card(cid="c1", status="new"):
     pulse_store.insert_card({"id": cid, "created_at": int(time.time()), "day": "2026-08-04",
                              "status": status, "title": "t", "summary": "", "body": "",
-                             "image_url": None, "tint": None, "sources": [], "inline_images": []})
+                             "image_url": None, "tint": None, "sources": [], "inline_images": [],
+                             "user_id": pulse_store.default_user()})
     return cid
 
 
@@ -50,7 +51,7 @@ def test_bookmark_sets_the_status_without_a_chat_backend():
 def test_bookmarked_card_stays_in_the_feed():
     cid = _card()
     asyncio.run(pulse.bookmark(cid, pulse.BookmarkBody(on=True)))
-    feed = pulse_store.list_cards(user_id=pulse_store.DEFAULT_USER)
+    feed = pulse_store.list_cards(user_id=pulse_store.default_user())
     assert any(c["id"] == cid for c in feed)
 
 

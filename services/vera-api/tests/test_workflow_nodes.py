@@ -231,7 +231,8 @@ def _notify_cards(store):
 
 
 def _seed_card(card_id, title, summary=""):
-    pulse_store.insert_card({"id": card_id, "day": "2026-01-01", "title": title, "summary": summary})
+    pulse_store.insert_card({"id": card_id, "day": "2026-01-01", "title": title, "summary": summary,
+                             "user_id": pulse_store.default_user()})
     return pulse_store.get_card(card_id)
 
 
@@ -328,7 +329,7 @@ def pulse_harness(monkeypatch, tmp_path):
     async def fake_research(t, who, user_id, idx, provenance, errors, defer_audit=False,
                             outcome=None, **kwargs):
         card = {"id": f"id-{t['title']}", "day": "2026-01-01", "title": t["title"],
-                "kind": "research"}
+                "kind": "research", "user_id": pulse_store.default_user()}
         pulse_store.insert_card(card)
         return {**card, "_corpus": []}
 
@@ -390,7 +391,7 @@ def test_pulse_run_executes_every_inserted_flow_node(pulse_harness, fake_get):
     assert rows["notify"]["output"]["cards"] == 1
     cards = _notify_cards(pulse_store)
     assert len(cards) == 1
-    assert cards[0]["situation_key"] == f"workflow-notify:pulse:notify:{pulse_store.DEFAULT_USER}"
+    assert cards[0]["situation_key"] == f"workflow-notify:pulse:notify:{pulse_store.default_user()}"
 
 
 def _insert_into(definition, node, upstream, downstream):

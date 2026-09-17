@@ -147,9 +147,9 @@ def test_surface_stats_live():
     from routers.scheduler import TZ
     from datetime import datetime
     today = datetime.now(TZ).date().isoformat()
-    pulse_store.insert_card({"id": "c1", "day": today, "title": "t"})
-    pulse_store.insert_card({"id": "c2", "day": "2000-01-01", "title": "old"})
-    pulse_store.insert_card({"id": "c3", "day": "2000-01-01", "title": "vein", "kind": "weather"})
+    pulse_store.insert_card({"id": "c1", "day": today, "title": "t", "user_id": "owner"})
+    pulse_store.insert_card({"id": "c2", "day": "2000-01-01", "title": "old", "user_id": "owner"})
+    pulse_store.insert_card({"id": "c3", "day": "2000-01-01", "title": "vein", "kind": "weather", "user_id": "owner"})
     action_store.stage("ha.service", {"x": 1}, "preview", "low", True)
     stats = {s["id"]: s["stat"] for s in _graph()["surfaces"]}
     assert stats["pulse_feed"] == "1 card today"

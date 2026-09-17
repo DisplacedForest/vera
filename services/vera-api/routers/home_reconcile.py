@@ -25,7 +25,7 @@ from . import home_reconcile_store as store
 from . import knowledge_store as ks
 from .actions import ProposeCard, propose_card
 from .home_reconcile_match import classify_index, find_successor, match_entities
-from .pulse import _inject
+from .pulse import HOUSEHOLD, _inject
 
 router = APIRouter()
 
@@ -89,7 +89,7 @@ def _load_index() -> list:
 # ---- card helpers ----------------------------------------------------------
 
 async def _notice_card(title, body, severity, category, summary=None):
-    res = await _inject(title, body, summary=summary, kind="status",
+    res = await _inject(title, body, user_id=HOUSEHOLD, summary=summary, kind="status",
                         severity=severity, category=category)
     return res.get("id")
 

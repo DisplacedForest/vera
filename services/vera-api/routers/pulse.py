@@ -14,9 +14,10 @@ import time
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from . import identity
 from . import pulse_veins
 from . import pulse_store as store
 from . import user_profile_store as up
@@ -85,9 +86,21 @@ class PulseRequest(BaseModel):
     user_name: str | None = None  # display name for the briefing voice
 
 
-async def _inject(title, body, image_url=None, tint=None, sources=None,
+HOUSEHOLD = "__household__"
+
+
+def _audience(user_id):
+    if user_id == HOUSEHOLD:
+        return store.default_user()
+    uid = user_id.strip() if isinstance(user_id, str) else ""
+    if not uid:
+        raise ValueError("a card needs an audience: a person id or HOUSEHOLD")
+    return uid
+
+
+async def _inject(title, body, *, user_id, image_url=None, tint=None, sources=None,
                   summary=None, inline_images=None, action=None, kind="research", severity=None,
-                  user_id=None, provenance="scheduled", category=None, change_set=None, items=None,
+                  provenance="scheduled", category=None, change_set=None, items=None,
                   situation_key=None):
     """Store a Pulse card. Compat shim for the helper routers (health/kitchen/weather)
     that surface cards.
@@ -104,7 +117,7 @@ async def _inject(title, body, image_url=None, tint=None, sources=None,
         "title": title, "summary": summary or "", "body": body,
         "image_url": image_url, "tint": tint, "sources": src, "inline_images": imgs,
         "action": action, "kind": kind, "severity": severity,
-        "user_id": user_id or store.DEFAULT_USER, "provenance": provenance,
+        "user_id": _audience(user_id), "provenance": provenance,
         "category": category, "change_set": change_set, "items": items,
         "situation_key": situation_key,
     })
@@ -232,13 +245,13 @@ def _stamp_interest(interest):
 
 async def _build_run_context(req, out):
     # Who is this briefing for? Default to the household owner for backward-compat.
-    user_id = req.user_id or store.DEFAULT_USER
+    user_id = req.user_id or store.default_user()
     profile = up.get(user_id)
     who = req.user_name or profile.get("name") or "them"
 
     # 1) gather + triage. Ground in this person's profile interests + whatever the caller passed.
     memories = []
-    if user_id == store.DEFAULT_USER:
+    if user_id == store.default_user():
         try:
             memories = [m.get("content") for m in (await _get_memories() or []) if m.get("content")]
         except Exception as e:
@@ -418,7 +431,7 @@ async def _do_run_all(req: RunAllRequest):
     Returns the full result dict; the endpoint runs this in the background."""
     users = await _active_users()
     if not users:
-        users = [{"id": store.DEFAULT_USER, "name": None}]
+        users = [{"id": store.default_user(), "name": None}]
     out = {"ok": True, "users": []}
     definition = workflow_store.active("pulse")["definition"]
     for u in users:
@@ -456,15 +469,11 @@ class StatusCard(BaseModel):
 
 class ReadBody(BaseModel):
     card_id: str
-    user_id: str | None = None
 
 
 @router.get("/pulse/cards", tags=["pulse"])
-async def cards(user_id: str | None = None):
-    """The feed for one person. Defaults to the household owner so existing callers that
-    don't pass user_id keep seeing that feed; the app passes the signed-in user's id. Each card is
-    annotated with `read` for this person so the vein overlay shows per-row state."""
-    uid = user_id or store.DEFAULT_USER
+async def cards(member: dict = Depends(identity.current_user)):
+    uid = member["id"]
     cards = store.list_cards(user_id=uid)
     read = store.read_ids(uid)
     for c in cards:
@@ -473,10 +482,10 @@ async def cards(user_id: str | None = None):
 
 
 @router.get("/pulse/veins", tags=["pulse"])
-async def veins(user_id: str | None = None):
+async def veins(member: dict = Depends(identity.current_user)):
     """The pinned ambient-vein catalog, each merged with this person's UNREAD count +
     max unread severity so the chip dot/count reflects what they haven't read."""
-    uid = user_id or store.DEFAULT_USER
+    uid = member["id"]
     counts = store.unread_counts(uid)
     out = []
     for vein in pulse_veins.veins():
@@ -492,10 +501,10 @@ async def veins(user_id: str | None = None):
 
 
 @router.post("/pulse/read", tags=["pulse"])
-async def read(b: ReadBody):
+async def read(b: ReadBody, member: dict = Depends(identity.current_user)):
     """Record that this person opened a card's detail. Idempotent. Fired only on detail
     open (not on a vein-list glance), so the chip's unread count reflects real reads."""
-    store.mark_read(b.user_id or store.DEFAULT_USER, b.card_id)
+    store.mark_read(member["id"], b.card_id)
     return {"ok": True}
 
 
@@ -503,7 +512,7 @@ async def read(b: ReadBody):
 async def status_card(s: StatusCard):
     """Producer front door for ambient/status cards: run-summaries and weather/health
     alerts. Action-less — cards that carry an action use /actions/propose_card instead."""
-    await _inject(s.title, s.body, summary=s.summary, kind=s.kind, severity=s.severity, category=s.category)
+    await _inject(s.title, s.body, user_id=HOUSEHOLD, summary=s.summary, kind=s.kind, severity=s.severity, category=s.category)
     return {"ok": True}
 
 

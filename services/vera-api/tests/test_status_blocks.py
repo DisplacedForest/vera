@@ -113,6 +113,7 @@ def test_stack_updates_skips_staging_when_set_unchanged(monkeypatch):
         "summary": "", "body": first["content"], "kind": "status", "severity": "notice",
         "category": "update", "situation_key": "updates",
         "change_set": vein_engine._content_sig(first),
+        "user_id": pulse_store.default_user(),
     })
     again = _run(updates._block_stack_updates([], {}, CTX))[0]
     assert "items" not in again

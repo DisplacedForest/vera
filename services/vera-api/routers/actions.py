@@ -24,7 +24,7 @@ from . import knowledge_store as ks
 from . import media_store as mstore
 from . import overseerr
 from . import pulse_store as pstore
-from .pulse import _inject
+from .pulse import HOUSEHOLD, _inject
 
 router = APIRouter()
 
@@ -364,7 +364,7 @@ async def propose_card(p: ProposeCard):
         return err
     action = {"verb": p.verb, "args": p.args, "risk": ok["risk"],
               "reversible": ok["reversible"], "preview": ok["preview"], "token": ok["token"]}
-    res = await _inject(p.title, p.body, action=action, kind=p.kind, severity=p.severity,
+    res = await _inject(p.title, p.body, user_id=HOUSEHOLD, action=action, kind=p.kind, severity=p.severity,
                         category=p.category)
     return {"ok": True, "card_id": res.get("id"), **ok}
 
@@ -413,7 +413,7 @@ async def _build_digest_items(items_in: list) -> list:
 async def propose_digest_card(title, body, items_in, kind="media", severity=None):
     """Create one Pulse card carrying N independently approve/skip-able items. Returns card_id + items."""
     items = await _build_digest_items(items_in)
-    res = await _inject(title, body, items=items, kind=kind, severity=severity)
+    res = await _inject(title, body, user_id=HOUSEHOLD, items=items, kind=kind, severity=severity)
     return {"ok": True, "card_id": res["id"], "items": items}
 
 

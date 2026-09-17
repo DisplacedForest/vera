@@ -20,7 +20,7 @@ import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from .pulse import _inject, _vera
+from .pulse import HOUSEHOLD, _inject, _vera
 from .persona import owner, voiced
 
 router = APIRouter()
@@ -400,7 +400,7 @@ async def kitchen_check(req: KitchenCheck):
         else f"{len(state['below_min'])} staples low" if state["below_min"]
         else "today's plan"
     )
-    await _inject(title, body)
+    await _inject(title, body, user_id=HOUSEHOLD)
     out["injected"] = True
     out["title"] = title
     return out

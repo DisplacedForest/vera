@@ -11,16 +11,13 @@ import time
 DB_PATH = os.environ.get("PULSE_DB_PATH", "/data/pulse.db")
 
 
-def _default_user() -> str:
+def default_user() -> str:
     try:
         from .identity import owner_id
         return owner_id()
     except Exception:
         return (os.environ.get("VERA_OWNER_ID", "").strip()
                 or os.environ.get("VERA_DEFAULT_USER", "").strip() or "owner")
-
-
-DEFAULT_USER = _default_user()
 
 ACTIVE = ("new", "seen", "bookmarked", "promoted")  # shown in the feed (not expired)
 
@@ -65,7 +62,7 @@ def init():
         if "user_id" not in cols:
             # the person this card is FOR. Backfill pre-existing cards to the household owner.
             c.execute("ALTER TABLE cards ADD COLUMN user_id TEXT")
-            c.execute("UPDATE cards SET user_id=? WHERE user_id IS NULL", (DEFAULT_USER,))
+            c.execute("UPDATE cards SET user_id=? WHERE user_id IS NULL", (default_user(),))
         if "provenance" not in cols:
             # how the card was triggered — "scheduled" (pulse/run).
             c.execute("ALTER TABLE cards ADD COLUMN provenance TEXT")
@@ -103,6 +100,9 @@ def init():
 
 
 def insert_card(card: dict):
+    uid = (card.get("user_id") or "").strip()
+    if not uid:
+        raise ValueError(f"card {card.get('id')!r} has no user_id; every card belongs to a person")
     init()
     with _conn() as c:
         c.execute(
@@ -124,7 +124,7 @@ def insert_card(card: dict):
                 "action": json.dumps(card["action"]) if card.get("action") else None,
                 "kind": card.get("kind") or "research",
                 "severity": card.get("severity"),
-                "user_id": card.get("user_id") or DEFAULT_USER,
+                "user_id": uid,
                 "provenance": card.get("provenance") or "scheduled",
                 "category": card.get("category"),
                 "change_set": json.dumps(card["change_set"]) if card.get("change_set") else None,
@@ -151,7 +151,7 @@ def _row_to_card(r: sqlite3.Row) -> dict:
         "action": json.loads(r["action"]) if r["action"] else None,
         "kind": r["kind"] or "research",
         "severity": r["severity"],
-        "user_id": r["user_id"] or DEFAULT_USER,
+        "user_id": r["user_id"] or default_user(),
         "provenance": (r["provenance"] if "provenance" in r.keys() else None) or "scheduled",
         "category": r["category"] if "category" in r.keys() else None,
         "change_set": json.loads(r["change_set"]) if ("change_set" in r.keys() and r["change_set"]) else [],
@@ -230,10 +230,13 @@ def _sev_rank(s) -> int:
 
 def mark_read(user_id: str, card_id: str):
     """Record that this person opened this card's detail. Idempotent (composite PK)."""
+    uid = user_id.strip() if isinstance(user_id, str) else ""
+    if not uid:
+        raise ValueError("a read mark needs a person")
     init()
     with _conn() as c:
         c.execute("INSERT OR IGNORE INTO pulse_reads(user_id, card_id, read_at) VALUES (?,?,?)",
-                  (user_id, card_id, int(time.time())))
+                  (uid, card_id, int(time.time())))
 
 
 def read_ids(user_id: str) -> set:

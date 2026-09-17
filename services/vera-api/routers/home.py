@@ -14,7 +14,7 @@ import aiohttp
 from fastapi import APIRouter
 
 from . import rhythm_store as rs
-from .pulse import _inject, _vera
+from .pulse import HOUSEHOLD, _inject, _vera
 from .persona import owner, voiced
 
 router = APIRouter()
@@ -174,7 +174,7 @@ async def run_digest(dry_run: bool = False) -> dict:
     if dry_run or body.upper().startswith("SKIP") or len(body) < 10:
         return out
     rs.save_digest(day_iso, body, json.dumps(notable))
-    await _inject("Home rhythm", body,
+    await _inject("Home rhythm", body, user_id=HOUSEHOLD,
                   summary=f"{len(notable)} deviation(s) from your usual {day_iso} rhythm")
     out["posted"] = True
     return out

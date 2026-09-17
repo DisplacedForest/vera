@@ -6,6 +6,7 @@ STORE_PATHS = {
     "HOME_MODEL_DB_PATH": "home_model.db",
     "HOME_RECONCILE_DB_PATH": "home_reconcile.db",
     "GROOM_DB_PATH": "groom.db",
+    "HOUSEHOLD_DB_PATH": "household.db",
     "DOCUMENTS_DB_PATH": "documents.db",
     "DOCUMENTS_DIR": "documents",
     "KNOWLEDGE_DB_PATH": "knowledge.db",
